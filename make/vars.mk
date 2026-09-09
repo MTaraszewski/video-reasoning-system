@@ -11,6 +11,8 @@ VLLM_PORT  ?= 8000
 
 # --- inputs -----------------------------------------------------------------
 VIDEO   ?= data/synthetic/box-crossing.mp4
+# Same path as seen inside the container, where ./data is mounted at /data.
+VIDEO_IN = $(patsubst ./data/%,/data/%,$(patsubst data/%,/data/%,$(VIDEO)))
 QUERIES ?= a red box enters from the left
 DATASET ?= data/synthetic/labels.json
 

@@ -4,9 +4,12 @@ High-level design: what the system is, how the pieces connect, and which decisio
 are load-bearing. Working notes, verified facts and open risks live in
 [`PLAN.md`](PLAN.md).
 
-Status: **architecture agreed, implementation not started.** Nothing in this
-document reports a measured result yet. Every number here is either cited to a
-primary source or explicitly marked as a hypothesis to be measured.
+Status: **the pipeline is implemented; no model has been run against it yet.**
+The mechanisms in §6 are built and their behaviour is verified — each carries the
+evidence below its rationale. Nothing here reports a *model* result: every claim
+about Cosmos 3 Edge remains a hypothesis until the GPU session. Numbers are either
+cited to a primary source, measured from our own code and labelled as such, or
+marked as still to be measured.
 
 ---
 
@@ -265,6 +268,22 @@ Overlap trades cost for recall linearly: overlap fraction *f* multiplies the num
 of model calls by roughly `1/(1-f)`. Defaults will be set from the sweep, and the
 relationship documented so a client can move the knob knowingly.
 
+**Implemented** in `windows.py`. Verified behaviour:
+
+| Property | Measured |
+|---|---|
+| 20 s video at 12 s window / 9 s stride | windows `[0.0, 12.0]` and `[9.0, 20.0]` |
+| First window starts at 0, last ends exactly at duration | yes — no unobserved footage, none past the end |
+| Overlap | 3 s, as configured |
+| 5-minute clip, 2 descriptions | 33 windows, **66 model calls**, computed *before any call* |
+
+That last row is what makes the work-budget refusal possible: cost is fully known
+from the inputs, so an oversized job is refused rather than discovered an hour in.
+
+Frames are subsampled **uniformly, never truncated**. Keeping the first N would
+silently make every window cover only its opening seconds, so events late in a
+window would vanish while everything still appeared to work.
+
 ### 6.4 Merging across windows
 
 Overlap guarantees duplicates. Each real event appears as a candidate in every
@@ -289,6 +308,21 @@ Two rules matter more than the thresholds:
   ranking signal the brief asks for stops discriminating. Agreement must inform the
   score without saturating it.
 
+**Implemented** in `merge.py`. Verified behaviour:
+
+| Property | Measured |
+|---|---|
+| 200 deliberately overlapping candidates | collapse to **2 events**, max span 59.8 s against the 60 s cap |
+| Unbounded equivalent | would have produced **1 event covering the whole video** |
+| Confidence, 1 / 2 / 5 / 20 agreeing windows | 0.582 / 0.815 / 0.960 / **0.970** |
+
+The confidence row is the point: it approaches a ceiling *below* 1.0, so ordering
+survives agreement. With a ceiling of exactly 1.0, everything past about five
+windows would be indistinguishable and the ranking signal would be dead.
+
+Merging is strictly per description. Two descriptions matching the same moment are
+two findings; collapsing them would silently discard one.
+
 ### 6.5 Ranking signal
 
 Deliberately labelled a **heuristic ranking signal, not a calibrated probability**.
@@ -308,6 +342,18 @@ it. Its true extent is then unknown.
 Reporting a clipped span as if it were exact is a quiet lie. Such events are
 flagged instead, so a client can decide whether to trust the boundary. Sufficient
 overlap prevents most of these; the flag surfaces the remainder honestly.
+
+The distinction the implementation draws is between **"the event ended here"** and
+**"this is where we stopped looking."**
+
+**Implemented** in `merge.py`. Verified behaviour:
+
+| Case | `partial` |
+|---|---|
+| Touches a window edge, seen by one window only | **true** — extent unknown |
+| Mid-video, seen by one window | false — the boundary was observed |
+| Touches a window edge, but **two windows confirm it** | **false** — independent confirmation means it was observed, not merely where looking stopped |
+| Touches the video's own start or end | **true** — the footage does not exist either side |
 
 ---
 
@@ -347,13 +393,44 @@ The adapter's job is to absorb that: prompt construction, response parsing, and
 clamping every reported timestamp into the window's real span so a window can never
 emit an event outside the footage it saw. Swapping backends is configuration.
 
+**Response parsing is where this seam earns its keep.** Cosmos 3 is a *reasoning*
+model — vLLM's `--reasoning-parser qwen3` exists precisely because it emits a
+`<think>` block before answering. Code that assumes bare JSON fails on every
+response. Verified behaviour of `backends/base.py`:
+
+| Response shape | Result |
+|---|---|
+| `<think>...</think>` followed by JSON | 1 event parsed |
+| JSON in a ` ```json ` fence | 1 event parsed |
+| Prose wrapped around `{"events": []}` | 0 events, **no error** |
+| A bare list instead of the documented object | 1 event parsed |
+| Truncated mid-`<think>` | 0 events, **flagged as truncated** |
+| A refusal, or any unparseable text | 0 events, flagged unparseable |
+
+The third and fifth rows carry the important distinction: *"the model reports
+nothing happened"* is a valid answer, while *"the model returned something we could
+not read"* is a failure. Conflating them would turn every parse failure into a
+confident zero — silently lowering recall while looking like a clean run.
+
+Reported times are then **clamped into the window's real span**, because models
+report times for footage they never received. Unclamped, those merge with genuine
+detections and become indistinguishable from them.
+
+**Prompts are data, not string literals.** The brief says Edge localises "when
+prompted correctly", so `backends/prompts.py` holds named variants that can be
+swept and reported on: `overlay` (read the burned-in timestamp, per NVIDIA's
+recipe), `native` (ask for time without mentioning overlays — does it localise some
+other way?), and `terse` (a minimal control: if it matches the others, the
+elaborate prompting was not what made the difference).
+
 **Backends**
 
 | Backend | Role | Notes |
 |---|---|---|
 | `nvidia/Cosmos3-Edge` | Primary | 4B, OpenMDW 1.1, **not gated**. Natively served by stock vLLM as `Cosmos3EdgeForConditionalGeneration` — Nemotron-H backbone with a SigLIP2 vision encoder. Recommended by the brief. Timestamp localisation **undocumented** — see §6.1 |
 | `nvidia/Cosmos-Reason2-8B` | Fallback | Documented timestamp localisation and fps. Gated, needs a token — hence fallback, not default |
-| stub | Development | Deterministic, GPU-free. Proves the pipeline; never produces a metric |
+| stub | Development | Deterministic, GPU-free. Proves the pipeline; stamped `stub` and barred from producing a metric |
+| **replay** | Development | **Real recorded responses, replayed with no GPU.** One GPU session records genuine exchanges; all later parser, prompt and merge work then runs on a laptop against real model output — including the malformed responses the parser has to survive. It also makes an odd response a permanent fixture rather than a story |
 
 **On serving.** Cosmos 3 is a **Mixture-of-Transformers**: one model, two towers.
 The **Reasoner** is autoregressive and interprets multimodal input into text — the

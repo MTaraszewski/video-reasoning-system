@@ -74,6 +74,43 @@ visibly or documented as a known limit:
 | Sampling rate sets a hard floor on boundary precision | Interpreting tIoU at 0.7 |
 | Fixed-camera domain weaknesses Roboflow already published | Fast motion, small similar objects |
 
+### Requirements traceability
+
+Checked against the brief, not against how much has been built. Status is honest:
+`DONE` means it works and was run; `PART` means partially; `TODO` means it does not
+exist yet.
+
+| # | Requirement | Status | Where / what is missing |
+|---|---|---|---|
+| R1 | Long-video handling: sampling, windowing, cross-boundary merge, partial events | **DONE** | `decode.py`, `windows.py`, `merge.py`; behaviour verified and evidenced in [`DESIGN.md §6`](DESIGN.md) |
+| R2 | Document those decisions | **DONE** | `DESIGN.md`, `DECISIONS.md`, `DATASETS.md`, `RUNBOOK.md` |
+| R3 | Open weights, video input, temporal localisation, a context limit worked around | **PART** | model verified open/ungated/video-capable; **temporal localisation is the thing under test**; frames-per-call limit not yet measured |
+| R4 | No hosted commercial API as primary | **DONE** | self-hosted vLLM only; no hosted path exists |
+| R5 | **Runs on their machine in minutes, first try, without reading the code** | **TODO** | `find_events()` exists but **`make demo` does not**, and nothing has been run from a clean clone |
+| R6 | 5-10 clips, 1-3 min, hand-labelled, rights-clean, defensible temporal metric | **PART** | sources chosen and 1.5 GB fetched; **clips not trimmed, not labelled, metrics code TODO** |
+| R7 | Report where the model's limits are | **TODO** | nothing measured yet |
+| R8 | GitHub repository | **DONE** | pushed to `origin/dev` |
+| R9 | Deliver within about a week | **ON TRACK** | started 2026-09-09 |
+
+### The risk this exposes
+
+Considerable effort has gone into scaffolding — Makefiles, runbook, skills, docs —
+and **the deliverable itself has never run end to end.** No `find_events()` call has
+produced the JSON the brief actually asks for.
+
+The brief is explicit that it will be judged on the solution, its value and ease of
+use, and that tests, CI and deployment mechanics are *not* evaluated. Weighed
+against that, the shortest path to a defensible submission is:
+
+1. **`make demo` producing valid events JSON** — the single command a reviewer types
+   first, and the thing R5 is strict about
+2. **merge + partial events** — the part of R1 that is the actual contribution
+3. **metrics** — R6 is unsatisfiable without them
+4. **trim and label clips** — R6's hard numbers
+5. everything else
+
+Anything not on that list waits until those are done.
+
 ### Standing offer from the brief
 "Questions before you start are welcome; ask them." — an open channel to Paweł,
 not yet used.
@@ -442,23 +479,29 @@ benchmarks as the one reproduction target.
       (a) timestamps burned into frames, as documented for Cosmos Reason 2, and
       (b) vLLM's native video input path supplying frame timing. Pick on evidence.
       Prompt design is a first-class experiment here, given the brief's qualifier.
-- [x] ~~Which AWS instance~~ — **`g6e.xlarge`** (L40S, 44.7 GB), sized by
-      Cosmos-Reason2-8B's documented 32 GB minimum, with a 300 GB gp3 EBS root.
-      Full reasoning, download timeline and cost estimate in
-      [`RUNBOOK.md`](RUNBOOK.md).
+- [x] ~~Which AWS instance~~ — **`g7e.2xlarge`** in **`eu-central-1`**: RTX PRO 6000
+      Blackwell, 96 GiB VRAM, 8 vCPU, 64 GiB RAM, 1900 GiB NVMe, **$5.719/hr**
+      (console-verified in Frankfurt; the widely-quoted $3.36 is us-east-1).
+      Blackwell is on NVIDIA's supported list, so the architecture risk is avoided
+      rather than accepted. 150-200 GB gp3 EBS for weights and images, datasets on
+      the ephemeral NVMe. See [`RUNBOOK.md`](RUNBOOK.md) and
+      [`DECISIONS.md §4b`](DECISIONS.md).
 - [ ] **Actual VRAM for the Edge reasoner**, measured on the box. Still unpublished;
       it decides whether a cheaper 24 GB card would do for Edge-only runs.
-- [ ] **`UNVERIFIED`: does Cosmos-Reason2 run on Ada/Ampere?** Its card lists only
-      Hopper and Blackwell as supported, and every affordable AWS single-GPU option
-      is Ada or Ampere. Test it early in the first GPU session, not last.
-- [ ] **AWS GPU quota** for "Running On-Demand G and VT instances" — often zero on
-      new accounts, and the increase can take days. The one blocker no local
-      preparation can shorten.
+- [x] ~~Does Cosmos-Reason2 run on Ada/Ampere?~~ — **avoided, not answered.**
+      `g7e.2xlarge` is Blackwell, which NVIDIA lists as supported. The question
+      only returns if we fall back to a cheaper Ada instance.
+- [x] ~~G7e availability~~ — **confirmed offered in `eu-central-1`** (console);
+      **not** offered in `eu-west-1`. Bucket and instance must both be Frankfurt.
+- [ ] **AWS vCPU quota** for "Running On-Demand G and VT instances" — needs ≥8 for
+      `g7e.2xlarge`. Availability in the console does not imply quota; confirm the
+      applied value in Service Quotas before launching.
 - [ ] Which vLLM version first shipped `cosmos3_edge`; pin it exactly.
 - [ ] Does Edge need `--hf-overrides` to select the reasoner architecture?
-- [x] ~~VANTAGE-Bench as an eval source~~ — **closed, ruled out.** Gated,
-      evaluation-only licence, ground truth withheld server-side. Need another
-      source of real footage.
+- [x] ~~VANTAGE-Bench as an eval source~~ — **reversed: accepted** as a
+      supplementary tier. Two of the three original objections did not survive
+      scrutiny. Gated access keeps it out of the reproducible core.
+      See [`DECISIONS.md §6.1`](DECISIONS.md).
 
 - [ ] Optimal fps for Edge: 4 (documented input rate) vs 8 (best in NVIDIA's
       temporal-localisation recipe, on a different model). Measure, don't assume.
@@ -473,10 +516,16 @@ benchmarks as the one reproduction target.
       the harness. Decision pending: hand-write into this file now, or have
       `make probe` emit them as JSON and render the markdown so they cannot drift.
 - [x] ~~Rights-clean real footage for R6~~ — **sources chosen**, see
-      [`DATASETS.md`](DATASETS.md). Three tiers: synthetic (ours, exact ground
+      [`DATASETS.md`](DATASETS.md). Six sources: synthetic (ours, exact ground
       truth), **MEVA** (CC BY 4.0, no login, fixed-camera, includes
       `person_opens_facility_door`), and Roboflow's `supervision` assets
       (fetch-only, licence unstated). Remaining work is tracked in that file.
+- [ ] **The MEVA slice is one scene from twelve cameras**, not twelve scenes.
+      Good for multi-view comparison, weak as a diverse eval set. Sampling across
+      dates and times would fix it — settle before labelling begins.
+- [ ] **Clips need trimming from ~5 min to the brief's 1-3 min.** Also a cost
+      lever: at 4 fps / 12 s windows / 9 s stride a 300 s clip is ~34 windows per
+      query; trimming to 2 min cuts model calls ~60%.
 - [ ] **Nothing in the eval set has forklifts**, one of the brief's own examples.
       Needs a separate hunt if warehouse footage matters.
 - [ ] **Ask Roboflow about the `supervision` sample-video licence** — unstated, and
@@ -490,12 +539,22 @@ Skills live in `.claude/skills/` **inside this repo and are committed**. Each is
 created when the work that needs it arrives, not before, so it is shaped by real
 use rather than guesswork.
 
+Two were pulled forward by the decision to build the whole ecosystem before
+renting: if the GPU box is meant to do nothing but `git clone` and run, then the
+clone is a first-run test and the session is a checklist — both need to exist
+before the meter starts, not during.
+
+**No agents.** Subagents suit fan-out work where only the conclusion is wanted.
+Here the reasoning is being reviewed step by step, and delegating would hide
+exactly what is under review. The one task that suited fan-out — the licence and
+dataset survey — is done.
+
 | Skill | Job | Trigger | Status |
 |---|---|---|---|
 | **`model-facts`** | Verify any model / framework / dataset / licence claim against primary sources before it enters a doc or a decision. Owns the status vocabulary (`?` / `D` / `B` / measured / `CONFLICT`), the source hierarchy, and the rules that documented-absence is not absence and a self-reported ranking is not third-party evidence | Step 0 | **Created** |
-| `gpu-runbook` | Provision, serve and tear down the rented GPU box. Capture **measured** VRAM, latency and cost, so no guessed number reaches a document | Step 3 | Deferred |
+| **`gpu-runbook`** | Method for working on a metered box: what must be done before renting, the order of operations on the box (cheapest and most diagnostic first), which numbers to capture while it is up, and the rule that a bug reproducible locally is never debugged on a metered machine | Step 3 | **Created** — pulled forward: the ecosystem-before-renting decision makes the box session a checklist to follow, not an improvisation |
 | `cv-eval` | Temporal metrics, the labelling format, clip sourcing and licence checks, per-video metric isolation | Step 4 | Deferred |
-| `first-run-check` | Simulate the reviewer: clean machine, follow the README literally, read no code, timebox to minutes. Guards the brief's strictest bar | Before Step 7 | Deferred |
+| **`first-run-check`** | Simulate a stranger: fresh clone, README only, no source, no fixing mid-run, timed. Lists the factors that mask a broken first run — warm image caches, files left by earlier commands, environment variables, existing credentials | Before Step 7 | **Created** — pulled forward: cloning onto the GPU box *is* a first run, and debugging it there costs GPU-hours |
 
 ---
 
@@ -596,13 +655,30 @@ switches to Cosmos-Reason2-8B and the matrix is unchanged.
 | # | Step | Status |
 |---|---|---|
 | 0 | Verify the model: existence, IDs, licence, VRAM, serving stack, localisation mechanism | **Done** — §1 |
-| 1 | Planning and design documents: plan, HLD, datasets, decisions, README | **Done** |
-| 2 | Runnable spine in Docker: decode -> window -> extract -> merge -> schema -> CLI, with a GPU-free stub path, verified by running it | **Next** |
-| 3 | On the rented GPU: validate the deployment against the Cosmos 3 paper benchmarks, then run the **capability probe**. Measure VRAM and frames-per-call. Gates everything downstream | Not started |
-| 4 | Eval set: 5-10 hand-labelled clips across the six sources, chosen by failure axis; per-video metric isolation | Not started |
-| 5 | Measured runs: the model x clip matrix, fps/window sweep, failure analysis against Roboflow's published limits | Not started |
-| 6 | README results section, leaderboard and figures filled from measured numbers only | Not started |
+| 1 | Planning and design documents: plan, HLD, datasets, decisions, runbook, README | **Done** |
+| 2a | Docker + Make scaffolding, uv lockfile, synthetic clip generator | **Done** — verified by running `help`, `vars`, `preflight`, `build`, `data-synthetic`, `data-supervision`, `data-meva` |
+| 2b | Schema, config loading, input validation | Not started |
+| **2c** | **`decode`: sample frames, burn absolute timestamps, dump for inspection** | **Next** |
+| 2d | `windows`: plan, assign frames, frame cap | Not started |
+| 2e | `extract` + model adapter + stub backend | Not started |
+| 2f | `merge`: bounded chaining, non-saturating score | Not started |
+| 2g | CLI wiring, `make demo` end to end | Not started |
+| 3 | On the GPU: validate the deployment against the Cosmos 3 paper benchmarks, then the **capability probe**. Measure VRAM and frames-per-call. Gates everything downstream | Not started |
+| 4 | Eval set: trim to 1-3 min, hand-label across the failure axes, per-video metric isolation | Not started |
+| 5 | Measured runs: model x clip matrix, fps/window sweep, failure analysis | Not started |
+| 6 | README results, leaderboard and figures from measured numbers only | Not started |
 | 7 | First-run rehearsal on a clean machine, then push | Not started |
+
+### Infrastructure, done in parallel
+
+| Item | Status |
+|---|---|
+| S3 staging bucket `mt-video-reasoning-system` (`eu-central-1`) | **Created** |
+| Datasets fetched locally: synthetic 6, MEVA 12, supervision 3 | **Done** — 1.5 GB |
+| Staged to S3 | **Done** — 24 objects, verified |
+| `g7e.2xlarge` availability in `eu-central-1` | **Confirmed** |
+| vCPU quota ≥8 for G instances | Not confirmed |
+| Instance launched | Not yet |
 
 ---
 
@@ -628,3 +704,21 @@ switches to Cosmos-Reason2-8B and the matrix is unchanged.
   reproduction to optional and adopted the Cosmos 3 paper benchmarks instead, as a
   check that the deployment itself is correct. Wrote `DECISIONS.md`, `DATASETS.md`
   and the README.
+
+- **2026-09-09 (afternoon)** — Completed increment 2a: Docker, compose, a `make/`
+  directory of includes, uv with a committed lockfile, preflight scripts and the
+  synthetic clip generator. Five bugs surfaced only by running it, including
+  `.ONESHELL` being silently ignored on macOS's GNU Make 3.81 and a `data/` bind
+  mount that compose read as a named volume.
+  Fetched all three local dataset sources and staged 1.5 GB to
+  `s3://mt-video-reasoning-system` in `eu-central-1`. A region check now resolves
+  the bucket's true region rather than trusting `AWS_REGION`, after an inherited
+  environment variable silently pointed transfers at `eu-west-1` — S3 redirects
+  rather than failing, so the only symptom would have been slow, cross-region-billed
+  transfers.
+  Chose `g7e.2xlarge` (Blackwell) over `g6e.xlarge` (Ada) to avoid the
+  unsupported-architecture risk, and corrected the price to the Frankfurt rate of
+  $5.719/hr after finding the quoted $3.36 was us-east-1.
+  Verified the MEVA slice with `ffprobe`: filename-encoded durations are accurate,
+  and one clip is 352x240 among eleven 1080p ones — kept deliberately as a
+  low-resolution failure axis rather than discarded.

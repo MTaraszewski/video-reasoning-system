@@ -16,8 +16,8 @@
 #   VANTAGE      evaluation-only, GATED, no redistribution
 # Nothing here commits video to the repo. Only our labels are committed.
 
-.PHONY: data data-synthetic data-meva data-supervision data-vantage \
-        s3-push s3-pull s3-status data-list
+.PHONY: frames frames-sweep data data-synthetic data-meva data-supervision data-vantage \
+        s3-check s3-push s3-push-dry s3-pull s3-status data-list
 
 # The finder mounts /data READ-ONLY, so the service can never modify a client's
 # footage. Data-*producing* targets are the one exception and say so explicitly,
@@ -25,9 +25,21 @@
 DATAGEN_RUN := $(COMPOSE) run --rm datagen
 
 # --- your staging bucket ----------------------------------------------------
-S3_BUCKET ?=
-S3_PREFIX ?= video-reasoning/data
-AWS_REGION ?= us-east-1
+# Set as the default so s3-push / s3-pull need no arguments. Override per run
+# with: make s3-pull S3_BUCKET=other-bucket
+S3_BUCKET  ?= mt-video-reasoning-system
+S3_PREFIX  ?= data
+
+# Assigned with `=`, NOT `?=`, on purpose. `?=` skips assignment when the name is
+# already defined — and make inherits the environment, so an exported
+# AWS_REGION (or a profile default of eu-west-1) silently won and pointed every
+# transfer at the wrong region. S3 redirects rather than erroring, so the only
+# symptom would have been slow, cross-region-billed transfers.
+#
+# The bucket's region is a fact about the bucket, not a user preference. A plain
+# `=` lets the makefile beat the environment while `make ... AWS_REGION=x` on the
+# command line still wins. `make s3-check` verifies it against the bucket itself.
+AWS_REGION = eu-central-1
 
 # --- MEVA -------------------------------------------------------------------
 # Public, no credentials. 470 GB in total, so we take one narrow slice.
@@ -55,19 +67,45 @@ data-vantage:  ## [local] fetch VANTAGE-Bench (GATED — needs HF_TOKEN and acce
 
 # --- staging to your own bucket ---------------------------------------------
 
-s3-push:  ## [local] upload the local data dir to your S3 staging bucket
+s3-check:  ## [any] resolve the bucket's real region and check it matches AWS_REGION
 	@[ -n "$(S3_BUCKET)" ] || { echo "FAIL  set S3_BUCKET=your-bucket"; exit 1; }
-	aws s3 sync $(DATA_DIR)/ s3://$(S3_BUCKET)/$(S3_PREFIX)/ --region $(AWS_REGION) --exclude '*.manifest'
+	@bash scripts/s3_check.sh $(S3_BUCKET) $(AWS_REGION)
+
+s3-push: s3-check  ## [local] upload the local data dir to your S3 staging bucket
+	@[ -n "$(S3_BUCKET)" ] || { echo "FAIL  set S3_BUCKET=your-bucket"; exit 1; }
+	aws s3 sync $(DATA_DIR)/ s3://$(S3_BUCKET)/$(S3_PREFIX)/ \
+	  --region $(AWS_REGION) --exclude '*.manifest' --exclude '*.listing*'
 	@echo "Staged to s3://$(S3_BUCKET)/$(S3_PREFIX)/"
 
-s3-pull:  ## [gpu] download the staged data from your bucket (run this ON the GPU box)
+s3-pull: s3-check  ## [gpu] download the staged data from your bucket (run this ON the GPU box)
 	@[ -n "$(S3_BUCKET)" ] || { echo "FAIL  set S3_BUCKET=your-bucket"; exit 1; }
 	@mkdir -p $(DATA_DIR)
 	aws s3 sync s3://$(S3_BUCKET)/$(S3_PREFIX)/ $(DATA_DIR)/ --region $(AWS_REGION)
 
 s3-status:  ## [any] show what is in the staging bucket
 	@[ -n "$(S3_BUCKET)" ] || { echo "FAIL  set S3_BUCKET=your-bucket"; exit 1; }
-	aws s3 ls s3://$(S3_BUCKET)/$(S3_PREFIX)/ --recursive --human-readable --summarize
+	@bash scripts/s3_check.sh $(S3_BUCKET) || true
+	@echo "prefix: $(S3_PREFIX)/"
+	@# `aws s3 ls` exits 1 on an empty prefix. An empty bucket is a normal state,
+	@# not a failure, so report it as such rather than propagating the exit code.
+	@aws s3 ls s3://$(S3_BUCKET)/$(S3_PREFIX)/ --recursive --human-readable --summarize \
+	  --region $(AWS_REGION) || echo "  (empty - nothing staged yet: make s3-push)"
+
+s3-push-dry:  ## [local] show what s3-push WOULD upload, without uploading
+	@[ -n "$(S3_BUCKET)" ] || { echo "FAIL  set S3_BUCKET=your-bucket"; exit 1; }
+	@aws s3 sync $(DATA_DIR)/ s3://$(S3_BUCKET)/$(S3_PREFIX)/ \
+	  --region $(AWS_REGION) --exclude '*.manifest' --exclude '*.listing*' --dryrun
+
+frames:  ## [any] dump sampled frames with burned-in timestamps, to inspect legibility
+	@mkdir -p $(OUT_DIR)/frames
+	$(COMPOSE) run --rm finder video-reasoning frames $(VIDEO_IN) \
+	  -o /out/frames $(if $(SAMPLE_FPS),--fps $(SAMPLE_FPS),) $(if $(LIMIT),--limit $(LIMIT),)
+	@echo "-> $(OUT_DIR)/frames"
+
+frames-sweep:  ## [any] render one frame at several overlay font scales, to pick one
+	@mkdir -p $(OUT_DIR)/frames
+	$(COMPOSE) run --rm finder video-reasoning frames $(VIDEO_IN) -o /out/frames --sweep
+	@echo "-> $(OUT_DIR)/frames  (compare scale-*.png at the size the model sees)"
 
 data-list:  ## [any] show what is present locally
 	@echo "Local data under $(DATA_DIR)/:"

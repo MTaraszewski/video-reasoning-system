@@ -71,6 +71,15 @@ six sources costs nothing extra; only clip count drives GPU cost.
 | **ComplexVAD**, **Street Scene** | **CC BY-SA 4.0** | Fixed-camera, temporally annotated, freely redistributable under share-alike. Cover short rare events |
 | **Assembly101** | CC BY-NC 4.0 | The only accepted source with an **overhead camera**, which Roboflow reported as a reliable failure case. Non-commercial licence — a real constraint, stated rather than ignored |
 
+**Kept deliberately: MEVA `G474`, a 352x240 clip among eleven 1080p ones.** The
+obvious move was to discard it as an outlier. Instead it becomes its own
+**low-resolution axis**: at 352x240 it sits below the 640x360 the model receives, so
+its frames are upscaled rather than downscaled. Real deployments have mixed camera
+quality, and the brief asks where the limits are — this is free evidence about a
+variable nothing else in the set tests. **Condition: reported separately, never
+averaged with the 1080p clips**, or resolution gets confounded with every other
+difference between cameras.
+
 ### Rejected
 
 | Source | Why rejected | Would reconsider if |
@@ -115,6 +124,37 @@ reproduced locally by any means. Its scores — Super 63.01, Nano 60.67, Reason2
 **NVIDIA's temporal-localisation recipe** (zero-shot mean relative error 52.0 /
 61.3 / 68.45 % on MimicGen). Initially proposed as a headline reproduction, then
 demoted — see §6.
+
+---
+
+## 4b. Infrastructure
+
+**Instance: `g7e.2xlarge`** — 1x NVIDIA RTX PRO 6000 Blackwell, 96 GiB VRAM,
+8 vCPU, 64 GiB RAM, 1900 GiB local NVMe, **$5.719/hr in `eu-central-1`**
+(console-verified; the widely-quoted $3.363 is us-east-1).
+
+| Why | |
+|---|---|
+| **Blackwell** | Cosmos-Reason2 documents Hopper and Blackwell support. This satisfies it directly, rather than carrying an unsupported-architecture risk |
+| **96 GiB VRAM** | Comfortably clears Cosmos-Reason2-8B's documented 32 GB minimum, which is the binding constraint since models are served one at a time |
+| **8 vCPU** | Video decoding is CPU work and runs alongside inference. The 4 vCPU alternatives are thin for it |
+| **1900 GiB NVMe** | Ephemeral, but ideal for datasets that `make s3-pull` restores in seconds |
+
+**Rejected:**
+
+| Instance | Why not |
+|---|---|
+| `g6e.xlarge` ~$1.86/hr us-east-1 | Cheaper, and 44.7 GB clears the 32 GB bar — but L40S is **Ada**, which NVIDIA does not list as supported. About $15 saved across the whole project, in exchange for the largest unknown in the runbook |
+| `g6.xlarge` ~$0.80/hr us-east-1 | 24 GB runs Cosmos3-Edge fine but not the 8B comparison. Saves money by removing the part that makes a single number interpretable |
+| `p5.4xlarge` ~$6.88/hr us-east-1 | Single H100, Hopper, also supported — but 2x the cost with less VRAM than G7e and no advantage at our model sizes |
+| `g7.2xlarge` ~$2.52/hr us-east-1 | Blackwell, but RTX PRO 4500 specs unconfirmed and it sits right on the 32 GB line. Not worth guessing to save $0.84/hr |
+
+**Storage: 150-200 GB gp3 EBS root, datasets on the instance NVMe.** Weights and
+images must survive stop/start, because re-downloading 50 GB costs more GPU time
+than the disk costs in a month. Datasets need not: they restore from S3 in seconds,
+and NVMe is faster for repeated decoding.
+
+Full reasoning, download timeline and cost estimates in [`RUNBOOK.md`](RUNBOOK.md).
 
 ---
 

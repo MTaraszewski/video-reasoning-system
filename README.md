@@ -62,10 +62,11 @@ alternatives rejected, and the decisions that reversed under new evidence.
 
 ## Results
 
-> **Status: no measurements yet.** Design and verification complete;
-> implementation not started. This section is the shape the answer will take — it
-> stays empty until real runs fill it, and no number appears here that was not
-> measured on the hardware.
+> **Status: pipeline implemented, no model measured yet.** Sampling, windowing,
+> merging and partial-event reporting are built, and their behaviour is verified in
+> [`DESIGN.md §6`](DESIGN.md) — but every one of those numbers describes *our code*,
+> not the model. This section stays empty until a real model runs on real clips, and
+> no number appears here that was not measured on the hardware.
 
 ### Leaderboard — models × temporal grounding
 
@@ -94,7 +95,8 @@ physical-AI training actually buys for this task.
 
 ## Running it
 
-> Not yet implemented. Planned interface, for reference:
+> `probe`, `demo`, `eval` and `sweep` are not wired up yet. Interface, for
+> reference:
 
 ```bash
 make preflight   # verify GPU, driver and container toolkit

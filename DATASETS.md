@@ -78,6 +78,7 @@ points.
 | **Crowds / distractors** | Visually similar non-events inflate false positives | `supervision` subway, market-square |
 | **Overhead camera** | Roboflow reported reliable failure on an overhead view | Assembly101 |
 | **Negative clips** | Query genuinely absent — measures false positives | Any |
+| **Low source resolution** | Below the model's own input size, so detail is upscaled rather than downscaled | MEVA `G474` — see §5 |
 
 **Synthetic footage is a first-class instrument here, not a fallback.** We control
 event duration, speed, size, contrast and count exactly, so any axis can be probed
@@ -172,9 +173,48 @@ by hand. MEVA's own annotations are then used to *measure our labelling error* �
 which is itself worth reporting, since it bounds how seriously any tIoU difference
 below that margin should be taken.
 
+### What the fetched slice actually contains
+
+Twelve clips from `drops-123-r13`, verified with `ffprobe` rather than trusted from
+filenames. **Every clip's real duration matches the duration encoded in its
+filename**, which is what the selection rule relies on.
+
+| Property | 11 clips | **`G474`** |
+|---|---|---|
+| Resolution | 1920x1080 / 1920x1072 | **352x240** |
+| Frame rate | 30 fps | 30 fps |
+| Duration | 236-300 s | 299 s |
+| Size | 56-203 MB | **2.2 MB** |
+
+**`G474` is kept on purpose, as its own axis.** It is not corrupt — it is a
+low-resolution camera. At 352x240 it sits *below* the 640x360 we downscale to for
+the model, so its frames are upscaled and carry none of the detail the others have.
+
+Real deployments have mixed camera quality, and "does the model still ground events
+at 352x240?" is a limits question the brief explicitly asks for. It is free
+evidence about a variable nothing else in the set tests.
+
+**It must never be averaged in with the 1080p clips.** Pooling them would confound
+resolution with every other difference between cameras. It is labelled and reported
+as the `low_resolution` axis, separately.
+
+### Two consequences for the eval set
+
+- **These clips are ~5 minutes; the brief asks for 1-3.** They need trimming. This
+  is also a cost lever: at 4 fps with 12 s windows and 9 s stride, a 300 s clip is
+  ~34 windows *per query*. Trimming to 2 minutes cuts model calls by about 60%.
+- **Two frame heights appear** — 1920x1080 and 1920x1072. A non-standard crop on
+  some cameras. Harmless, but nothing may assume a fixed aspect ratio.
+
+### One caveat about this slice
+
+All twelve clips are the **same five-minute window seen from twelve different
+cameras** at one location — twelve viewpoints of one scene, not twelve independent
+scenes. Good for a multi-view comparison, weak as a diverse eval set. Sampling
+across dates and times would fix it, and should be settled before labelling begins.
+
 `UNVERIFIED`: whether MEVA's annotation format carries explicit start/end frame
-times per activity instance, and which S3 drop is the smallest useful slice. Both
-settle on first download.
+times per activity instance.
 
 ---
 
