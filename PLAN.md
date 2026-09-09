@@ -442,8 +442,18 @@ benchmarks as the one reproduction target.
       (a) timestamps burned into frames, as documented for Cosmos Reason 2, and
       (b) vLLM's native video input path supplying frame timing. Pick on evidence.
       Prompt design is a first-class experiment here, given the brief's qualifier.
-- [ ] **Actual VRAM for the Edge reasoner.** Decides the AWS instance and the
-      cost-per-video-minute figure. Working hypothesis: fits 24 GB.
+- [x] ~~Which AWS instance~~ — **`g6e.xlarge`** (L40S, 44.7 GB), sized by
+      Cosmos-Reason2-8B's documented 32 GB minimum, with a 300 GB gp3 EBS root.
+      Full reasoning, download timeline and cost estimate in
+      [`RUNBOOK.md`](RUNBOOK.md).
+- [ ] **Actual VRAM for the Edge reasoner**, measured on the box. Still unpublished;
+      it decides whether a cheaper 24 GB card would do for Edge-only runs.
+- [ ] **`UNVERIFIED`: does Cosmos-Reason2 run on Ada/Ampere?** Its card lists only
+      Hopper and Blackwell as supported, and every affordable AWS single-GPU option
+      is Ada or Ampere. Test it early in the first GPU session, not last.
+- [ ] **AWS GPU quota** for "Running On-Demand G and VT instances" — often zero on
+      new accounts, and the increase can take days. The one blocker no local
+      preparation can shorten.
 - [ ] Which vLLM version first shipped `cosmos3_edge`; pin it exactly.
 - [ ] Does Edge need `--hf-overrides` to select the reasoner architecture?
 - [x] ~~VANTAGE-Bench as an eval source~~ — **closed, ruled out.** Gated,

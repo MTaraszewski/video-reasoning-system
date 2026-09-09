@@ -117,4 +117,5 @@ host needs Docker and the NVIDIA container toolkit, nothing else.
 | [`DESIGN.md`](DESIGN.md) | Architecture, diagrams, mechanisms, validation, the capability probe |
 | [`DATASETS.md`](DATASETS.md) | Evaluation sources, licences, failure axes, labelling protocol |
 | [`DECISIONS.md`](DECISIONS.md) | Every choice, rejected alternatives, and reversals |
+| [`RUNBOOK.md`](RUNBOOK.md) | Provisioning a GPU: instance sizing, what downloads when, cost, risks |
 | [`reference/take-home.md`](reference/take-home.md) | The assignment |
