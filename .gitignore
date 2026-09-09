@@ -228,3 +228,11 @@ weights/
 results.jsonl
 *.mp4
 !sample/*.mp4
+
+# --- runtime data (never commit footage) ---
+# `data/` alone would not work with the negation below: git does not descend into
+# an excluded directory, so !data/.gitkeep would never match. `data/*` excludes
+# the contents while leaving the directory itself traversable.
+data/*
+!data/.gitkeep
+.venv/

@@ -1,0 +1,62 @@
+# Runtime configuration. Every value here is a decision, and carries its reason.
+# Override on the command line: make run SAMPLE_FPS=8 WINDOW_S=8
+#
+# NOTHING HERE IS TUNED YET. These are starting points taken from documented
+# sources, to be replaced by measured values after the sweep in step 5. Any value
+# still marked PROVISIONAL has not been validated on hardware.
+
+model:
+  # Repo id is `Cosmos3-Edge` — no hyphens around the 3. Getting this wrong means
+  # nothing runs. Open licence (OpenMDW 1.1), ungated.
+  name: nvidia/Cosmos3-Edge
+  base_url: http://vllm:8000/v1
+  api_key: EMPTY
+  temperature: 0.0
+  max_tokens: 4096          # NVIDIA documents 4096+ to avoid truncated responses
+  request_timeout_s: 300
+
+sampling:
+  # PROVISIONAL. Two documented rates disagree, so this is a measured knob:
+  #   4 fps — the input rate NVIDIA documents for Cosmos 3 Edge reasoning,
+  #           chosen to match its training setup
+  #   8 fps — what NVIDIA's temporal-localisation recipe found optimal after
+  #           testing 4, 8 and 12
+  # 4 fps also sets a hard floor of 250 ms on boundary precision, before any
+  # model error. The sweep decides; this default does not assert an answer.
+  fps: 4
+  frame_max_side: 640       # Edge is documented at robot-control resolution 640x360
+  max_frames_per_window: 48 # hard cap per call, so cost per call stays bounded
+
+windowing:
+  # PROVISIONAL — window length must be set from the MEASURED frames-per-call
+  # limit, which is not published for this model.
+  window_s: 12.0
+  stride_s: 9.0             # stride < window => 3 s overlap
+  # Overlap is what recovers an event straddling a boundary. stride > window
+  # would leave unobserved gaps and is rejected by config validation.
+
+overlay:
+  # The timestamp burned onto each frame is the mechanism the design rests on.
+  # Whether Cosmos3-Edge reads it is UNVERIFIED — that is what the probe tests.
+  enabled: true
+  format: "t={:.3f}s"
+  position: bottom-left
+  font_scale: 0.045         # fraction of frame height; legibility at 640x360 is
+                            # itself a variable the probe sweeps
+
+merge:
+  # PROVISIONAL. Both thresholds need validating against constructed ground truth.
+  iou: 0.3                  # temporal IoU above which same-query candidates merge
+  gap_s: 0.5                # also merge candidates separated by less than this
+  max_span_s: 60.0          # bound on chaining: without it, a dense candidate
+                            # stream collapses into one giant event
+
+limits:
+  # Input validation. Bad input fails in milliseconds, before a GPU is paid for.
+  max_video_bytes: 2147483648   # 2 GiB
+  max_duration_s: 1800          # 30 min
+  min_duration_s: 0.5
+  max_queries: 20
+  max_query_chars: 300
+  max_model_calls: 500          # work budget: refuse rather than silently run for
+                                # hours. windows x queries is known before any call.

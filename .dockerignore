@@ -1,0 +1,16 @@
+.git
+.github
+reference
+data
+out
+weights
+*.mp4
+*.avi
+*.mhtml
+*.zip
+__pycache__
+*.pyc
+.venv
+.pytest_cache
+.ruff_cache
+*.egg-info
