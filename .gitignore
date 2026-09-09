@@ -216,3 +216,15 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# --- project ---
+# reference material: only the assignment brief is tracked
+reference/*
+!reference/take-home.md
+
+# runtime artifacts
+out/
+weights/
+results.jsonl
+*.mp4
+!sample/*.mp4
