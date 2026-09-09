@@ -116,7 +116,7 @@ brief says it is strict about.
 
 **The stub backend** ships inside the finder image, so the whole pipeline can be
 exercised with no GPU and no model download at all. It proves the plumbing. It
-never produces a reported metric — see §11.
+never produces a reported metric — see §12.
 
 ---
 
@@ -527,7 +527,7 @@ Every target is parameterised by environment variable, with defaults that work:
 | `DATASET` | the bundled eval set | Which labelled set `eval` runs against |
 | `SAMPLE_FPS` `WINDOW_S` `STRIDE_S` | from config | The sampling and windowing knobs |
 | `GPU_HOURLY` | unset | Instance price, for the cost-per-video-minute figure. **Unset means cost is not reported** rather than reported wrongly |
-| `ALLOW_NO_GPU` | unset | Explicit opt-in to the stub path. See §11 |
+| `ALLOW_NO_GPU` | unset | Explicit opt-in to the stub path. See §12 |
 | `OUT_DIR` | `./out` | Host directory results are written to |
 
 Three rules keep this honest:

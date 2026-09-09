@@ -223,25 +223,30 @@ A concrete additional worry: Edge is documented at **robot-control resolution
 overlay font size is a parameter we control — so **overlay legibility is itself a
 variable to sweep**, not a fixed choice.
 
-### VANTAGE-Bench — matches the task, but **cannot be our eval set**
+### VANTAGE-Bench — accepted as a supplementary eval source
 - Four pillars: **Semantic** (event verification, video QA), **Spatial** (referring
   expressions, pointing, object localisation), **Temporal** (**Temporal
   Localization**, dense video captioning), **Spatio-Temporal** (single object
   tracking). Domains: warehouse, transportation, smart spaces — fixed-camera.
   Temporal Localization is scored by **mIoU**, with **Precision@0.5** secondary.
   — <https://github.com/Clemson-Capstone/VANTAGE-Bench>
-- **Ruled out as a source of eval clips (R6).** Licence is
-  **`nvidia-evaluation-data-license`**, the dataset is **gated and "for evaluation
-  purposes only"**, and **ground truth is deliberately withheld** — scoring happens
-  server-side via a submission portal. We need clips we can hand-label and ship in a
-  public repo; this permits neither.
+- Licence is **`nvidia-evaluation-data-license`**; the dataset is **gated** and
+  stated to be "for evaluation purposes only"; **ground truth is withheld** and
+  scoring is server-side.
   — <https://huggingface.co/datasets/nvidia/PhysicalAI-VANTAGE-Bench>
-  - `CONFLICT`: the GitHub README implies videos are downloadable from HF while the
-    dataset card says they are not. Either way the licence blocks redistribution, so
-    the conclusion stands.
-- Still useful as **prior art for task framing**: it confirms mIoU-style temporal
-  overlap is the accepted metric for exactly this task, which supports our choice
-  in the design note.
+- **Download is contemplated by the terms**: *"When downloaded or used in accordance
+  with our terms of service..."*
+- **Accepted** because the withheld ground truth is irrelevant — the brief requires
+  us to hand-label anyway — and because our use *is* evaluation of an NVIDIA model.
+  It is the only source covering the warehouse and transportation domain, i.e. fast
+  motion and small similar objects. **Supplementary tier only**: gated access and no
+  redistribution keep it out of the reproducible core. Full reasoning and the
+  reversal are in [`DECISIONS.md §6.1`](DECISIONS.md).
+- **Not a reproduction target.** Its leaderboard numbers cannot be reproduced
+  locally by any means, because the ground truth exists only on their scoring
+  server.
+- Also useful as **prior art for the metric**: it confirms mIoU-style temporal
+  overlap is the accepted measure for exactly this task on exactly this domain.
 
 ### VANTAGE-Bench leaderboard — what it does and does not tell us
 Public zero-shot leaderboard, live since 2026-05-27.
@@ -323,7 +328,7 @@ Experience @ Roboflow, 2026-06-03)
   spots. Confirming or contradicting a Roboflow-published finding with our own
   measured numbers is the strongest possible answer to "where are the limits".
 
-### Cosmos Reason 2 — EXISTS; our documented fallback backend
+### Cosmos Reason 2 — EXISTS; our reference model and fallback backend
 - Repo IDs: `nvidia/Cosmos-Reason2-2B`, `nvidia/Cosmos-Reason2-8B`,
   `nvidia/Cosmos-Reason2-32B`. — <https://huggingface.co/nvidia/Cosmos-Reason2-8B>
 - 8B: gated (contact info required), **NVIDIA Open Model License, commercial use
@@ -581,12 +586,12 @@ switches to Cosmos-Reason2-8B and the matrix is unchanged.
 | # | Step | Status |
 |---|---|---|
 | 0 | Verify the model: existence, IDs, licence, VRAM, serving stack, localisation mechanism | **Done** — §1 |
-| 1 | Repo layout + HLD design note | **In progress** |
-| 2 | Runnable spine: decode -> window -> extract -> merge -> schema -> CLI, with a GPU-free mock path, verified by running it | Not started |
-| 3 | **Capability probe on a rented GPU.** Test the brief's claim directly: does Edge localise events in time, by which mechanism, and to what precision? Measure VRAM. Gates everything downstream | Not started |
-| 4 | Eval set: synthetic + real clips, hand-labelled, per-video metric isolation | Not started |
-| 5 | Measured runs: fps/window sweep, failure analysis against Roboflow's published limits | Not started |
-| 6 | README + design note finalised from measured numbers only | Not started |
+| 1 | Planning and design documents: plan, HLD, datasets, decisions, README | **Done** |
+| 2 | Runnable spine in Docker: decode -> window -> extract -> merge -> schema -> CLI, with a GPU-free stub path, verified by running it | **Next** |
+| 3 | On the rented GPU: validate the deployment against the Cosmos 3 paper benchmarks, then run the **capability probe**. Measure VRAM and frames-per-call. Gates everything downstream | Not started |
+| 4 | Eval set: 5-10 hand-labelled clips across the six sources, chosen by failure axis; per-video metric isolation | Not started |
+| 5 | Measured runs: the model x clip matrix, fps/window sweep, failure analysis against Roboflow's published limits | Not started |
+| 6 | README results section, leaderboard and figures filled from measured numbers only | Not started |
 | 7 | First-run rehearsal on a clean machine, then push | Not started |
 
 ---
@@ -602,3 +607,14 @@ switches to Cosmos-Reason2-8B and the matrix is unchanged.
   Temporal Localization task matches this assignment, as a candidate eval source.
   Found Roboflow's own published Cosmos 3 evaluation and recorded its stated
   limitations as targets for our failure analysis.
+- **2026-09-09 (later)** — Reversed the VANTAGE-Bench rejection: two of the three
+  original reasons did not survive scrutiny, and download is permitted by its terms.
+  Accepted as a supplementary tier for the warehouse/transportation domain nothing
+  else covers. Added ComplexVAD, Street Scene and Assembly101 as further sources.
+  Established that the brief names no dataset, so clips are selected by **failure
+  axis** rather than to match its three example phrases. Settled the model set at
+  four, including `Qwen/Qwen3-VL-8B-Instruct` as a controlled baseline — it is the
+  base model Cosmos-Reason2-8B was post-trained from. Demoted the MimicGen
+  reproduction to optional and adopted the Cosmos 3 paper benchmarks instead, as a
+  check that the deployment itself is correct. Wrote `DECISIONS.md`, `DATASETS.md`
+  and the README.
