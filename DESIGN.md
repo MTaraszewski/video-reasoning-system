@@ -242,6 +242,38 @@ assert. Sampling rate sets the floor on boundary precision: at 4 fps no boundary
 can be located better than 250 ms, before any model error. The repo will report the
 sweep and pick from evidence.
 
+### Sampling is not perfectly uniform, and the amount matters
+
+Frames are taken at the first decoded frame *at or after* each target time, so each
+lands slightly late. Measured, not derived:
+
+| Source | Target fps | Max deviation | Drift |
+|---|---|---|---|
+| synthetic, 25 fps | 4 | 30 ms (12%) | +10 ms over 80 samples |
+| synthetic, 25 fps | 8 | 35 ms (28%) | +5 ms over 160 |
+| MEVA, 30 fps | 4 | **50 ms (20%)** | −33 ms over 121 |
+| MEVA, 30 fps | **8** | **92 ms (73.6%)** | −33 ms over 241 |
+
+The mean interval is correct to four decimal places, so this is jitter around the
+grid rather than accumulating error — and the burned-in timestamp is the frame's
+**actual** time, not the intended one, so nothing downstream is misled about when
+a frame was taken.
+
+**But at 8 fps the minimum gap on MEVA is 33 ms** — two samples landing on adjacent
+source frames, i.e. the same moment sampled twice, spending a frame slot for no
+coverage. Since 8 fps is a live candidate (NVIDIA's temporal recipe favours it),
+this is worth stating rather than hiding: **acceptable at 4 fps, marginal at 8.**
+
+Selecting the *nearest* frame to each target instead of the first at-or-after would
+bound the error at half a source-frame interval and remove near-duplicates. Not yet
+done; recorded here rather than discovered later as an unexplained wobble in the
+precision floor.
+
+**Consequence for interpreting results.** The effective floor at 4 fps is ~250 ms
+plus up to ~50 ms jitter. Events shorter than about 300 ms can fall between samples
+entirely — which is exactly why the synthetic set contains a deliberate `short`
+clip with 0.15 s and 0.2 s events.
+
 ### 6.3 Windowing
 
 A video is longer than the model can attend to at once, so we slide a fixed-length
@@ -412,6 +444,32 @@ nothing happened"* is a valid answer, while *"the model returned something we co
 not read"* is a failure. Conflating them would turn every parse failure into a
 confident zero — silently lowering recall while looking like a clean run.
 
+### Reported times: clamping alone makes things worse
+
+Models report times for footage they never received. The obvious response is to
+clamp into the window's span — and on its own that is **worse than doing nothing**.
+
+A model reporting `t=400s` for a 12-second window is unmistakably hallucinating.
+*Clamped*, it becomes a confident event at the window edge: indistinguishable from
+a real detection, no longer flagged as anything, and merged into the output as
+evidence. **Clamping converts a detectable error into an undetectable one.**
+
+So `reconcile_times` gives three different failures three different answers:
+
+| Reported time | Response | Why |
+|---|---|---|
+| Within ~1 s of the window | **clamp** | Consistent with rounding or a misread digit. The event is real, the boundary is fuzzy |
+| Far outside the window | **reject, and count it** | The model is not reporting something it saw. Dropping it is honest; clamping it is fabrication |
+| **Near no frame we actually sent** | **reject, and count it** | The strongest check available, and one only we can make |
+
+That third rule is the useful one. We know the exact timestamps burned into every
+frame of the window, so *"could the model have read this time?"* is answerable
+rather than approximated. A reported time near none of them was never on screen.
+
+Rejections are **counted and returned, not swallowed**. A model that hallucinates
+often is a finding about the model, which is precisely what the brief asks us to
+report — so the rate belongs in the results, not in a silent filter.
+
 Reported times are then **clamped into the window's real span**, because models
 report times for footage they never received. Unclamped, those merge with genuine
 detections and become indistinguishable from them.
@@ -525,6 +583,48 @@ Expected weak points, to be confirmed or refuted rather than assumed: boundary
 precision at tight tIoU, absence-of-motion events such as "the machine stops"
 compared with distinctive motion, events shorter than the sampling interval, long
 events spanning many windows, and visually similar distractors.
+
+---
+
+## 9b. Testing the model path without a model
+
+The stub backend proves the *pipeline*. It proves nothing about the code that sits
+between us and the model — HTTP, authentication, reasoning-block parsing, time
+reconciliation, recording, the model-identity check. All of that is where the
+expensive surprises live, and none of it needs a GPU.
+
+So a **fake endpoint** speaks the OpenAI-compatible subset vLLM serves, and returns
+the responses that actually break parsers:
+
+| Scenario | Returns | Expected |
+|---|---|---|
+| `think` / `plain` / `fenced` / `prose` | reasoning block, bare JSON, fenced JSON, JSON in commentary | events found |
+| `empty` | a valid "nothing happened" | 0 events, **no error** |
+| `truncated` | stops mid-`<think>`, as at `max_tokens` | 0 events, flagged |
+| `refusal` | natural language, no JSON | 0 events, flagged |
+| **`hallucinate`** | timestamps far outside the window | **0 events** — rejected, not clamped |
+| `malformed` | JSON-ish with wrong field types | 0 events |
+| `mixed` | a different failure per call | reproducible rotation |
+
+A happy-path fake would prove almost nothing; the point is the failures.
+
+### The harness must be able to fail
+
+Its first version checked only three things: exit code, that the output parsed, and
+that no event fell outside the video. A hallucinated timestamp *clamped* to the
+window edge satisfies all three — so it **passed both before and after** the bug it
+existed to catch. Assertions that cannot fail are decoration.
+
+Each scenario now declares an expected event count, and the harness is verified
+against deliberate regressions:
+
+| Injected fault | Detected |
+|---|---|
+| A deliberately wrong expectation | `FAIL expected 1-9` |
+| Time rejection removed, clamping restored | `hallucinate: 2 events, FAIL expected 0-0` |
+
+The second is the one that matters: it is the exact regression the earlier version
+missed.
 
 ---
 

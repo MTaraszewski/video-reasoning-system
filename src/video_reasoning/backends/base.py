@@ -135,22 +135,66 @@ def parse_events(text: str) -> tuple[list[WindowEvent], str | None]:
     return [], "no parseable JSON in response"
 
 
-def clamp_to_window(events: list[WindowEvent], window: Window) -> list[WindowEvent]:
-    """Force every reported time into the footage the window actually contained.
+def reconcile_times(
+    events: list[WindowEvent], window: Window,
+    *, tolerance_s: float = 1.0, frame_tolerance_s: float = 0.5,
+) -> tuple[list[WindowEvent], dict]:
+    """Reconcile reported times with what the window actually contained.
 
-    Models report times outside what they saw. Without this a window can emit an
-    event for footage it never received, which then merges with real detections
-    and is indistinguishable from them.
+    Clamping alone is not enough, and is arguably worse than nothing on its own:
+    a model reporting t=400s for a 12s window is unmistakably hallucinating, but
+    *clamped* that becomes a confident event at the window edge — indistinguishable
+    from a real detection, and no longer flagged as anything. Clamping turns a
+    detectable error into an undetectable one.
+
+    So two different responses to two different failures:
+
+    **Small overshoot -> clamp.** Within `tolerance_s` of the window is consistent
+    with rounding or a misread digit. The event is real, the boundary is fuzzy.
+
+    **Wild value -> reject, and count it.** Beyond tolerance the model is not
+    reporting something it saw. Dropping it is honest; clamping it is fabrication.
+
+    **Reported near no frame we sent -> reject.** The strongest check available,
+    and one only we can make: the exact timestamps burned into this window's frames
+    are known. A time near none of them was never on screen to be read.
+
+    Rejections are returned, not swallowed. A model that hallucinates often is a
+    finding about the model, which is what the brief asks us to report.
     """
+    stats = {"clamped": 0, "rejected_out_of_window": 0, "rejected_no_frame": 0}
+    frame_times = [f.t for f in window.frames]
     out: list[WindowEvent] = []
+
     for e in events:
-        s, t = window.clamp(e.start_s), window.clamp(e.end_s)
-        if t < s:
-            s, t = t, s
-        out.append(
-            WindowEvent(
-                start_s=round(s, 3), end_s=round(t, 3),
-                confidence=e.confidence, evidence=e.evidence,
-            )
-        )
-    return out
+        s_, t_ = (e.start_s, e.end_s) if e.start_s <= e.end_s else (e.end_s, e.start_s)
+
+        # Beyond plausible reading error: the model did not see this.
+        if s_ > window.end_s + tolerance_s or t_ < window.start_s - tolerance_s:
+            stats["rejected_out_of_window"] += 1
+            continue
+
+        # Every reported boundary must sit near a frame that was actually shown.
+        if frame_times:
+            near_start = min(abs(s_ - ft) for ft in frame_times)
+            if near_start > frame_tolerance_s and not (
+                window.start_s <= s_ <= window.end_s
+            ):
+                stats["rejected_no_frame"] += 1
+                continue
+
+        cs, ct = window.clamp(s_), window.clamp(t_)
+        if abs(cs - s_) > 1e-6 or abs(ct - t_) > 1e-6:
+            stats["clamped"] += 1
+        if ct < cs:
+            cs, ct = ct, cs
+
+        out.append(WindowEvent(start_s=round(cs, 3), end_s=round(ct, 3),
+                               confidence=e.confidence, evidence=e.evidence))
+    return out, stats
+
+
+def clamp_to_window(events: list[WindowEvent], window: Window) -> list[WindowEvent]:
+    """Backwards-compatible wrapper. Prefer reconcile_times, which reports."""
+    kept, _ = reconcile_times(events, window)
+    return kept

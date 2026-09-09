@@ -95,19 +95,38 @@ physical-AI training actually buys for this task.
 
 ## Running it
 
-> `probe`, `demo`, `eval` and `sweep` are not wired up yet. Interface, for
-> reference:
+Everything runs in Docker. The host needs Docker, and the NVIDIA container toolkit
+only for the model server — the rest is CPU work.
+
+**Works today, no GPU required:**
 
 ```bash
-make preflight   # verify GPU, driver and container toolkit
-make probe       # characterise the model: can it ground events, how precisely
-make demo        # end-to-end on a sample clip
-make eval        # the labelled set → metric table
-make sweep       # fps / window / stride frontier
+make preflight    # can this machine run anything?
+make build        # build the finder image
+make data         # generate synthetic clips with exact ground truth
+make demo         # end-to-end -> events JSON, using the stub backend
+make plan  VIDEO=clip.mp4 QUERIES="a door opens"   # what a run would cost
+make run   VIDEO=clip.mp4 QUERIES="a door opens;a vehicle stops"
+make frames VIDEO=clip.mp4        # see the timestamped frames the model receives
+make fake-test                    # the real vLLM backend against a fake endpoint
 ```
 
-Everything runs in Docker — two containers, a CPU `finder` and a GPU `vllm`. The
-host needs Docker and the NVIDIA container toolkit, nothing else.
+`make fake-test` is worth knowing about: it exercises the actual model-facing code
+— HTTP, reasoning-block parsing, time reconciliation, the model-identity check —
+against an endpoint that returns reasoning blocks, truncated responses, refusals
+and hallucinated timestamps. No GPU involved.
+
+**Needs a GPU:**
+
+```bash
+make preflight-gpu   # is a GPU visible to CONTAINERS, not just the host?
+make serve-bg        # start the model, block until it answers
+make probe           # [planned] can the model ground events in time?
+make eval            # [planned] the labelled set -> metric table
+```
+
+`make help` lists every target, tagged `[local]` / `[gpu]` / `[any]`, with the
+end-to-end workflow.
 
 ---
 

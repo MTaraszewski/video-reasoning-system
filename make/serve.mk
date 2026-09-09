@@ -35,3 +35,26 @@ serve-down:  ## [gpu] stop the model server
 
 models:  ## [any] ask the endpoint what it is actually serving
 	@curl -s http://localhost:$(VLLM_PORT)/v1/models | python3 -m json.tool
+
+##@ Testing without a GPU
+
+.PHONY: fake-serve fake-down fake-test
+
+SCENARIO ?= think
+
+fake-serve:  ## [any] start a fake vLLM endpoint (SCENARIO=think|mixed|truncated|...)
+	SCENARIO=$(SCENARIO) $(COMPOSE) up -d fake-vllm
+	@bash scripts/wait_for_endpoint.sh $(VLLM_PORT) "$(MODEL)"
+
+fake-down:  ## [any] stop the fake endpoint
+	$(COMPOSE) stop fake-vllm && $(COMPOSE) rm -f fake-vllm
+
+# SCENARIOS overrides which cases run. Each is "name:min:max" expected events,
+# so the harness can actually fail rather than just report numbers.
+#   make fake-test
+#   make fake-test SCENARIOS="hallucinate:0:0"
+#   make fake-test SCENARIOS="think:1:9 empty:0:0"
+SCENARIOS ?=
+
+fake-test:  ## [any] run the REAL vllm backend against a fake endpoint, all scenarios
+	@bash scripts/fake_test.sh $(SCENARIOS)

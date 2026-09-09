@@ -39,7 +39,12 @@ COPY scripts ./scripts
 COPY config.yaml ./
 RUN uv sync --frozen --no-dev --extra data
 
+# PYTHONPATH puts the mounted source ahead of the copy uv installed into .venv.
+# Without it the ./src bind mount is inert: the container keeps running whatever
+# was baked at build time, so every edit silently needs a full rebuild and it is
+# easy to test stale code while believing otherwise.
 ENV PATH="/app/.venv/bin:$PATH" \
+    PYTHONPATH="/app/src" \
     PYTHONUNBUFFERED=1 \
     VRS_DATA_DIR=/data \
     VRS_OUT_DIR=/out

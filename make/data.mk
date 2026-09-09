@@ -102,10 +102,10 @@ frames:  ## [any] dump sampled frames with burned-in timestamps, to inspect legi
 	  -o /out/frames $(if $(SAMPLE_FPS),--fps $(SAMPLE_FPS),) $(if $(LIMIT),--limit $(LIMIT),)
 	@echo "-> $(OUT_DIR)/frames"
 
-frames-sweep:  ## [any] render one frame at several overlay font scales, to pick one
-	@mkdir -p $(OUT_DIR)/frames
-	$(COMPOSE) run --rm finder video-reasoning frames $(VIDEO_IN) -o /out/frames --sweep
-	@echo "-> $(OUT_DIR)/frames  (compare scale-*.png at the size the model sees)"
+frames-sweep:  ## [any] ONE frame at several overlay font scales, to compare legibility
+	@mkdir -p $(OUT_DIR)/sweep
+	$(COMPOSE) run --rm finder video-reasoning frames $(VIDEO_IN) -o /out/sweep --sweep
+	@echo "-> $(OUT_DIR)/sweep  (same frame, varying font size — compare legibility)"
 
 data-list:  ## [any] show what is present locally
 	@echo "Local data under $(DATA_DIR)/:"

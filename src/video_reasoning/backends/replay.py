@@ -15,8 +15,8 @@ from collections import defaultdict
 from pathlib import Path
 
 from ..errors import BackendUnavailable
-from .base import (ExtractRequest, ExtractResult, clamp_to_window, parse_events,
-                   split_reasoning)
+from .base import (ExtractRequest, ExtractResult, parse_events,
+                   reconcile_times, split_reasoning)
 
 
 class ReplayBackend:
@@ -51,13 +51,13 @@ class ReplayBackend:
         raw = rec.get("raw", "")
         reasoning = rec.get("reasoning") or split_reasoning(raw)[0]
         events, err = parse_events(raw)
-        events = clamp_to_window(events, req.window)
+        events, recon = reconcile_times(events, req.window)
         return ExtractResult(
             events=events, raw=raw, reasoning=reasoning,
             latency_s=rec.get("latency_s", 0.0),
             model=rec.get("model", "replay"),
             error=err or rec.get("error"),
-            meta={"replayed_from": str(self.dir)},
+            meta={"replayed_from": str(self.dir), **recon},
         )
 
     def describe(self) -> dict:

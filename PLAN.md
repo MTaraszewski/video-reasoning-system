@@ -86,7 +86,7 @@ exist yet.
 | R2 | Document those decisions | **DONE** | `DESIGN.md`, `DECISIONS.md`, `DATASETS.md`, `RUNBOOK.md` |
 | R3 | Open weights, video input, temporal localisation, a context limit worked around | **PART** | model verified open/ungated/video-capable; **temporal localisation is the thing under test**; frames-per-call limit not yet measured |
 | R4 | No hosted commercial API as primary | **DONE** | self-hosted vLLM only; no hosted path exists |
-| R5 | **Runs on their machine in minutes, first try, without reading the code** | **TODO** | `find_events()` exists but **`make demo` does not**, and nothing has been run from a clean clone |
+| R5 | **Runs on their machine in minutes, first try, without reading the code** | **PART** | `make demo` works end to end with no GPU and emits valid JSON; `make plan`, `run`, `frames`, `fake-test` all work. **Never run from a clean clone** — every run so far had a warm image cache |
 | R6 | 5-10 clips, 1-3 min, hand-labelled, rights-clean, defensible temporal metric | **PART** | sources chosen and 1.5 GB fetched; **clips not trimmed, not labelled, metrics code TODO** |
 | R7 | Report where the model's limits are | **TODO** | nothing measured yet |
 | R8 | GitHub repository | **DONE** | pushed to `origin/dev` |
@@ -662,7 +662,8 @@ switches to Cosmos-Reason2-8B and the matrix is unchanged.
 | 2d | `windows`: plan, assign frames, frame cap | Not started |
 | 2e | `extract` + model adapter + stub backend | Not started |
 | 2f | `merge`: bounded chaining, non-saturating score | Not started |
-| 2g | CLI wiring, `make demo` end to end | Not started |
+| 2g | CLI wiring, `make demo` end to end | **Done** — emits valid JSON via the stub, 2 calls on the sample clip |
+| 2h | Fake vLLM endpoint + scenario harness, exercising the real backend with no GPU | **Done** — 10 scenarios, harness verified to detect injected regressions |
 | 3 | On the GPU: validate the deployment against the Cosmos 3 paper benchmarks, then the **capability probe**. Measure VRAM and frames-per-call. Gates everything downstream | Not started |
 | 4 | Eval set: trim to 1-3 min, hand-label across the failure axes, per-video metric isolation | Not started |
 | 5 | Measured runs: model x clip matrix, fps/window sweep, failure analysis | Not started |

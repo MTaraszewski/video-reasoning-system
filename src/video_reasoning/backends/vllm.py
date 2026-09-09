@@ -18,7 +18,8 @@ from pathlib import Path
 
 from ..decode import frame_to_data_url
 from ..errors import BackendUnavailable
-from .base import ExtractRequest, ExtractResult, clamp_to_window, parse_events, split_reasoning
+from .base import (ExtractRequest, ExtractResult, parse_events,
+                   reconcile_times, split_reasoning)
 
 
 class VLLMBackend:
@@ -116,13 +117,13 @@ class VLLMBackend:
             reasoning, text = split_reasoning(text)
 
         events, err = parse_events(text if reasoning else (msg.content or ""))
-        events = clamp_to_window(events, req.window)
+        events, recon = reconcile_times(events, req.window)
 
         result = ExtractResult(
             events=events, raw=msg.content or "", reasoning=reasoning,
             latency_s=round(latency, 3), model=self.model, error=err,
             meta={"finish_reason": resp.choices[0].finish_reason,
-                  "frames": len(req.window.frames)},
+                  "frames": len(req.window.frames), **recon},
         )
         self._record(req, result)
         return result

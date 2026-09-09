@@ -45,6 +45,25 @@ services:
       - ${DATA_DIR:-./data}:/data
     working_dir: /app
 
+  # A fake vLLM endpoint. The stub backend proves the pipeline; this proves the
+  # code BETWEEN us and the model — HTTP, think-block parsing, timestamp
+  # clamping, recording, the model-identity check — none of which needs a GPU.
+  # Scenarios return the responses that actually break parsers.
+  fake-vllm:
+    image: video-reasoning-finder:dev
+    build:
+      context: .
+      dockerfile: docker/finder.Dockerfile
+    ports:
+      - "${VLLM_PORT:-8000}:8000"
+    volumes:
+      - ./scripts:/app/scripts
+    command: >
+      python scripts/fake_vllm.py
+      --model ${MODEL:-nvidia/Cosmos3-Edge}
+      --scenario ${SCENARIO:-think}
+    working_dir: /app
+
   vllm:
     # Pinned deliberately. A floating `latest` tag is the most likely cause of
     # "it worked for you and not for us" — the exact failure we are guarding.
