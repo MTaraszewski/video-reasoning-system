@@ -86,7 +86,7 @@ exist yet.
 | R2 | Document those decisions | **DONE** | `DESIGN.md`, `DECISIONS.md`, `DATASETS.md`, `RUNBOOK.md` |
 | R3 | Open weights, video input, temporal localisation, a context limit worked around | **PART** | model verified open/ungated/video-capable; **temporal localisation is the thing under test**; frames-per-call limit not yet measured |
 | R4 | No hosted commercial API as primary | **DONE** | self-hosted vLLM only; no hosted path exists |
-| R5 | **Runs on their machine in minutes, first try, without reading the code** | **PART** | `make demo`, `plan`, `run`, `frames`, `probe`, `fake-test`, `verify-data` all work with no GPU. **Never run from a clean clone** — every run so far had a warm image cache, files left by earlier commands, and bugs fixed between attempts. Step 2l |
+| R5 | **Runs on their machine in minutes, first try, without reading the code** | **PART** | **Clean-clone verified**: `preflight`, `build`, `data`, `demo`, `verify-data`, `probe`, `plan`, `frames` all pass from a fresh clone — **79 s to first events JSON**. Two caveats: the 73 s build had a warm Docker layer cache, so a cold host is realistically 3-5 min; and **a real reviewer's clone still fails**, because the default branch is `main` — see the release blocker below. `fake-test` and `run` on a custom video not yet exercised from clean |
 | R6 | 5-10 clips, 1-3 min, hand-labelled, rights-clean, defensible temporal metric | **PART** | **Metric done** — tIoU R@1 at 0.3/0.5/0.7, mean tIoU, precision/recall, NVIDIA's mean relative error, false-positive rate, per-axis breakdown, per-video isolation enforced. Six synthetic clips verified against their own labels. **Real clips still to fetch (`MEVA_MODE=annotated`), trim and hand-label** |
 | R7 | Report where the model's limits are | **TODO** | The instruments exist — per-axis metrics, the probe's precision floor, hallucination-rejection counts, the positive-control ceiling test. **Nothing measured**, because no model has been run |
 | R8 | GitHub repository | **DONE** | pushed to `origin/dev` |
@@ -667,12 +667,66 @@ switches to Cosmos-Reason2-8B and the matrix is unchanged.
 | 2i | Capability probe harness (`make probe`) | **Done** — runs against the fake endpoint; needs a real model for a real answer |
 | 2j | Metrics + eval harness (`make eval`, `make eval-control`) | **Done** — per-video isolation and control exclusion enforced in code and verified |
 | 2k | Clip preparation and data verification (`make prepare-clips`, `make verify-data`) | **Done** — found one clip that did not show what its label claimed |
-| **2l** | **Clean-clone check: `git clone` into a fresh directory, README only** | **Next — the last gate before renting** |
+| 2l | Clean-clone check: `git clone` into a fresh directory, README only | **Done** — 79 s to first events JSON; found the default-branch blocker below |
 | 3 | **On the GPU**: serve the model, validate the deployment against the paper benchmarks, run the probe, record every exchange for replay | Not started — harness ready |
 | 4 | Real eval footage: MEVA `annotated` fetch, trim to 1-3 min, hand-label across the axes | Not started — tooling ready, **not blocking step 3** |
 | 5 | Measured runs: model x clip matrix, fps/window sweep, failure analysis | Not started |
 | 6 | README results, leaderboard and figures from measured numbers only | Not started |
 | 7 | Final first-run rehearsal, then submit | Not started |
+
+### Clean-clone check — result
+
+Run 2026-09-10 from a fresh `git clone` into a directory that had never held this
+project, following only the README, with no fixing mid-run.
+
+| Step | Time | Result |
+|---|---|---|
+| `make preflight` | — | pass |
+| `make build` | 73 s | pass |
+| `make data` | 5 s | pass — 6 clips with exact ground truth |
+| `make demo` | 1 s | pass — valid events JSON, 2 model calls |
+| `make verify-data` | 3 s | pass — labels sound, every clip shows what it claims |
+| `make probe` | 3 s | pass |
+| `make plan` | 1 s | pass |
+| `make frames` | 0 s | pass |
+| **Total to first events JSON** | **79 s** | |
+
+**Two honest caveats.** The 73 s build ran with a warm Docker layer cache; a cold
+host also pulls the base image and apt packages, realistically 3-5 minutes. And
+`make fake-test` and `make run` on a custom video have still not been exercised
+from clean.
+
+**The check also found the blocker below**, which no test could have.
+
+### Release blocker — the submission must be on the default branch
+
+**Found by the clean-clone check, and by nothing else.** All work is on `dev`;
+GitHub's default branch was `main`, which still holds only the initial commit. A
+reviewer running `git clone` received **one file containing one line**:
+
+```
+$ git clone git@github.com:MTaraszewski/video-reasoning-system.git
+$ ls
+README.md          # "# video-reasoning-system"
+```
+
+The brief says they will *"take your submission and run it in a few minutes on a
+machine we own, without reading your code first"*. They would have cloned, seen a
+one-line README, and stopped.
+
+Nothing in the repo could have caught it. `git status` reported `dev...origin/dev`
+clean and in sync — true, and irrelevant. Every push succeeded. Every target
+passed, in a working tree that already had the files. The doc audits check what is
+*in* the files, not what a clone *receives*.
+
+**Interim fix applied:** GitHub's default branch switched to `dev`, so a clone now
+gets the work.
+
+**Still required before submitting:** merge `dev` into `main` and restore `main` as
+the default, once the pipeline works end to end on a real model. A submission whose
+contents depend on a repository setting the reviewer cannot see is fragile.
+
+
 
 **Why step 4 does not block step 3.** The probe measures a *precision floor*, which
 requires ground truth with zero labelling error — so it runs on synthetic clips by
@@ -752,3 +806,10 @@ also risk labelling for a mechanism the probe may show does not work.
   through the pipeline, the probe and the eval without complaint. `make verify-data`
   now checks every clip against its own ground truth, and validates `labels.json`.
   Two bugs in that checker itself accused correct clips before it could be trusted.
+
+- **2026-09-10 (later)** — Ran the first clean-clone check. The code passes from a
+  fresh clone in 79 s to first events JSON, every README command working. The check
+  also found what nothing else could: **a reviewer cloning this repo receives one
+  file containing one line**, because all work is on `dev` while GitHub's default
+  branch is `main`, still at the initial commit. `git status` reported clean and in
+  sync throughout — true, and irrelevant. Recorded as a release blocker.

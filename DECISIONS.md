@@ -255,6 +255,22 @@ against the recommendation.
 
 ---
 
+## 6.4 Default branch: main -> dev, temporarily
+
+`main` held only the initial commit while every commit of actual work sat on `dev`,
+so `git clone` handed a reviewer a single one-line README. Switched GitHub's
+default branch to `dev` as an interim fix.
+
+**Why not merge to main now:** the pipeline has not yet run against a real model.
+`main` becomes the submission once it works end to end, rather than accumulating
+work-in-progress.
+
+**Why this must not stay:** a submission whose contents depend on a repository
+setting the reviewer never sees is fragile. Recorded as a release blocker in
+[`PLAN.md §7`](PLAN.md).
+
+---
+
 ## 7. Open — not yet decided
 
 | Question | Blocked on |
