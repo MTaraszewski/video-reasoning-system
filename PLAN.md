@@ -1034,3 +1034,40 @@ aws service-quotas list-requested-service-quota-change-history \
   **Not done:** Approach 2 is a probe script, not integrated behind `find_events`,
   not run across the full eval set, and its state pairs are hand-written rather
   than derived from the description.
+
+- **2026-09-10 (four framings, and the one that mattered)** — Kept pushing
+  Approach 2 and ended up somewhere more useful than another score.
+
+  **Two scope rules proposed and falsified.** "Binary configurations work,
+  presence and motion fail" died on `G423` — standing versus sitting is a binary
+  configuration of a visible person and produced nothing. "Doors work" died on
+  `G340` — a car door that did not. Actor size, object size and object class were
+  each contradicted by a later test. Three detections is not a rule.
+
+  **Pairwise comparison: chance.** Asking which of two frame sequences contains
+  the change came back flat at 0.50, range 0.05 and 0.01, on a known hit and a
+  known miss. The diagnosis is the finding: both sequences go in one call with
+  text markers, and the model does not bind images to them. It cannot reason over
+  grouped image sequences within a single prompt.
+
+  **Reason-then-classify: the perception is there.** Every probe until this one
+  capped generation at 1-4 tokens and read a logprob — a reasoning model used as a
+  one-token classifier. Asked to describe first, it returned "the door is closed in
+  all frames" at t=2, "a person is opening the door" at t=4, "the door is open in
+  some frames, showing a person inside" at t=6, and "closed" at t=8. Against a
+  label of 3.0-5.7s that is correct at every timestep.
+
+  Four framings had been discarding that. Two defects sat between the perception
+  and the score, both ours: "describe the door" asks for appearance and got colour,
+  handle and frame, so the classifier scored +0.91 for "open" on text saying
+  "closed in most frames"; and the reasoning block was concatenated with the
+  answer, so the classifier read the model thinking aloud. Both fixed. Whether the
+  fix recovers the signal end to end is NOT yet measured.
+
+  The same output explains the `G423` miss without a new hypothesis: it describes
+  "a person standing near a table in the hallway" in a scene with several people.
+  Ambiguous subject, so the question was never well posed.
+
+  The lesson worth carrying: four negative results were reported before anyone
+  looked at what the model actually said. The moment we printed its own words, the
+  diagnosis took one reading.

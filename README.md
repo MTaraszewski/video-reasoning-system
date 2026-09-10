@@ -192,48 +192,60 @@ to 0.07. The hypothesis behind it, that subject size in frame is the limit, was
 then disproved directly: a car door succeeds at 322 px where a person in a doorway
 fails at 295 px.
 
-### A second approach, and what it scores
+### A second approach: poll the state, derive the event
 
-The failure above is specific: the model can *time* an event it is told is
-present, and cannot establish that it is present. So the second approach stops
-asking it to do either.
-
-**Ask what the scene is, repeatedly; derive the event from where the answer
-changes.** For *"a person opens a building door"* the persistent thing is a door,
-and it is closed or open. Each timestep gets a closed-set question — *"which
-describes this: (a) the door is closed (b) the door is open"* — asked in **both
-orders and averaged**, with confidence taken from the token logprobs. The event is
-a sustained departure from the clip's own baseline. **The model is never asked
+The first approach failed specifically — the model can *time* an event it is told
+is present and cannot establish that it is present. So the second stops asking it
+to do either. Ask what the scene **is**, repeatedly, in both option orders to
+cancel position bias, take confidence from the token logprobs, and call the event
+where the score departs from the clip's own baseline. **The model is never asked
 what time it is**; the timestamp comes from our sampling grid.
 
 | clip | question | outcome |
 |---|---|---|
-| `admin.G326` 03-07 | door closed / open | detected 3.0–9.0 s, **tIoU 0.46** |
-| `admin.G326` 03-12 | door closed / open | detected 4.0–8.0 s, **tIoU 0.26** |
-| `school.G300` 03-11 | car door closed / open | detected 10.0–14.0 s, **tIoU 0.54** |
-| `school.G300` 03-13 | door question, **no door in scene** | **no detection** — true negative |
-| `admin.G329` | doorway empty / person present | miss |
-| `school.G300` 03-11 | vehicle moving / stationary | miss |
+| `admin.G326` 03-07 | building door closed / open | **tIoU 0.46** |
+| `admin.G326` 03-12 | building door closed / open | **tIoU 0.26** |
+| `school.G300` | car door closed / open | **tIoU 0.54** / **0.55** — one interval, two labels |
+| `school.G300` 03-13 | door question, no door in scene | **no detection** — true negative |
+| `admin.G329`, `school.G423`, `bus.G340`, `school.G300` motion | four questions | misses |
 
-Mean tIoU on hits: **0.42**, against **0.002** for the first approach across its
-entire eval. Each hit would clear R@1 at tIoU 0.3, which the first approach never
-managed once.
+Three distinct detections, mean tIoU **0.42** where it fires, against **0.002**
+for the first approach across its entire eval.
 
-**The scope rule is the useful part.** It works when the state is a **binary
-configuration of an object that visibly changes shape**; it fails on **presence**
-and on **motion**. That is decidable from the client's sentence before any GPU
-runs — and it lands on the brief's own examples: *"a person enters through the
-door"* works, while *"a forklift reverses"* and *"the machine stops moving"* are
-both motion, and both fail.
+**We proposed two scope rules and falsified both.** *"Binary configurations work,
+presence and motion fail"* died on a person sitting down. *"Doors work"* died on a
+car door that didn't. Actor size, object size and object class were each
+contradicted by a later test. Six questions is not enough to establish a rule, and
+we are not going to invent one from three successes.
 
-Size is not what separates them: a car door works at 322 px where a person in a
-doorway fails at 295 px.
+### The finding that reframes all of it
 
-**Status, stated plainly.** This is a probe script, not pipeline code. Six
-questions on four clips is not an evaluation, the state pairs were written by hand
-rather than derived from the description, and a state interval answers *"when was
-it open"* while our labels answer *"when did the opening happen"* — so the late
-ends in that table are a difference of question, not error. → [`DESIGN.md §14a`](DESIGN.md)
+Every probe above capped generation at 1–4 tokens and read a logprob — using a
+reasoning model as a one-token classifier. Letting it describe the scene first, then
+scoring the description, gave this:
+
+> t=2 — *"The door is **closed** in all frames"*
+> t=4 — *"Sixth frame: **a person is opening the door**"*
+> t=6 — *"The door is **open** in some frames, showing a person inside"*
+> t=8 — *"the door seems to be **closed**"*
+
+Against a hand label of 3.0–5.7 s, correct at every timestep. **The perception was
+there the whole time, and four framings were discarding it.**
+
+Two defects sat between it and the score, both ours: we asked *"describe the door"*
+and got appearance rather than state, so the classifier scored **+0.91 for "open"
+on text saying "closed in most frames"**; and the server concatenates the model's
+reasoning with its answer, so the classifier was reading it think aloud. Both are
+fixed. **Whether that recovers the signal end to end is not yet measured**, and is
+not claimed.
+
+That also explains the `G423` miss without a new theory: the description says *"a
+person standing near a table in the hallway"* — in a scene with several people. The
+subject was ambiguous, so the question was never well posed.
+
+**Status:** these are probe scripts, not pipeline code. `find_events` still runs
+the first approach. Nine questions across five clips is a characterisation, not an
+evaluation. → [`DESIGN.md §14a`](DESIGN.md)
 
 ### What we got wrong along the way
 

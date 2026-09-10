@@ -1068,41 +1068,82 @@ a door and it is `closed` or `open`. The event is a named transition between the
 **The timestamp is ours**, from the sampling grid. The model is never asked what
 time it is.
 
-### Approach 2 — results
+### Approach 2 — results, and two rules that did not survive
 
 | clip | question | outcome |
 |---|---|---|
-| `admin.G326` 03-07 | door closed / open | detected 3.0–9.0 s, **tIoU 0.46** (label 3.0–5.7) |
-| `admin.G326` 03-12 | door closed / open | detected 4.0–8.0 s, **tIoU 0.26** (label 3.0–5.3) |
-| `school.G300` 03-11 | car door closed / open | detected 10.0–14.0 s, **tIoU 0.54** (label 9.0–12.7) |
-| `school.G300` 03-13 | door question, **no door in scene** | **no detection** — true negative |
+| `admin.G326` 03-07 | building door closed / open | detected 3.0–9.0 s, **tIoU 0.46** |
+| `admin.G326` 03-12 | building door closed / open | detected 4.0–8.0 s, **tIoU 0.26** |
+| `school.G300` 03-11 | car door closed / open | detected 10.0–14.0 s, **tIoU 0.54** and **0.55** — one interval matching two labelled events |
+| `school.G300` 03-13 | door question, **no door in scene** | no detection — true negative |
 | `admin.G329` | doorway empty / person present | miss |
+| `admin.G329` | corridor door closed / open, wide and tight crops | miss |
+| `school.G423` | person standing / sitting | miss |
+| `bus.G340` | car door closed / open | miss |
 | `school.G300` 03-11 | vehicle moving / stationary | miss |
 
-Mean tIoU on hits: **0.42**, against **0.002** for Approach 1 across its whole
-eval. Each of the three hits would clear R@1 at tIoU 0.3, which Approach 1 never
-did once.
+**Three distinct detections, both on the same two clips.** Mean tIoU where it
+fires: 0.42, against 0.002 for Approach 1 across its entire eval.
 
-### The scope rule
+**Two scope rules were proposed and both falsified**, recorded because the
+temptation is to report only the surviving one:
 
-It works when the state is a **binary configuration of an object that visibly
-changes shape**. It fails on **presence** and on **motion**.
+- *"Works on binary configurations of an object; fails on presence and motion."*
+  Falsified by `G423` — standing versus sitting is a binary configuration of a
+  clearly visible person, and produced nothing.
+- *"Works on doors."* Falsified by `G340` — a car door that does not work, on a
+  camera where the car sits further away.
 
-| state type | example | result |
-|---|---|---|
-| object configuration | door open / closed | works |
-| presence of an actor | person in doorway | fails |
-| motion | vehicle moving / stationary | fails |
+Every candidate explanation — actor size, object size, object class, configuration
+versus presence — was contradicted by a later test. Six questions is not enough to
+establish a rule, and inventing one from three successes would repeat the error of
+quoting a precision floor measured only on synthetic clips.
 
-This is decidable from the client's sentence before any GPU runs, which makes it a
-usable rule rather than a post-hoc excuse. It also lands squarely on the brief's
-own three examples: *"a person enters through the door"* is a door configuration
-and works; *"a forklift reverses"* and *"the machine stops moving"* are both
-motion, and both fail.
+### Two further framings, both measured
 
-**A hypothesis tested and discarded**: that the difference was object *size*. A car
-door works at 322 px while a person in a doorway fails at 295 px, so size is not
-what separates them.
+**Pairwise change comparison.** Ask which of two frame sequences contains the
+change rather than what state the scene is in; a comparison needs no calibrated
+notion of what "open" looks like. Measured on a known hit and a known miss: **flat
+at exactly 0.50, range 0.05 and 0.01.** Chance.
+
+The diagnosis matters more than the number. Both sequences go in one call with text
+markers, and the model does not bind images to those markers — **it cannot reason
+over grouped image sequences within a single prompt.** That closes off the
+comparison family, not just this phrasing.
+
+**Reason, then classify.** Every probe until here capped generation at 1–4 tokens
+and read a logprob — a reasoning model used as a one-token classifier. Letting it
+describe the scene first, then scoring that description, produced the most
+important result of the exercise:
+
+> t=2 — *"The door is **closed** in all frames"*
+> t=4 — *"Sixth frame: **a person is opening the door**"*
+> t=6 — *"The door is **open** in some frames, showing a person inside"*
+> t=8 — *"the door seems to be **closed**"*
+
+Against a hand label of 3.0–5.7 s that is correct at every timestep. **The
+perception was there all along**, and four framings had been discarding it.
+
+Two defects sat between that perception and the score, both ours:
+
+1. **The question asked for the wrong thing.** *"Describe the door"* returns
+   appearance — red, glass panel, metal handle, brick wall. Accurate, useless for
+   deciding open versus closed. Where the answer happened to mention state the
+   classifier was right (−0.72 closed, +0.96 opening, +0.84 open); where it
+   described appearance the classifier had nothing to read and returned noise,
+   scoring **+0.91 for "open" on text that said "closed in most frames"**.
+2. **The reasoning block was being scored.** The server concatenates thinking with
+   answer, so the classifier read the model reasoning aloud rather than its
+   conclusion — visible as a stray `</think>` inside several descriptions.
+
+Both are fixed: the prompt asks what state the subject is in and whether it
+changes, and only text after the reasoning block is scored. **Whether that recovers
+the signal end to end is not yet measured**, and is not claimed here.
+
+The same output explains `G423` without a new hypothesis: the description reads
+*"a person standing near a table in the hallway"* in a scene containing several
+people. The subject was ambiguous, so the state question was never well posed — a
+prompt failure, not a perception one.
 
 ### Status and honest limits
 
