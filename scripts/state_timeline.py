@@ -35,8 +35,11 @@ def classify(client, model, frames, states, debug=False):
         content.append({"type": "image_url",
                         "image_url": {"url": frame_to_data_url(f.image)}})
     r = client.chat.completions.create(
-        model=model, temperature=0.0, max_tokens=1, logprobs=True, top_logprobs=10,
-        extra_body={"guided_choice": letters},
+        model=model, temperature=0.0, max_tokens=4, logprobs=True, top_logprobs=10,
+        # vLLM removed guided_choice in v0.12.0; on 0.29 it is silently ignored
+        # and the model free-generates. That is what produced raw='Got'.
+        # https://docs.vllm.ai/en/latest/features/structured_outputs.html
+        extra_body={"structured_outputs": {"choice": letters}},
         messages=[{"role": "system",
                    "content": "You classify what is visible in video frames. "
                               "Answer with a single letter."},
