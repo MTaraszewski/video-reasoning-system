@@ -86,9 +86,9 @@ exist yet.
 | R2 | Document those decisions | **DONE** | `DESIGN.md`, `DECISIONS.md`, `DATASETS.md`, `RUNBOOK.md` |
 | R3 | Open weights, video input, temporal localisation, a context limit worked around | **PART** | model verified open/ungated/video-capable; **temporal localisation is the thing under test**; frames-per-call limit not yet measured |
 | R4 | No hosted commercial API as primary | **DONE** | self-hosted vLLM only; no hosted path exists |
-| R5 | **Runs on their machine in minutes, first try, without reading the code** | **PART** | `make demo` works end to end with no GPU and emits valid JSON; `make plan`, `run`, `frames`, `fake-test` all work. **Never run from a clean clone** — every run so far had a warm image cache |
-| R6 | 5-10 clips, 1-3 min, hand-labelled, rights-clean, defensible temporal metric | **PART** | sources chosen and 1.5 GB fetched; **clips not trimmed, not labelled, metrics code TODO** |
-| R7 | Report where the model's limits are | **TODO** | nothing measured yet |
+| R5 | **Runs on their machine in minutes, first try, without reading the code** | **PART** | `make demo`, `plan`, `run`, `frames`, `probe`, `fake-test`, `verify-data` all work with no GPU. **Never run from a clean clone** — every run so far had a warm image cache, files left by earlier commands, and bugs fixed between attempts. Step 2l |
+| R6 | 5-10 clips, 1-3 min, hand-labelled, rights-clean, defensible temporal metric | **PART** | **Metric done** — tIoU R@1 at 0.3/0.5/0.7, mean tIoU, precision/recall, NVIDIA's mean relative error, false-positive rate, per-axis breakdown, per-video isolation enforced. Six synthetic clips verified against their own labels. **Real clips still to fetch (`MEVA_MODE=annotated`), trim and hand-label** |
+| R7 | Report where the model's limits are | **TODO** | The instruments exist — per-axis metrics, the probe's precision floor, hallucination-rejection counts, the positive-control ceiling test. **Nothing measured**, because no model has been run |
 | R8 | GitHub repository | **DONE** | pushed to `origin/dev` |
 | R9 | Deliver within about a week | **ON TRACK** | started 2026-09-09 |
 
@@ -655,20 +655,29 @@ switches to Cosmos-Reason2-8B and the matrix is unchanged.
 | # | Step | Status |
 |---|---|---|
 | 0 | Verify the model: existence, IDs, licence, VRAM, serving stack, localisation mechanism | **Done** — §1 |
-| 1 | Planning and design documents: plan, HLD, datasets, decisions, runbook, README | **Done** |
-| 2a | Docker + Make scaffolding, uv lockfile, synthetic clip generator | **Done** — verified by running `help`, `vars`, `preflight`, `build`, `data-synthetic`, `data-supervision`, `data-meva` |
-| 2b | Schema, config loading, input validation | Not started |
-| **2c** | **`decode`: sample frames, burn absolute timestamps, dump for inspection** | **Next** |
-| 2d | `windows`: plan, assign frames, frame cap | Not started |
-| 2e | `extract` + model adapter + stub backend | Not started |
-| 2f | `merge`: bounded chaining, non-saturating score | Not started |
-| 2g | CLI wiring, `make demo` end to end | **Done** — emits valid JSON via the stub, 2 calls on the sample clip |
-| 2h | Fake vLLM endpoint + scenario harness, exercising the real backend with no GPU | **Done** — 10 scenarios, harness verified to detect injected regressions |
-| 3 | On the GPU: validate the deployment against the Cosmos 3 paper benchmarks, then the **capability probe**. Measure VRAM and frames-per-call. Gates everything downstream | Not started |
-| 4 | Eval set: trim to 1-3 min, hand-label across the failure axes, per-video metric isolation | Not started |
+| 1 | Planning and design documents | **Done** |
+| 2a | Docker + Make scaffolding, uv lockfile, synthetic clip generator | **Done** |
+| 2b | Schema, config loading, typed errors, validation stages | **Done** — `schema.py`, `config.py`, `errors.py` |
+| 2c | `decode`: sample frames, burn absolute timestamps, inspect legibility | **Done** — verified by eye at 640x360; overlay occlusion measured |
+| 2d | `windows`: plan, assign frames, frame cap, cost estimate | **Done** — coverage and call count verified |
+| 2e | `extract` + model adapter + stub/vllm/replay backends | **Done** — reasoning-block parsing and time reconciliation verified |
+| 2f | `merge`: bounded chaining, non-saturating score, partial events | **Done** — 200 candidates -> 2 events; confidence 0.582/0.815/0.960/0.970 |
+| 2g | CLI wiring, `make demo` end to end | **Done** — valid JSON, no GPU |
+| 2h | Fake vLLM endpoint + scenario harness | **Done** — 10 scenarios, verified to detect injected regressions |
+| 2i | Capability probe harness (`make probe`) | **Done** — runs against the fake endpoint; needs a real model for a real answer |
+| 2j | Metrics + eval harness (`make eval`, `make eval-control`) | **Done** — per-video isolation and control exclusion enforced in code and verified |
+| 2k | Clip preparation and data verification (`make prepare-clips`, `make verify-data`) | **Done** — found one clip that did not show what its label claimed |
+| **2l** | **Clean-clone check: `git clone` into a fresh directory, README only** | **Next — the last gate before renting** |
+| 3 | **On the GPU**: serve the model, validate the deployment against the paper benchmarks, run the probe, record every exchange for replay | Not started — harness ready |
+| 4 | Real eval footage: MEVA `annotated` fetch, trim to 1-3 min, hand-label across the axes | Not started — tooling ready, **not blocking step 3** |
 | 5 | Measured runs: model x clip matrix, fps/window sweep, failure analysis | Not started |
 | 6 | README results, leaderboard and figures from measured numbers only | Not started |
-| 7 | First-run rehearsal on a clean machine, then push | Not started |
+| 7 | Final first-run rehearsal, then submit | Not started |
+
+**Why step 4 does not block step 3.** The probe measures a *precision floor*, which
+requires ground truth with zero labelling error — so it runs on synthetic clips by
+design. Real footage is needed for the eval, not the probe. Doing step 4 first would
+also risk labelling for a mechanism the probe may show does not work.
 
 ### Infrastructure, done in parallel
 
@@ -723,3 +732,23 @@ switches to Cosmos-Reason2-8B and the matrix is unchanged.
   Verified the MEVA slice with `ffprobe`: filename-encoded durations are accurate,
   and one clip is 352x240 among eleven 1080p ones — kept deliberately as a
   low-resolution failure axis rather than discarded.
+
+- **2026-09-10** — Built the two things the GPU session exists to run. `make probe`
+  characterises a model as a single window per clip, so windowing and merging are
+  removed and the remaining error is the model's; `make eval` reports tIoU metrics,
+  NVIDIA's relative error, false-positive rate and a per-axis breakdown, with
+  per-`(video, description)` isolation enforced in code.
+  Found **information leakage** in MEVA's curated example clips: they are rendered
+  with the activity label burned into the picture, so a model can read the answer.
+  Prevention is impossible, so they are contained as a `positive_control` ceiling
+  test, with exclusion from headline metrics enforced and verified — a deliberately
+  contaminated file of 9 truths produced a headline over 7.
+  Established that the earlier MEVA fetch was **blind, not that MEVA is poor**: only
+  ~22-27 of 328 released hours are annotated, and the corpus exists for a challenge
+  about finding rare activity in mostly-empty footage. Selection is now by activity.
+  Found that **`machine-stop.mp4` did not show what its label claimed** — an axis
+  name mismatch meant the renderer never drew the machine, so the clip showed a
+  moving box during the window labelled "the machine stops moving". It had passed
+  through the pipeline, the probe and the eval without complaint. `make verify-data`
+  now checks every clip against its own ground truth, and validates `labels.json`.
+  Two bugs in that checker itself accused correct clips before it could be trusted.

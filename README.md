@@ -105,6 +105,8 @@ make preflight    # can this machine run anything?
 make build        # build the finder image
 make data         # generate synthetic clips with exact ground truth
 make demo         # end-to-end -> events JSON, using the stub backend
+make verify-data  # do the clips actually show what their labels claim?
+make probe        # characterise a model: can it ground events, how precisely
 make plan  VIDEO=clip.mp4 QUERIES="a door opens"   # what a run would cost
 make run   VIDEO=clip.mp4 QUERIES="a door opens;a vehicle stops"
 make frames VIDEO=clip.mp4        # see the timestamped frames the model receives
@@ -116,14 +118,18 @@ make fake-test                    # the real vLLM backend against a fake endpoin
 against an endpoint that returns reasoning blocks, truncated responses, refusals
 and hallucinated timestamps. No GPU involved.
 
-**Needs a GPU:**
+**Needs a GPU** — or any real endpoint:
 
 ```bash
 make preflight-gpu   # is a GPU visible to CONTAINERS, not just the host?
 make serve-bg        # start the model, block until it answers
-make probe           # [planned] can the model ground events in time?
-make eval            # [planned] the labelled set -> metric table
+make probe           # the gating question: can it ground events, how precisely
+make eval            # the labelled set -> metric table
+make eval-control    # ceiling test: can it find events labelled on-screen?
 ```
+
+`probe` and `eval` are built and exercised end to end against a fake endpoint;
+they need a real model to produce a real answer, not to run.
 
 `make help` lists every target, tagged `[local]` / `[gpu]` / `[any]`, with the
 end-to-end workflow.
