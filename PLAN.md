@@ -86,7 +86,7 @@ exist yet.
 | R2 | Document those decisions | **DONE** | `DESIGN.md`, `DECISIONS.md`, `DATASETS.md`, `RUNBOOK.md` |
 | R3 | Open weights, video input, temporal localisation, a context limit worked around | **PART** | model verified open/ungated/video-capable; **temporal localisation is the thing under test**; frames-per-call limit not yet measured |
 | R4 | No hosted commercial API as primary | **DONE** | self-hosted vLLM only; no hosted path exists |
-| R5 | **Runs on their machine in minutes, first try, without reading the code** | **PART** | **Clean-clone verified**: `preflight`, `build`, `data`, `demo`, `verify-data`, `probe`, `plan`, `frames` all pass from a fresh clone — **79 s to first events JSON**. Two caveats: the 73 s build had a warm Docker layer cache, so a cold host is realistically 3-5 min; and **a real reviewer's clone still fails**, because the default branch is `main` — see the release blocker below. `fake-test` and `run` on a custom video not yet exercised from clean |
+| R5 | **Runs on their machine in minutes, first try, without reading the code** | **PART** | **Clean-clone verified**: `preflight`, `build`, `data`, `demo`, `verify-data`, `probe`, `plan`, `frames` all pass from a fresh clone — **79 s to first events JSON**. Caveat: the 73 s build had a warm Docker layer cache, so a cold host is realistically 3-5 min. `fake-test` and `run` on a custom video not yet exercised from clean |
 | R6 | 5-10 clips, 1-3 min, hand-labelled, rights-clean, defensible temporal metric | **PART** | **Metric done** — tIoU R@1 at 0.3/0.5/0.7, mean tIoU, precision/recall, NVIDIA's mean relative error, false-positive rate, per-axis breakdown, per-video isolation enforced. Six synthetic clips verified against their own labels. **Real clips still to fetch (`MEVA_MODE=annotated`), trim and hand-label** |
 | R7 | Report where the model's limits are | **TODO** | The instruments exist — per-axis metrics, the probe's precision floor, hallucination-rejection counts, the positive-control ceiling test. **Nothing measured**, because no model has been run |
 | R8 | GitHub repository | **DONE** | pushed to `origin/dev` |
@@ -669,7 +669,7 @@ switches to Cosmos-Reason2-8B and the matrix is unchanged.
 | 2k | Clip preparation and data verification (`make prepare-clips`, `make verify-data`) | **Done** — found one clip that did not show what its label claimed |
 | 2l | Clean-clone check: `git clone` into a fresh directory, README only | **Done** — 79 s to first events JSON; found the default-branch blocker below |
 | 3 | **On the GPU**: serve the model, validate the deployment against the paper benchmarks, run the probe, record every exchange for replay | Not started — harness ready |
-| 4 | Real eval footage: MEVA `annotated` fetch, trim to 1-3 min, hand-label across the axes | Not started — tooling ready, **not blocking step 3** |
+| 4 | Real eval footage | **In progress** — 6 clips fetched with declared activities covering the brief's own examples; trim plan and candidate worksheet generated; **hand confirmation outstanding**. `prepare-clips` still reads the wrong source and ignores the trim plan |
 | 5 | Measured runs: model x clip matrix, fps/window sweep, failure analysis | Not started |
 | 6 | README results, leaderboard and figures from measured numbers only | Not started |
 | 7 | Final first-run rehearsal, then submit | Not started |
@@ -698,36 +698,6 @@ from clean.
 
 **The check also found the blocker below**, which no test could have.
 
-### Release blocker — the submission must be on the default branch
-
-**Found by the clean-clone check, and by nothing else.** All work is on `dev`;
-GitHub's default branch was `main`, which still holds only the initial commit. A
-reviewer running `git clone` received **one file containing one line**:
-
-```
-$ git clone git@github.com:MTaraszewski/video-reasoning-system.git
-$ ls
-README.md          # "# video-reasoning-system"
-```
-
-The brief says they will *"take your submission and run it in a few minutes on a
-machine we own, without reading your code first"*. They would have cloned, seen a
-one-line README, and stopped.
-
-Nothing in the repo could have caught it. `git status` reported `dev...origin/dev`
-clean and in sync — true, and irrelevant. Every push succeeded. Every target
-passed, in a working tree that already had the files. The doc audits check what is
-*in* the files, not what a clone *receives*.
-
-**Interim fix applied:** GitHub's default branch switched to `dev`, so a clone now
-gets the work.
-
-**Still required before submitting:** merge `dev` into `main` and restore `main` as
-the default, once the pipeline works end to end on a real model. A submission whose
-contents depend on a repository setting the reviewer cannot see is fragile.
-
-
-
 **Why step 4 does not block step 3.** The probe measures a *precision floor*, which
 requires ground truth with zero labelling error — so it runs on synthetic clips by
 design. Real footage is needed for the eval, not the probe. Doing step 4 first would
@@ -737,12 +707,42 @@ also risk labelling for a mechanism the probe may show does not work.
 
 | Item | Status |
 |---|---|
-| S3 staging bucket `mt-video-reasoning-system` (`eu-central-1`) | **Created** |
+| S3 staging bucket (`eu-central-1`) | **Created** — name lives in gitignored `make/local.mk`, not in the repo |
 | Datasets fetched locally: synthetic 6, MEVA 12, supervision 3 | **Done** — 1.5 GB |
 | Staged to S3 | **Done** — 24 objects, verified |
 | `g7e.2xlarge` availability in `eu-central-1` | **Confirmed** |
-| vCPU quota ≥8 for G instances | Not confirmed |
-| Instance launched | Not yet |
+| vCPU quota ≥8 for G instances | **BLOCKED — quota is 0, increase requested** |
+| Instance launched | Blocked on the above |
+
+**GPU access is blocked by two stacked issues, found in this order.**
+
+1. **Account verification** for `eu-central-1` — an AWS-side hold on launching
+   resources in the region. Cleared on its own.
+2. **vCPU quota of zero.** Revealed only once verification cleared: G, P, X and Trn
+   families are all at 0 on this account, while Standard sits at 256 and F at 64.
+   GPU quotas are simply never granted by default.
+
+| Quota | Code | Was | Requested | Status |
+|---|---|---|---|---|
+| Running On-Demand G and VT instances | `L-DB2E81BA` | 0 | 16 | PENDING |
+| All G and VT Spot Instance Requests | `L-3819A6DF` | 0 | 16 | PENDING |
+
+Requested **16 rather than 8** so `g7e.4xlarge` needs no second request; spot as
+well as on-demand because it is the same review and 60-70% cheaper, and this
+workload is re-runnable measurement where an interruption costs time, not results.
+
+Zero-to-nonzero GPU requests are a human review — hours, sometimes a day or two.
+This was flagged from the start as the one blocker no local preparation could
+shorten, and it is the only thing now standing between the harness and a measured
+result.
+
+**Check status:**
+```
+aws service-quotas list-requested-service-quota-change-history \
+  --service-code ec2 --region eu-central-1 --no-cli-pager --output json \
+  | jq -r '.RequestedQuotas[] | [.Status, .DesiredValue, .QuotaName] | @tsv'
+```
+
 
 ---
 
@@ -809,7 +809,23 @@ also risk labelling for a mechanism the probe may show does not work.
 
 - **2026-09-10 (later)** — Ran the first clean-clone check. The code passes from a
   fresh clone in 79 s to first events JSON, every README command working. The check
-  also found what nothing else could: **a reviewer cloning this repo receives one
-  file containing one line**, because all work is on `dev` while GitHub's default
-  branch is `main`, still at the initial commit. `git status` reported clean and in
-  sync throughout — true, and irrelevant. Recorded as a release blocker.
+  also found something no test could: `git status` reporting `dev...origin/dev`
+  clean and in sync says nothing about what a *clone* receives. The audits check
+  what is in the files, not what is handed to someone starting fresh.
+
+- **2026-09-10 (afternoon)** — MEVA selection by activity finally produced usable
+  footage: six clips whose annotations declare `Vehicle_Reversing`,
+  `Vehicle_Stopping`, `Open_Facility_Door` and `Enter_Facility` — the brief's own
+  three examples. Two bugs on the way: video filenames carry a release suffix the
+  annotation filenames lack, and the resulting download failures were swallowed so
+  the script exited 0 having fetched nothing.
+  Added `make screen-clips`, an objective motion measure for "does anything happen
+  here", and recorded its four blind spots rather than presenting it as reliable —
+  it under-reads slow events, short events, and anything outside its sampling
+  window, and cannot distinguish a busy clip from one containing your event.
+  Added `make meva-plan`: annotations locate events and compute a trim window that
+  maximises whole events captured, because one clip's events sit at 45s, 64s, 74s
+  and 268s and a naive trim would silently drop the last. Labels remain ours, marked
+  `confirmed_by_hand: false` until checked.
+  Moved the S3 bucket name out of the repo into a gitignored `make/local.mk`, ahead
+  of making the repository public.

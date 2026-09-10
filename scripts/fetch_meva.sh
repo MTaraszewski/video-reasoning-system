@@ -39,6 +39,8 @@ FILTER="${4:-}"
 BUCKET="${MEVA_S3:-s3://mevadata-public-01}"
 DROP="${MEVA_DROP:-drops-123-r13}"
 MIN_S="${MEVA_MIN_S:-60}"
+# Release suffix on video filenames, absent from annotation filenames.
+RELEASE="${MEVA_RELEASE:-r13}"
 
 command -v aws >/dev/null 2>&1 || {
   echo "FAIL  aws cli not found. Install it, or pull from your own S3 stage:"
@@ -124,23 +126,44 @@ if [ "$MODE" = "annotated" ]; then
 
   echo "Fetching ${count} clip(s) that contain annotated activity ..."
   mkdir -p "${OUT}/annotations"
+  got=0
   while IFS=$'\t' read -r stem acts; do
     day="${stem%%.*}"
     hour=$(echo "$stem" | cut -d. -f2 | cut -d- -f1)
-    for ext in avi mp4; do
-      if aws s3 cp "${BUCKET}/${DROP}/${day}/${hour}/${stem}.${ext}" "${OUT}/" \
+    # Video filenames carry a RELEASE SUFFIX that the annotation filenames do not:
+    #   annotation  ...admin.G329.activities.yml
+    #   video       ...admin.G329.r13.avi
+    # Building the video name straight from the annotation stem misses it, and
+    # every download 404s. Try the suffixed name first, then the bare one.
+    for name in "${stem}.${RELEASE}" "${stem}"; do
+     for ext in avi mp4; do
+      if aws s3 cp "${BUCKET}/${DROP}/${day}/${hour}/${name}.${ext}" "${OUT}/" \
            --no-sign-request --only-show-errors 2>/dev/null; then
-        printf "  %-50s %s\n" "${stem}.${ext}" "$acts"
+        printf "  %-52s %s\n" "${name}.${ext}" "$acts"
         # Keep the annotation beside the clip. It is how we FIND events to
         # hand-label, and how labelling error gets cross-checked afterwards.
         aws s3 cp "${BUCKET}/examples/annotations/${day}/${hour}/${stem}.activities.yml" \
           "${OUT}/annotations/" --no-sign-request --only-show-errors 2>/dev/null
-        break
+        got=$((got + 1))
+        break 2
       fi
+     done
     done
   done < "${OUT}/.manifest"
+
+  # Fail loudly. An earlier version swallowed every download error and exited 0
+  # having fetched nothing, reporting success for an empty directory.
+  if [ "$got" -eq 0 ]; then
+    echo
+    echo "FAIL  matched ${count} annotated clip(s) but downloaded NONE."
+    echo "      The video name is built from the annotation stem plus the release"
+    echo "      suffix '${RELEASE}'. Check what the drop actually contains:"
+    echo "        aws s3 ls ${BUCKET}/${DROP}/ --no-sign-request | head"
+    exit 1
+  fi
   attribution
   echo
+  echo "Fetched ${got} of ${count} matched clip(s)."
   echo "Annotations kept in ${OUT}/annotations/ — used to LOCATE events."
   echo "The brief requires hand labels, so these cross-check ours, never replace them."
   exit 0

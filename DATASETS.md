@@ -228,6 +228,77 @@ footage. Handling, guarantees and the verification are in
 automated check would have caught it — nothing in a pipeline can notice that a
 dataset has written its labels into its own pixels.
 
+### Selecting by activity — what it produced
+
+`make data-meva MEVA_MODE=annotated` reads MEVA's `.activities.yml` files, keeps
+clips whose annotations declare an activity, downloads the **original clean
+footage**, and stores the annotation alongside — used to locate events, never shown
+to a model.
+
+Six clips, and the declared activities cover the brief's own examples:
+
+| Clip | Declared activities |
+|---|---|
+| `admin.G326` | Enter_Facility, **Open_Facility_Door** |
+| `admin.G329` | Enter_Facility |
+| `bus.G331` | Object_Transfer, Purchasing, Read_Document, Text_On_Phone |
+| `school.G328` | Enter_Vehicle, Open_Vehicle_Door, **Vehicle_Reversing**, Vehicle_Starting, **Vehicle_Stopping** |
+| `school.G336` | Vehicle_Stopping, Vehicle_Turning_Left, Vehicle_Turning_Right |
+| `hospital.G301` | Exit_Facility, Open_Facility_Door |
+
+`Vehicle_Reversing` is the same event *shape* as the brief's "a forklift reverses";
+`Vehicle_Stopping` matches "the machine stops moving"; `Open_Facility_Door` and
+`Enter_Facility` match "a person enters through the door". Event lengths run from
+1.0 s to 23.9 s, so short and long events are both tested on real footage rather
+than only in synthetic clips.
+
+**Two bugs found getting there.** MEVA's video filenames carry a release suffix its
+annotation filenames do not (`...G329.r13.avi` versus `...G329.activities.yml`), so
+every constructed URL 404'd. Worse, the errors were swallowed and the script
+**exited 0 having downloaded nothing** — reporting success for an empty directory.
+It now counts what it fetched and fails loudly with the likely cause.
+
+### Annotations locate events; hands label them
+
+`make meva-plan` parses each annotation into activity spans in seconds, chooses a
+trim window, and emits a worksheet with times pre-filled and phrased as a client
+would say them. Every entry carries `confirmed_by_hand: false` until a human checks
+it against the contact sheet.
+
+The brief requires hand labels, and that is what these become — but hand-labelling
+is *searching* plus *judging*, and only the judging needs a person. MEVA already
+knows where its activities are.
+
+**The trim window is computed, not fixed at zero.** One clip declares events at
+45 s, 64 s, 74 s — and 268 s. Trimming naively from the start would silently discard
+the last, and nothing downstream would notice a labelled event had been cut away.
+The chosen window maximises *wholly contained* events and reports what it drops.
+
+### Screening for activity, and where it fails
+
+`make screen-clips` measures the fraction of pixels changing between samples, as an
+objective answer to "does anything happen here" — no filenames, no annotations, no
+interpretation. It exists because two rounds of clip selection produced unusable
+footage discovered only after downloading and inspecting by hand.
+
+**It has four known blind spots**, all measured against clips whose content is known
+by construction:
+
+| Blind spot | Evidence |
+|---|---|
+| Slow events read *faint* | a 27 s traverse scored 1.07 % |
+| Short events read *static* | a 0.15 s event scored 0.07 % at 2 fps |
+| "Active" does not mean "contains your event" | a negative clip scored 3.42 % |
+| Only samples the first N seconds | a clip whose event sits at 268 s read *static* |
+
+Compounding that, **fixed-camera events are small in frame**: a person opening a
+door 40 m away moves a fraction of a percent of pixels. The thresholds were
+calibrated on synthetic clips where a box crosses the whole frame, and are too
+blunt for real surveillance.
+
+So the screen is a filter for *completely dead* footage — which is what it caught,
+twice — and the annotations are the better guide to what is worth labelling.
+
 ### One caveat about this slice
 
 All twelve clips are the **same five-minute window seen from twelve different

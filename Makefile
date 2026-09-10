@@ -21,3 +21,8 @@ include make/data.mk
 include make/serve.mk
 include make/venv.mk
 include make/help.mk
+
+# Personal settings that must not be committed: bucket names, a preferred region,
+# GPU_HOURLY for cost reporting. Gitignored, and optional - the leading dash means
+# make does not complain when it is absent, so a fresh clone works unchanged.
+-include make/local.mk

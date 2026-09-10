@@ -236,3 +236,6 @@ results.jsonl
 data/*
 !data/.gitkeep
 .venv/
+
+# local overrides: bucket names, region, GPU pricing
+make/local.mk

@@ -16,7 +16,7 @@
 #   VANTAGE      evaluation-only, GATED, no redistribution
 # Nothing here commits video to the repo. Only our labels are committed.
 
-.PHONY: verify-data positive-control prepare-clips frames frames-sweep data data-synthetic data-meva data-supervision data-vantage \
+.PHONY: meva-plan screen-clips verify-data positive-control prepare-clips frames frames-sweep data data-synthetic data-meva data-supervision data-vantage \
         s3-check s3-push s3-push-dry s3-pull s3-status data-list
 
 # The finder mounts /data READ-ONLY, so the service can never modify a client's
@@ -25,9 +25,16 @@
 DATAGEN_RUN := $(COMPOSE) run --rm datagen
 
 # --- your staging bucket ----------------------------------------------------
-# Set as the default so s3-push / s3-pull need no arguments. Override per run
-# with: make s3-pull S3_BUCKET=other-bucket
-S3_BUCKET  ?= mt-video-reasoning-system
+# Deliberately EMPTY. The repository is public, and a bucket name is infrastructure
+# disclosure rather than a secret — private, credential-gated, but still naming
+# someone's account contents to anyone who reads the file.
+#
+# Set it once in make/local.mk, which is gitignored, and every s3 target works with
+# no arguments:
+#     echo 'S3_BUCKET = my-bucket' > make/local.mk
+# Or per invocation:
+#     make s3-push S3_BUCKET=my-bucket
+S3_BUCKET  ?=
 S3_PREFIX  ?= data
 
 # Assigned with `=`, NOT `?=`, on purpose. `?=` skips assignment when the name is
@@ -129,6 +136,15 @@ prepare-clips:  ## [local] trim source footage to 1-3 min and scaffold hand-labe
 
 positive-control:  ## [local] build the ceiling-test set from MEVA example clips
 	$(DATAGEN_RUN) python scripts/make_positive_control.py --src /data/meva-examples
+
+SCREEN_DIR ?= /data/meva-annotated
+
+meva-plan:  ## [local] turn MEVA annotations into a trim plan + labelling worksheet
+	$(DATAGEN_RUN) python scripts/meva_labels.py \
+	  --src /data/meva-annotated --seconds $(CLIP_SECONDS)
+
+screen-clips:  ## [any] does anything HAPPEN in these clips? Screen before investing
+	$(COMPOSE) run --rm finder python scripts/screen_clips.py $(SCREEN_DIR)
 
 verify-data:  ## [any] check every clip actually shows what its label claims
 	$(COMPOSE) run --rm finder python scripts/verify_synthetic.py $(EVAL_DATA_DIR)
