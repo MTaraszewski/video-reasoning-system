@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import argparse
 import math
+import re
+import textwrap
 
 from openai import OpenAI
 
@@ -26,7 +28,27 @@ from video_reasoning.config import load_config
 from video_reasoning.decode import frame_to_data_url, sample_frames
 
 
-def describe(client, model, frames, subject, max_tokens=160):
+PREAMBLE = re.compile(
+    r'^\s*(got it|okay|ok|sure|alright|let\'s|let me|first,?)\b[^.]*[.:]\s*',
+    re.I)
+
+
+def strip_preamble(text: str) -> str:
+    """Drop the conversational opener.
+
+    Every response begins "Got it, let's look at the images." That is not a
+    description, it consumes the token budget before the content arrives, and it
+    is what the text classifier was scoring -- G423 returned +0.96 for "sitting"
+    on text whose visible content said "standing".
+    """
+    prev = None
+    while prev != text:
+        prev = text
+        text = PREAMBLE.sub("", text, count=1)
+    return text.strip()
+
+
+def describe(client, model, frames, subject, max_tokens=400):
     """Free-form: what is the subject doing? No constraint, no forced choice."""
     content = [{"type": "text", "text":
                 f"Describe {subject} in these frames. Two sentences at most. "
@@ -42,9 +64,11 @@ def describe(client, model, frames, subject, max_tokens=160):
                   {"role": "user", "content": content}],
     )
     msg = r.choices[0].message
-    text = (msg.content or "").strip()
+    text = strip_preamble((msg.content or "").strip())
     think = (getattr(msg, "reasoning_content", None) or "").strip()
-    return text, think
+    # A truncated description is worse than a short one: the conclusion tends to
+    # come last, so cutting it off leaves the setup and drops the answer.
+    return text, think, r.choices[0].finish_reason
 
 
 def score_text(client, model, text, states):
@@ -108,13 +132,14 @@ def main() -> None:
                                   overlay=False, start_s=t, end_s=t + args.span)
         if not frames:
             break
-        text, think = describe(client, cfg.model.name, frames, subject)
+        text, think, finish = describe(client, cfg.model.name, frames, subject)
         pr = score_text(client, cfg.model.name, text, args.states) if text else {}
         score = pr.get(b, float("nan")) - pr.get(a, float("nan"))
         inside = "*" if args.truth and args.truth[0] <= t <= args.truth[1] else " "
-        print(f" {inside} t={t:>5.1f}s  {score:+.2f}  {text[:96]}")
-        if think and t == args.start:
-            print(f"            [reasoning: {think[:80]}]")
+        cut = "  [TRUNCATED]" if finish == "length" else ""
+        print(f" {inside} t={t:>5.1f}s  {score:+.2f}{cut}")
+        for line in textwrap.wrap(text or "(empty)", 92)[:4]:
+            print(f"              {line}")
         t += args.step
 
     print("\n* = inside the labelled event window.")
