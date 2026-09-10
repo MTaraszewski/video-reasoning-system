@@ -91,8 +91,8 @@ def describe(client, model, frames, subject, max_tokens=400):
     return text, think, r.choices[0].finish_reason
 
 
-def score_text(client, model, text, states):
-    """Classify the model's OWN description. Text only — no images."""
+def score_once(client, model, text, states):
+    """One classification of a description. Text only — no images."""
     letters = [chr(97 + i) for i in range(len(states))]
     opts = "\n".join(f"({l}) {s}" for l, s in zip(letters, states))
     r = client.chat.completions.create(
@@ -115,6 +115,22 @@ def score_text(client, model, text, states):
         return {states[letters.index(l)]: v / tot for l, v in ps.items()}
     except Exception:
         return {}
+
+
+def score_text(client, model, text, states):
+    """Ask in BOTH option orders and average.
+
+    The image polling was order-averaged and this was not, so the text classifier
+    inherited the same position bias in full: it returned +0.86 to +1.00 for
+    "open" on descriptions reading "The door is closed in all frames". The
+    descriptions were correct at every timestep and the scorer was answering "(b)"
+    whichever statement sat second.
+    """
+    out: dict[str, list[float]] = {s: [] for s in states}
+    for order in (list(states), list(reversed(states))):
+        for k, v in score_once(client, model, text, order).items():
+            out[k].append(v)
+    return {k: (sum(v) / len(v) if v else float("nan")) for k, v in out.items()}
 
 
 def main() -> None:
