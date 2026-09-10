@@ -138,6 +138,12 @@ def match_text(text: str, states: list[str]) -> dict:
     only_a = [w for w in wa if w not in wb]
     only_b = [w for w in wb if w not in wa]
     low = text.lower()
+    # An enumeration is not a claim. "its state (position, open/closed) does not
+    # change" names both words and asserts neither, and reading the later one gave
+    # a confident "closed" where the description says nothing at all.
+    for m in re.finditer(r"[a-z]+\s*/\s*[a-z]+", low):
+        low = low[:m.start()] + " " * (m.end() - m.start()) + low[m.end():]
+
     # Last mention wins: these descriptions often reason ("closed... then opens")
     # and the conclusion is the later word.
     pos_a = max((low.rfind(w) for w in only_a), default=-1)
@@ -172,7 +178,9 @@ def main() -> None:
     ap.add_argument("--truth", nargs=2, type=float, metavar=("START", "END"))
     ap.add_argument("--start", type=float, default=0.0)
     ap.add_argument("--end", type=float, default=20.0)
-    ap.add_argument("--step", type=float, default=2.0)
+    ap.add_argument("--step", type=float, default=1.0,
+                    help="Seconds between polls. Sets the boundary resolution: "
+                         "a transition can only be located to within one step.")
     ap.add_argument("--span", type=float, default=2.0)
     ap.add_argument("--max-side", type=int, default=None)
     args = ap.parse_args()
