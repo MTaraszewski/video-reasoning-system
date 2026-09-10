@@ -8,7 +8,7 @@ unverified is marked `UNVERIFIED` and must not leak into README/DESIGN.
 
 ## 0. The assignment, distilled
 
-Source: [`reference/take-home.md`](reference/take-home.md)
+Source: the assignment brief, held locally and deliberately not committed — it is the client's document. Every requirement below quotes the sentence it comes from, so the traceability survives without republishing it.
 
 Build a service: *(video file, one or more plain-language event descriptions)* →
 list of events with **start time, end time, matched description, confidence /
