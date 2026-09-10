@@ -246,6 +246,10 @@ def probe(
     model: str = typer.Option(None, help="Override the model id."),
     prompts: str = typer.Option("overlay,native,terse", help="Prompt variants to sweep."),
     fps: str = typer.Option("4", help="Sampling rates to sweep, comma separated."),
+    excerpt_s: float = typer.Option(
+        None, help="Decode only this many seconds around each event, instead of "
+                   "the whole clip. Holds sampling density constant when clips "
+                   "differ in length."),
     record: str = typer.Option(None, help="Record every exchange, for later replay."),
     replay: str = typer.Option(None, help="Replay recorded exchanges."),
     quiet: bool = typer.Option(False, "--quiet"),
@@ -266,7 +270,7 @@ def probe(
         if hasattr(be, "check"):
             be.check()
 
-        cases = load_cases(labels, data_dir)
+        cases = load_cases(labels, data_dir, excerpt_s=excerpt_s)
         if not cases:
             err_console.print(f"[red]FAIL[/] no labelled cases in {labels}")
             raise typer.Exit(1)

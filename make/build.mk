@@ -49,6 +49,11 @@ run:  ## [any] find events in YOUR video (VIDEO=... QUERIES="a;b")
 	@echo; echo "-> $(OUT_DIR)/events.json"
 
 demo:  ## [any] end-to-end on the sample clip, no GPU needed
+	@# Generate the clip if it is missing. `data/` is gitignored -- it holds GBs of
+	@# footage -- so on a fresh clone this file does not exist, and a demo that
+	@# fails on first run is the one failure the brief is explicit about.
+	@[ -f $(DATA_DIR)/synthetic/box-crossing.mp4 ] \
+	  || $(MAKE) --no-print-directory data-synthetic
 	@$(MAKE) --no-print-directory run \
 	  VIDEO=data/synthetic/box-crossing.mp4 \
 	  QUERIES="a red box enters from the left" \
@@ -72,18 +77,35 @@ plan:  ## [any] show what a run would cost, without running it
 # "when prompted correctly", so which prompt wins is itself a result.
 PROMPTS ?= overlay,native,terse
 PROBE_FPS ?= 4
+PROBE_OUT ?= /out/probe.json
+# The probe defaults to synthetic clips because their ground truth is exact by
+# construction. Point it at the hand-labelled set to ask whether the precision
+# floor measured on synthetic stimuli survives on real footage -- and set
+# PROBE_EXCERPT so both are sampled at a comparable rate.
+PROBE_LABELS  ?= /data/synthetic/labels.json
+PROBE_DATA    ?= /data/synthetic
+PROBE_EXCERPT ?=
 
 probe:  ## [any] characterise the model: can it ground events, how precisely
 	@mkdir -p $(OUT_DIR)
+	@# The probe measures against synthetic clips whose ground truth is exact by
+	@# construction. Same reasoning as demo: generate them if absent.
+	@[ -f $(DATA_DIR)/synthetic/labels.json ] \
+	  || $(MAKE) --no-print-directory data-synthetic
 	$(COMPOSE) run --rm -e ALLOW_NO_GPU=$(ALLOW_NO_GPU) finder \
 	  video-reasoning probe --backend $(BACKEND) \
-	  --prompts $(PROMPTS) --fps $(PROBE_FPS) -o /out/probe.json \
+	  --prompts $(PROMPTS) --fps $(PROBE_FPS) -o $(PROBE_OUT) \
+	  --labels $(PROBE_LABELS) --data-dir $(PROBE_DATA) \
+	  $(if $(PROBE_EXCERPT),--excerpt-s $(PROBE_EXCERPT),) \
 	  $(if $(BASE_URL_OVERRIDE),--base-url $(BASE_URL_OVERRIDE),) \
 	  $(if $(RECORD),--record /out/$(RECORD),)
 	@echo; echo "-> $(OUT_DIR)/probe.json"
 
-LABELS ?= /data/synthetic/labels.json
-EVAL_DATA ?= /data/synthetic
+# The hand-labelled real set is what `make eval` should measure -- it is the
+# deliverable. Pointing this at /data/synthetic silently evaluated the wrong
+# dataset and the run looked entirely normal while doing it.
+LABELS ?= /data/eval/labels.json
+EVAL_DATA ?= /data/eval
 
 # The positive control lives in its own labels file, never mixed into an eval set.
 # queries_for() asks EVERY description of EVERY clip so false positives get
@@ -96,6 +118,11 @@ CONTROL_DATA   ?= /data/meva-examples
 
 eval:  ## [gpu] run the labelled set, print the metric table
 	@mkdir -p $(OUT_DIR)
+	@# The labelled clips are rebuilt from labels.json, which IS committed. Without
+	@# this a fresh clone fails here with "video not found" and no hint that one
+	@# command fixes it.
+	@[ -f $(DATA_DIR)/eval/labels.json ] || { echo "FAIL  no labels at $(DATA_DIR)/eval/labels.json"; exit 1; }
+	@$(MAKE) --no-print-directory data-eval
 	$(COMPOSE) run --rm finder video-reasoning evaluate \
 	  --labels $(LABELS) --data-dir $(EVAL_DATA) --backend $(BACKEND) \
 	  -o /out/eval.json \

@@ -16,7 +16,7 @@
 #   VANTAGE      evaluation-only, GATED, no redistribution
 # Nothing here commits video to the repo. Only our labels are committed.
 
-.PHONY: data-eval meva-index meva-screen meva-shortlist event-sheets meva-plan screen-clips verify-data positive-control prepare-clips frames frames-sweep data data-synthetic data-meva data-supervision data-vantage \
+.PHONY: s3-push-eval data-eval meva-index meva-screen meva-shortlist event-sheets meva-plan screen-clips verify-data positive-control prepare-clips frames frames-sweep data data-synthetic data-meva data-supervision data-vantage \
         s3-check s3-push s3-push-dry s3-pull s3-status data-list
 
 # The finder mounts /data READ-ONLY, so the service can never modify a client's
@@ -78,8 +78,9 @@ data-meva:  ## [local] fetch MEVA clips that CONTAIN events (CC BY 4.0, no crede
 MEVA_INDEX  ?= $(DATA_DIR)/meva-index
 SHORTLIST   ?= $(MEVA_INDEX)/shortlist.json
 
-data-eval:  ## [local] rebuild the labelled eval set from labels.json (fetches sources)
-	@bash scripts/fetch_eval_sources.sh $(DATA_DIR)/eval/labels.json $(DATA_DIR)/meva-annotated
+data-eval:  ## [any] rebuild the labelled eval set from labels.json (downloads public sources)
+	@# Runs entirely in the container over HTTPS: no AWS account, no aws CLI, no
+	@# credentials. This is the path a reviewer takes to reproduce our numbers.
 	$(DATAGEN_RUN) python scripts/rebuild_eval_clips.py \
 	  --labels /data/eval/labels.json --src /data/meva-annotated --out /data/eval
 
@@ -112,6 +113,19 @@ s3-push: s3-check  ## [local] upload the local data dir to your S3 staging bucke
 	aws s3 sync $(DATA_DIR)/ s3://$(S3_BUCKET)/$(S3_PREFIX)/ \
 	  --region $(AWS_REGION) --exclude '*.manifest' --exclude '*.listing*'
 	@echo "Staged to s3://$(S3_BUCKET)/$(S3_PREFIX)/"
+
+s3-push-eval: s3-check  ## [local] stage ONLY what the measured run needs (~570 MB, not 3.9 GB)
+	@[ -n "$(S3_BUCKET)" ] || { echo "FAIL  set S3_BUCKET=your-bucket"; exit 1; }
+	@# The GPU box needs the clips the run reads and nothing else. Source .avi
+	@# files (1.6 GB), contact sheets and the annotation index are labelling
+	@# artefacts -- they cost transfer time and GPU-hours to move and are never
+	@# opened by probe or eval.
+	aws s3 sync $(DATA_DIR)/eval/ s3://$(S3_BUCKET)/$(S3_PREFIX)/eval/ \
+	  --region $(AWS_REGION) \
+	  --exclude 'sheets/*' --exclude 'event-sheets/*' --exclude '.*'
+	aws s3 sync $(DATA_DIR)/synthetic/ s3://$(S3_BUCKET)/$(S3_PREFIX)/synthetic/ \
+	  --region $(AWS_REGION)
+	@echo "Staged to s3://$(S3_BUCKET)/$(S3_PREFIX)/  — pull on the box with: make s3-pull"
 
 s3-pull: s3-check  ## [gpu] download the staged data from your bucket (run this ON the GPU box)
 	@[ -n "$(S3_BUCKET)" ] || { echo "FAIL  set S3_BUCKET=your-bucket"; exit 1; }

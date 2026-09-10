@@ -49,6 +49,12 @@ class ProbeCase:
     events: list[tuple[float, float]]
     axis: str = "baseline"
     duration_s: float = 0.0
+    # Decode only this span, rather than the whole clip. Used to hold sampling
+    # density constant when comparing clips of very different lengths: at the
+    # 48-frame cap a 20s synthetic clip is sampled at 2.4fps and a 120s real one
+    # at 0.4fps, so an unexcerpted comparison would conflate "real vs synthetic
+    # footage" with "dense vs sparse sampling" and answer neither question.
+    excerpt: tuple[float, float] | None = None
 
 
 @dataclass
@@ -71,23 +77,53 @@ class ProbeObservation:
         return bool(self.reported)
 
 
-def load_cases(labels_path: str | Path, data_dir: str | Path) -> list[ProbeCase]:
-    """Read the synthetic labels file into probe cases."""
+def load_cases(labels_path: str | Path, data_dir: str | Path,
+               excerpt_s: float | None = None) -> list[ProbeCase]:
+    """Read a labels file into probe cases — **one per description**.
+
+    A clip can carry several *different* events: `school.G300` has a vehicle door
+    opening, a vehicle stopping, a drop-off and someone getting out. An earlier
+    version took `events[0]["description"]` as the query while keeping every event
+    as ground truth, so it asked one question and scored the answer against four
+    unrelated boundaries. Nothing crashed; the numbers were simply meaningless.
+
+    Synthetic clips hid the bug completely — each carries exactly one description,
+    so grouping is a no-op there. It only appears on hand-labelled real footage.
+
+    `excerpt_s` decodes a span centred on the event instead of the whole clip. It
+    exists to hold sampling density constant across clips of different lengths;
+    see `ProbeCase.excerpt`. An excerpt makes *detection* trivial — the event is
+    guaranteed present and central — which is intended: the probe measures
+    boundary precision, and synthetic clips have that same property.
+    """
     labels_path, data_dir = Path(labels_path), Path(data_dir)
     cases: list[ProbeCase] = []
     for item in json.loads(labels_path.read_text()):
-        events = [(e["start_s"], e["end_s"]) for e in item.get("events", [])]
-        if not events:
+        by_desc: dict[str, list[tuple[float, float]]] = {}
+        for e in item.get("events", []):
+            by_desc.setdefault(e["description"], []).append((e["start_s"], e["end_s"]))
+        if not by_desc:
             continue  # negatives are for false-positive rate, not boundary error
-        cases.append(
-            ProbeCase(
-                video=str(data_dir / item["video"]),
-                description=item["events"][0]["description"],
-                events=events,
-                axis=item.get("axis", "baseline"),
-                duration_s=item.get("duration_s", 0.0),
+        duration = float(item.get("duration_s", 0.0))
+        for desc, events in by_desc.items():
+            excerpt = None
+            if excerpt_s:
+                lo = min(s for s, _ in events)
+                hi = max(e for _, e in events)
+                pad = max(0.0, (excerpt_s - (hi - lo)) / 2)
+                a = max(0.0, lo - pad)
+                b = a + excerpt_s
+                if duration and b > duration:
+                    b = duration
+                    a = max(0.0, b - excerpt_s)
+                excerpt = (round(a, 3), round(b, 3))
+            cases.append(
+                ProbeCase(
+                    video=str(data_dir / item["video"]), description=desc,
+                    events=events, axis=item.get("axis", "baseline"),
+                    duration_s=duration, excerpt=excerpt,
+                )
             )
-        )
     return cases
 
 
@@ -100,10 +136,12 @@ def observe(
     measurement, so whatever error remains belongs to the model.
     """
     meta = probe_video(case.video)
+    lo, hi = case.excerpt if case.excerpt else (0.0, None)
     duration, frames = sample_frames(
         case.video, fps=fps, max_side=cfg.sampling.frame_max_side,
         overlay=cfg.overlay.enabled, font_scale=cfg.overlay.font_scale,
         fmt=cfg.overlay.format, position=cfg.overlay.position,
+        start_s=lo, end_s=hi,
     )
     # Cap frames so a long clip cannot blow the request; the cap is itself a
     # measured limit once the GPU session establishes it.
@@ -112,7 +150,11 @@ def observe(
         frames = [frames[min(int(i * step), len(frames) - 1)]
                   for i in range(cfg.sampling.max_frames_per_window)]
 
-    window = Window(index=0, start_s=0.0, end_s=duration, frames=frames)
+    # The window is the span actually decoded, not the whole file: sample_frames
+    # returns the FILE's duration regardless of the span asked for, so using it
+    # here would tell the model to look in 0..120s when it was shown 8..32s.
+    window = Window(index=0, start_s=lo, end_s=(hi if hi is not None else duration),
+                    frames=frames)
     req = ExtractRequest(
         window=window, query=case.description,
         system_prompt=variant.system,

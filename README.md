@@ -142,8 +142,10 @@ only for the model server — the rest is CPU work.
 ```bash
 make preflight    # can this machine run anything?
 make build        # build the finder image
-make data         # generate synthetic clips with exact ground truth
 make demo         # end-to-end -> events JSON, using the stub backend
+                  #   generates its own clip if data/ is empty, so this is
+                  #   the whole first-run sequence: clone, preflight, build, demo
+make data         # generate the full synthetic set with exact ground truth
 make verify-data  # do the clips actually show what their labels claim?
 make probe        # characterise a model: can it ground events, how precisely
 make plan  VIDEO=clip.mp4 QUERIES="a door opens"   # what a run would cost
@@ -157,15 +159,26 @@ make fake-test                    # the real vLLM backend against a fake endpoin
 against an endpoint that returns reasoning blocks, truncated responses, refusals
 and hallucinated timestamps. No GPU involved.
 
-**Needs a GPU** — or any real endpoint:
+**Needs a GPU** — or any real endpoint. This is the full sequence on a bare box:
 
 ```bash
-make preflight-gpu   # is a GPU visible to CONTAINERS, not just the host?
-make serve-bg        # start the model, block until it answers
-make probe           # the gating question: can it ground events, how precisely
-make eval            # the labelled set -> metric table
-make eval-control    # ceiling test: can it find events labelled on-screen?
+make preflight-gpu       # is a GPU visible to CONTAINERS, not just the host?
+make build && make pull  # finder image, then the pinned vLLM image (multi-GB)
+make data-eval           # rebuild the 8 labelled clips from their public sources
+make serve-bg            # start the model, block until it answers
+make probe               # the gating question: can it ground events, how precisely
+make eval                # the labelled set -> metric table
+make eval-control        # ceiling test: can it find events labelled on-screen?
+make down                # stop the containers before you stop paying
 ```
+
+`make data-eval` needs no AWS account, credentials or CLI — it fetches over HTTPS
+from MEVA's public bucket and re-cuts each clip to the exact offset and duration
+`labels.json` records.
+
+Build and pull come before everything because `probe`, `eval` and `data-eval` all
+run inside the finder container. A metered box should not idle on a build it could
+have done first.
 
 `probe` and `eval` are built and exercised end to end against a fake endpoint;
 they need a real model to produce a real answer, not to run.
