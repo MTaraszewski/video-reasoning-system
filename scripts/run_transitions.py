@@ -50,6 +50,35 @@ def timeline(client, model, cfg, video, states, t0, t1, step, span):
     return rows
 
 
+def boundaries(rows, states):
+    """What the state was at the edges of the observed span.
+
+    The brief asks how an event seen only partially is reported. A state timeline
+    answers that directly, and better than an event query can: if the first poll
+    already reads `open`, the opening happened BEFORE we started looking. That is
+    not "no event" -- it is an event outside the observed window, and the
+    distinction matters to a client.
+
+    Approach 1 could only infer partiality from a span touching a window edge.
+    Here it is read off the boundary state, with no extra model call.
+    """
+    known = [r for r in rows if r["state"] is not None]
+    if not known:
+        return {"first": None, "last": None,
+                "partial_before": False, "partial_after": False}
+    first, last = known[0]["state"], known[-1]["state"]
+    return {
+        "first": first,
+        "last": last,
+        # Already in the post-transition state when we started: the change
+        # predates the observed span.
+        "partial_before": first == states[1],
+        # Still in it when we stopped: the return transition is unobserved, so
+        # the interval is open-ended on the right.
+        "partial_after": last == states[1],
+    }
+
+
 def transitions(rows):
     """Instants where the parsed state changes, ignoring gaps of unknown state.
 
@@ -109,6 +138,7 @@ def main() -> None:
         rows = timeline(client, cfg.model.name, cfg, str(Path(args.data_dir) / clip["video"]),
                         states, lo, hi, args.step, args.span)
         trs = transitions(rows)
+        bnd = boundaries(rows, states)
 
         # A hit is a transition within the labelled span, widened by one step.
         #
@@ -134,10 +164,14 @@ def main() -> None:
         mark = ("HIT " if strict else "hit~") if inside else "miss"
         at = f"{inside[0]['at']:.1f}s" if inside else (
             f"nearest {nearest:.1f}s away" if nearest is not None else "no transition")
-        print(f"  {mark} {tag:<12} {desc[:38]:<38} label {ts:>5.1f}-{te:<5.1f} {at}")
+        flags = "".join([" [partial-before]" if bnd["partial_before"] else "",
+                         " [partial-after]" if bnd["partial_after"] else ""])
+        print(f"  {mark} {tag:<12} {desc[:38]:<38} label {ts:>5.1f}-{te:<5.1f} "
+              f"{at}{flags}")
         results.append({"clip": clip["video"], "description": desc,
                         "states": states, "label": [ts, te],
-                        "transitions": trs, "hit": bool(inside),
+                        "transitions": trs, "boundaries": bnd,
+                        "hit": bool(inside),
                         "hit_strict": strict, "tolerance_s": tol,
                         "nearest_s": nearest, "rows": rows})
 
@@ -145,6 +179,12 @@ def main() -> None:
           f"(the polling resolution)")
     print(f"{strict_hits}/{scored} strictly inside the label. "
           f"'hit~' marks the difference.")
+    pb = sum(1 for r in results if r.get("boundaries", {}).get("partial_before"))
+    pa = sum(1 for r in results if r.get("boundaries", {}).get("partial_after"))
+    if pb or pa:
+        print(f"\n{pb} event(s) already in the target state when polling began, "
+              f"{pa} still in it when it ended — the transition falls outside the "
+              f"observed span and is reported as partial rather than missed.")
     if skipped:
         print(f"\n{len(skipped)} description(s) have no state pair — not a model "
               f"failure, a description that does not decompose into one:")
