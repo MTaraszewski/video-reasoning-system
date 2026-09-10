@@ -24,8 +24,13 @@ from video_reasoning.config import load_config
 from video_reasoning.decode import frame_to_data_url, sample_frames
 
 
-def classify(client, model, frames, states, debug=False):
-    """Ask which state fits. Returns (index, probability)."""
+def ask_once(client, model, frames, states, debug=False):
+    """One classification. Returns {state: probability} over ALL states.
+
+    The probability of every option is read, not just the winner. Which option
+    wins turned out to be nearly worthless -- the model answered "(b)" whatever
+    (b) said -- but the distribution over options still carries signal.
+    """
     opts = "\n".join(f"({chr(97 + i)}) {s}" for i, s in enumerate(states))
     letters = [chr(97 + i) for i in range(len(states))]
     content = [{"type": "text",
@@ -48,21 +53,37 @@ def classify(client, model, frames, states, debug=False):
     msg = r.choices[0].message
     raw = msg.content or ""
     if debug:
-        print(f"    [raw={raw[:60]!r} finish={r.choices[0].finish_reason} "
-              f"reasoning={(getattr(msg, 'reasoning_content', None) or '')[:40]!r}]")
-    tok = raw.strip().lower()[:1]
-    # A response that is not one of the offered letters must not silently become
-    # the first option -- that is what made every poll read "(a) closed".
-    idx = letters.index(tok) if tok in letters else None
-    # Probability of the chosen letter against the others.
+        print(f"    [raw={raw[:40]!r} finish={r.choices[0].finish_reason}]")
     try:
         lp = {t.token.strip().lower(): t.logprob
               for t in r.choices[0].logprobs.content[0].top_logprobs}
-        tot = sum(math.exp(lp[l]) for l in letters if l in lp)
-        p = math.exp(lp.get(tok, -60.0)) / tot if tot else 0.0
     except Exception:
-        p = float("nan")
-    return idx, p, raw
+        return {}
+    probs = {l: math.exp(lp[l]) for l in letters if l in lp}
+    tot = sum(probs.values())
+    if not tot:
+        return {}
+    return {states[letters.index(l)]: v / tot for l, v in probs.items()}
+
+
+def poll(client, model, frames, states, debug=False):
+    """Ask in BOTH option orders and average — cancels option-order bias.
+
+    Measured on one clip: with (a) closed / (b) open the model answered "b" at
+    every timestep; with the labels swapped it answered "b" again. It was picking
+    the last option, not reading the scene, and the probability curve rose at the
+    same moment in both runs -- so the apparent signal was positional.
+
+    Position bias is symmetric under reversal, so averaging the two orders
+    cancels it and leaves whatever perception is underneath.
+    """
+    out: dict[str, list[float]] = {s: [] for s in states}
+    for order in (list(states), list(reversed(states))):
+        got = ask_once(client, model, frames, order, debug=debug)
+        debug = False
+        for k, v in got.items():
+            out[k].append(v)
+    return {k: (sum(v) / len(v) if v else float("nan")) for k, v in out.items()}
 
 
 def main() -> None:
@@ -87,7 +108,14 @@ def main() -> None:
         print(f"truth  {args.truth[0]:.1f}-{args.truth[1]:.1f}s")
     print()
 
-    prev = None
+    # The reported score is P(last state) - P(first state), order-averaged. One
+    # signed number per timestep: negative means the first state, positive the
+    # second, and the event is where it crosses zero.
+    a, b = args.states[0], args.states[-1]
+    print(f"score = P({b[:24]}) - P({a[:24]}), averaged over both option orders\n")
+    print(f"     {'t':>7}  {'P(' + a[:18] + ')':>24}  {'P(' + b[:18] + ')':>24}  score")
+
+    series = []
     t = args.start
     while t < args.end:
         _, frames = sample_frames(args.video, fps=cfg.sampling.fps,
@@ -95,23 +123,26 @@ def main() -> None:
                                   overlay=False, start_s=t, end_s=t + args.span)
         if not frames:
             break
-        idx, p, raw = classify(client, cfg.model.name, frames, args.states,
-                               debug=(t == args.start))
+        pr = poll(client, cfg.model.name, frames, args.states,
+                  debug=(t == args.start))
+        pa, pb = pr.get(a, float("nan")), pr.get(b, float("nan"))
+        score = pb - pa
         inside = "*" if args.truth and args.truth[0] <= t <= args.truth[1] else " "
-        if idx is None:
-            print(f" {inside} t={t:>5.1f}s  UNPARSED  raw={raw[:40]!r}")
-            prev = None
-            t += args.step
-            continue
-        mark = "  <- CHANGE" if prev is not None and idx != prev else ""
-        print(f" {inside} t={t:>5.1f}s  ({chr(97 + idx)}) {args.states[idx][:38]:<38} "
-              f"p={p:.2f}{mark}")
-        prev = idx
+        bar = "#" * int(abs(score) * 20)
+        print(f" {inside} t={t:>5.1f}s  {pa:>24.2f}  {pb:>24.2f}  {score:+.2f} {bar}")
+        series.append((t, score))
         t += args.step
 
     print("\n* = inside the labelled event window.")
-    print("A clean CHANGE near the truth means state polling works and the design "
-          "is worth building. A flat or oscillating column means it is not.")
+    crossings = [(t1, s0, s1) for (t0, s0), (t1, s1) in zip(series, series[1:])
+                 if s0 <= 0 < s1 or s0 >= 0 > s1]
+    if crossings:
+        for t1, s0, s1 in crossings:
+            print(f"crossing at t={t1:.1f}s  ({s0:+.2f} -> {s1:+.2f})")
+    else:
+        rng = max(s for _, s in series) - min(s for _, s in series) if series else 0
+        print(f"no zero crossing. score range {rng:.2f} — if that is small the "
+              f"model is not distinguishing these states at all.")
 
 
 if __name__ == "__main__":
