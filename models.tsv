@@ -3,7 +3,10 @@
 #   id                  HuggingFace repo id, character for character
 #   gated               yes -> needs HF_TOKEN and accepted terms on the model page
 #   max_model_len       vLLM context.
-#   min_vram_gib        MEASURED floor to run at that context, not estimated.
+#   min_vram_gib        MEASURED floor, compared against what nvidia-smi REPORTS,
+#                       not against the number on the datasheet. A "24 GB" L4
+#                       reports 23,034 MiB = 22 GiB. Writing 24 here skipped a
+#                       model that had already run on that exact card.
 #   role                why this model is in the sweep at all
 #
 # Cosmos3-Edge is the measured baseline. The other three exist to answer questions
@@ -24,7 +27,7 @@
 # 48 GB card (g6e.2xlarge, L40S) and are marked as such rather than quietly run
 # in a degraded configuration.
 id	gated	max_model_len	min_vram_gib	role
-nvidia/Cosmos3-Edge	no	32768	24	primary — the brief's recommendation, MEASURED: 4.97 of 22.04 GiB used
-nvidia/Cosmos-Reason2-2B	yes	32768	24	size-scaling point in the Reason family; should fit a 24 GB card
-nvidia/Cosmos-Reason2-8B	yes	16384	48	reference — its card documents the timestamp mechanism. NEEDS 48 GB
-Qwen/Qwen3-VL-8B-Instruct	no	16384	48	CONTROL — base model Reason2-8B came from. NEEDS 48 GB (measured: OOM on 24)
+nvidia/Cosmos3-Edge	no	32768	22	primary — the brief's recommendation, MEASURED: 4.97 of 22.04 GiB used
+nvidia/Cosmos-Reason2-2B	yes	32768	22	size-scaling point in the Reason family; 2B < the 4B that ran here, so it fits
+nvidia/Cosmos-Reason2-8B	yes	16384	40	reference — its card documents the timestamp mechanism. NEEDS ~48 GB
+Qwen/Qwen3-VL-8B-Instruct	no	16384	40	CONTROL — base model Reason2-8B came from. NEEDS ~48 GB (measured: OOM on a 22 GiB L4)
