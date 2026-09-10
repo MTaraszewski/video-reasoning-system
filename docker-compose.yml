@@ -67,7 +67,13 @@ services:
   vllm:
     # Pinned deliberately. A floating `latest` tag is the most likely cause of
     # "it worked for you and not for us" — the exact failure we are guarding.
-    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.21.0}
+    # The fallback matters. It is what a bare `docker compose` command gets when
+    # VLLM_IMAGE is absent -- i.e. any invocation that does not go through make.
+    # It used to be v0.21.0, which is the one version we have MEASURED as unable
+    # to load this model: its bundled Transformers predates cosmos3_edge and
+    # refuses the architecture before reaching the GPU. A default that cannot
+    # work is worse than no default; it pulls 10 GB and then fails.
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.29.0}
     ports:
       - "${VLLM_PORT:-8000}:8000"
     environment:

@@ -381,6 +381,42 @@ it out would hide the finding and leave the score unexplained.
 
 ---
 
+### 6.7 Model sweep: four planned -> two measured, and why we stopped
+
+**Was:** four models — Cosmos3-Edge, Cosmos-Reason2-2B, Cosmos-Reason2-8B and
+Qwen3-VL-8B-Instruct — with the last two as a controlled pair isolating NVIDIA's
+physical-AI post-training.
+
+**Now:** two measured, two deliberately not run.
+
+**What changed it.** The 8B models need ~40 GiB reported and the card capacity
+gave us reports 22. Qwen3-VL-8B loaded 16.65 GiB of weights, leaving 0.65 GiB for
+KV cache against the 2.25 GiB a 16384 context requires.
+
+**The tempting move, and why it is wrong.** They would run at a shorter context
+and fewer frames. But Qwen-versus-Reason2 only isolates post-training if both run
+under conditions identical to each other AND to the 4B baseline. Constraints we
+impose are not a property of the models, and a comparison run under them answers a
+question nobody asked. Better an honest gap than a number that looks like a result.
+
+**What the second model did tell us.** Cosmos-Reason2-2B answered 20% of probe
+cases at 9.50 s median error, against Cosmos3-Edge's 100% and 3.50 s. Reason2's
+model card documents the burned-in timestamp mechanism; Edge's does not mention
+timestamps at all. So the most comfortable available explanation — that the brief
+recommended a model the technique was never documented for — is ruled out. The
+model it IS documented for did worse.
+
+### Rejected
+
+| Alternative | Why not |
+|---|---|
+| Run the 8B models at reduced frames/context | Breaks the only comparison they exist for. See above |
+| Quantise the 8B models to fp8 to fit 24 GB | Would compare a quantised model against two bf16 ones and attribute the difference to post-training |
+| Rent a 48 GB card for the pair | Defensible, and the right move if the comparison mattered to the brief. It does not — the brief asks for one model plus its limits, and capacity for 48 GB was not available when we looked |
+| Drop the 8B rows from the leaderboard entirely | A dash that says "not run" is information. A missing row is not |
+
+---
+
 ## 7. Open — not yet decided
 
 | Question | Blocked on |

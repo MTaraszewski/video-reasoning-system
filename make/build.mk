@@ -96,10 +96,11 @@ probe:  ## [any] characterise the model: can it ground events, how precisely
 	  video-reasoning probe --backend $(BACKEND) \
 	  --prompts $(PROMPTS) --fps $(PROBE_FPS) -o $(PROBE_OUT) \
 	  --labels $(PROBE_LABELS) --data-dir $(PROBE_DATA) \
+	  $(if $(MODEL),--model $(MODEL),) \
 	  $(if $(PROBE_EXCERPT),--excerpt-s $(PROBE_EXCERPT),) \
 	  $(if $(BASE_URL_OVERRIDE),--base-url $(BASE_URL_OVERRIDE),) \
 	  $(if $(RECORD),--record /out/$(RECORD),)
-	@echo; echo "-> $(OUT_DIR)/probe.json"
+	@echo; echo "-> $(PROBE_OUT)"
 
 # The hand-labelled real set is what `make eval` should measure -- it is the
 # deliverable. Pointing this at /data/synthetic silently evaluated the wrong
@@ -144,6 +145,7 @@ eval:  ## [gpu] run the labelled set, print the metric table
 	$(COMPOSE) run --rm finder video-reasoning evaluate \
 	  --labels $(LABELS) --data-dir $(EVAL_DATA) --backend $(BACKEND) \
 	  -o $(EVAL_OUT) \
+	  $(if $(MODEL),--model $(MODEL),) \
 	  $(if $(DETECT),--detect,) \
 	  $(if $(DETECT_THRESHOLD),--detect-threshold $(DETECT_THRESHOLD),) \
 	  $(if $(EVAL_LIMIT),--limit $(EVAL_LIMIT),) \
@@ -169,6 +171,7 @@ eval-control:  ## [gpu] CEILING TEST: can the model find events labelled on-scre
 	$(COMPOSE) run --rm finder video-reasoning evaluate \
 	  --labels $(CONTROL_LABELS) --data-dir $(CONTROL_DATA) \
 	  --backend $(BACKEND) -o /out/eval-control.json \
+	  $(if $(MODEL),--model $(MODEL),) \
 	  $(if $(PROMPT),--prompt $(PROMPT),) \
 	  $(if $(SAMPLE_FPS),--fps $(SAMPLE_FPS),) \
 	  $(if $(REPLAY),--replay /out/$(REPLAY),)

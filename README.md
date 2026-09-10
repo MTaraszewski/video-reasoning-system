@@ -72,17 +72,53 @@ alternatives rejected, and the decisions that reversed under new evidence.
 
 ### Leaderboard — models × temporal grounding
 
-| Model | Size | R@1 @0.3 | R@1 @0.5 | R@1 @0.7 | mean tIoU | mean rel. err | s / video-min |
-|---|---|---|---|---|---|---|---|
-| `nvidia/Cosmos3-Edge` | 4B | **0.000** | **0.000** | **0.000** | **0.002** | **3.151** | **268** |
-| `nvidia/Cosmos-Reason2-8B` | 8B | — | — | — | — | — | — |
-| `nvidia/Cosmos-Reason2-2B` | 2B | — | — | — | — | — | — |
-| `Qwen/Qwen3-VL-8B-Instruct` | 8B | — | — | — | — | — | — |
+The first six columns come from the **eval** — real clips, hand labels, full
+cross-product. The last two come from the **probe** — synthetic clips, exact
+ground truth, event guaranteed present. They are different experiments and are
+not comparable with each other; both are shown because a model can be measured by
+one and not the other.
 
-Only the first row ran. The remaining three are **not measured**, and the
-Qwen-versus-Reason2 comparison — which would isolate what NVIDIA's physical-AI
-post-training buys for temporal localisation — remains an open question, not a
-finding. NVIDIA's own target for mean relative error is <0.30; we measured 3.151.
+| Model | Size | R@1 @0.3 | R@1 @0.5 | R@1 @0.7 | mean tIoU | mean rel. err | s / video-min | probe: answered | probe: median err |
+|---|---|---|---|---|---|---|---|---|---|
+| `nvidia/Cosmos3-Edge` | 4B | **0.000** | **0.000** | **0.000** | **0.002** | **3.151** | **268** | **100%** | **3.50 s** |
+| `nvidia/Cosmos-Reason2-2B` | 2B | not run | not run | not run | not run | not run | not run | **20%** | **9.50 s** |
+| `nvidia/Cosmos-Reason2-8B` | 8B | not run | not run | not run | not run | not run | not run | not run | not run |
+| `Qwen/Qwen3-VL-8B-Instruct` | 8B | not run | not run | not run | not run | not run | not run | not run | not run |
+
+Both probe columns are the `overlay` prompt at 4 fps, so those two rows are
+like-for-like. "not run" is literal — no cell here is estimated.
+
+Cosmos3-Edge is the only model given the full eval. **Cosmos-Reason2-2B was
+probed** (result below); the two 8B models were not run at all — they need ~40 GiB
+and the card we obtained reports 22. So the Qwen-versus-Reason2 comparison, which
+would isolate what NVIDIA's physical-AI post-training buys for temporal
+localisation, remains an open question rather than a finding. NVIDIA's own target
+for mean relative error is <0.30; we measured 3.151.
+
+### A second model does not rescue it
+
+The obvious hypothesis after the first result was that we had picked the wrong
+model. `Cosmos3-Edge`'s card does not mention timestamps at all; the brief
+asserted the capability. `Cosmos-Reason2`'s card **does** document the burned-in
+timestamp mechanism. If the approach worked there, the finding would have been
+"the brief recommended a model this technique isn't documented for".
+
+It does not. On the same synthetic clips, same prompt, same sampling rate:
+
+| Model | Architecture | answered | median boundary error |
+|---|---|---|---|
+| `nvidia/Cosmos3-Edge` (4B) | Nemotron-H | **100%** | **3.50 s** |
+| `nvidia/Cosmos-Reason2-2B` (2B) | Qwen3-VL | **20%** | 9.50 s |
+
+The model whose card documents the mechanism did **worse** — declining 4 of 5
+cases where the event was present by construction. vLLM resolves Reason2-2B as
+`Qwen3VLForConditionalGeneration`, confirming the Reason family is Qwen3-VL with
+NVIDIA post-training on top, so this is a second *architecture* failing too.
+
+Three variables differ at once — size (4B vs 2B), architecture, and whether the
+mechanism is documented — so this is a data point, not a controlled comparison.
+What it does rule out is the comfortable explanation: the failure is not a quirk
+of the one model the brief named.
 
 ### The finding: it cannot tell whether an event is present
 
@@ -216,20 +252,7 @@ video is downloaded — is `scripts/screen_geom.py`. It **ranks and never reject
 positive costs ten seconds looking at a contact sheet, a false negative is silent.
 → [`DATASETS.md`](DATASETS.md)
 
-### Leaderboard — models × temporal grounding
-
-| Model | Size | R@1 @0.3 | R@1 @0.5 | R@1 @0.7 | mean tIoU | mean rel. err | s / video-min | $ / video-min |
-|---|---|---|---|---|---|---|---|---|
-| `nvidia/Cosmos3-Edge` | 4B | — | — | — | — | — | — | — |
-| `nvidia/Cosmos-Reason2-8B` | 8B | — | — | — | — | — | — | — |
-| `nvidia/Cosmos-Reason2-2B` | 2B | — | — | — | — | — | — | — |
-| `Qwen/Qwen3-VL-8B-Instruct` | 8B | — | — | — | — | — | — | — |
-
-The last row is the control: it is the base model Cosmos-Reason2-8B was
-post-trained from, so the difference between those two rows isolates what NVIDIA's
-physical-AI training actually buys for this task.
-
-### Figures the runs will produce
+### Figures
 
 | Figure | What it answers |
 |---|---|
@@ -237,7 +260,7 @@ physical-AI training actually buys for this task.
 | **Accuracy/cost frontier** — tIoU vs sampling fps | Is 8 fps worth double the tokens over 4? |
 | **Window/stride sweep** — recall vs overlap | How much overlap does boundary-straddling recovery actually need? |
 | **Per-axis breakdown** — score by failure axis | *Where does it break?* The question the brief actually asks |
-| **Model × axis heatmap** | Does a 4B edge model fail differently from an 8B, or just more? |
+| **Model × axis heatmap** | Does a 4B edge model fail differently from an 8B, or just more? **Not produced** — the 8B models need a 48 GB card |
 
 ---
 
@@ -306,4 +329,4 @@ end-to-end workflow.
 | [`DATASETS.md`](DATASETS.md) | Evaluation sources, licences, failure axes, labelling protocol |
 | [`DECISIONS.md`](DECISIONS.md) | Every choice, rejected alternatives, and reversals |
 | [`RUNBOOK.md`](RUNBOOK.md) | Provisioning a GPU: instance sizing, what downloads when, cost, risks |
-| [`reference/take-home.md`](reference/take-home.md) | The assignment |
+| the assignment brief | Not included — it is the client's document, not ours to republish. Requirements are traced in `PLAN.md` |

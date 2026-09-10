@@ -8,7 +8,7 @@ unverified is marked `UNVERIFIED` and must not leak into README/DESIGN.
 
 ## 0. The assignment, distilled
 
-Source: [`reference/take-home.md`](reference/take-home.md)
+Source: the assignment brief, held locally and deliberately not committed — it is the client's document. Every requirement below quotes the sentence it comes from, so the traceability survives without republishing it.
 
 Build a service: *(video file, one or more plain-language event descriptions)* →
 list of events with **start time, end time, matched description, confidence /
@@ -954,3 +954,46 @@ aws service-quotas list-requested-service-quota-change-history \
   from "cannot see at this resolution".
 
   Cost: ~$4 of GPU at a verified $1.22249/hr on `g6.2xlarge`.
+
+- **2026-09-10 (model sweep)** — Built the multi-model path and got one more model
+  measured. `models.tsv` carries the registry; `make model-sweep` serves each in
+  turn and writes per-model outputs; `make compare` prints the leaderboard.
+
+  **Cosmos-Reason2-2B: 20% emit, 9.50 s median error** on the synthetic probe,
+  against Cosmos3-Edge's 100% and 3.50 s at the same prompt and sampling rate.
+  This was the hypothesis most worth testing — Reason2's card documents the
+  burned-in timestamp mechanism where Edge's does not — and it fails. The model
+  the technique is documented for did worse than the one it isn't. vLLM resolves
+  Reason2-2B as `Qwen3VLForConditionalGeneration`, so that is a second
+  architecture failing, not just a second checkpoint.
+
+  Three variables move at once (4B vs 2B, Nemotron-H vs Qwen3-VL, documented vs
+  not), so it is a data point rather than a controlled comparison. What it rules
+  out is the comfortable explanation: the failure is not a quirk of the model the
+  brief happened to name.
+
+  **The 8B models could not run.** Qwen3-VL-8B loaded 16.65 GiB of weights on the
+  L4's 22.04 GiB usable, leaving 0.65 GiB for KV cache against the 2.25 GiB a
+  16384 context needs; vLLM put the ceiling at 4720 tokens, too small for a
+  48-frame window. Running them at fewer frames would have broken the very
+  comparison they exist for, so they are marked as needing ~40 GiB and skipped.
+  The Qwen-versus-Reason2 question stays open.
+
+  **Four defects found by using the tooling**, all the same shape — a check that
+  looked like it verified something and did not:
+  - `min_vram_gib` was written from the datasheet (24) and compared against what
+    `nvidia-smi` reports (22), so the sweep would have skipped Cosmos3-Edge, a
+    model that had already completed a 1352-call eval on that exact card.
+  - The probe target never passed `--model`, so it read `config.yaml` and the
+    identity guard refused: "endpoint is serving Cosmos-Reason2-2B, but MODEL is
+    Cosmos3-Edge". That guard prevented a mislabelled row in the leaderboard.
+  - The sweep summary counted a model as "ran" when a stage had errored.
+  - `compare_models.py` printed each model's best prompt without naming it, so
+    Edge-on-`native` sat beside Reason2-on-`overlay` looking like a like-for-like
+    comparison. It now names the prompt and warns when rows differ.
+
+  Also: `docker-compose.yml` defaulted to vLLM v0.21.0 when `VLLM_IMAGE` was
+  absent — the one version measured as unable to load this model. Any invocation
+  not going through make would pull 10 GB and then fail.
+
+  Cost: ~$14 of GPU across the day, at a verified $1.22249/hr.
