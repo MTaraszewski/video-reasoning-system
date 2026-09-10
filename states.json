@@ -1,0 +1,20 @@
+{
+  "_comment": [
+    "Description -> the two states whose transition IS that event.",
+    "Hand-written. Deriving these from the client's sentence with one cheap",
+    "text call is the obvious next step and is not built.",
+    "",
+    "A description with no entry is not a failure of the model -- it is a",
+    "description that does not decompose into a binary state, and that is",
+    "worth reporting as a property of the request rather than hiding."
+  ],
+  "a person opens a building door":            ["the door is closed", "the door is open"],
+  "a person enters through the door":          ["the door is closed", "the door is open"],
+  "a person comes out through the door":       ["the door is closed", "the door is open"],
+  "a vehicle door opens":                      ["the car door is closed", "the car door is open"],
+  "a person gets into a vehicle":              ["the car door is closed", "the car door is open"],
+  "a person gets out of a vehicle":            ["the car door is closed", "the car door is open"],
+  "a person sits down":                        ["the person is standing", "the person is sitting"],
+  "a person stands up":                        ["the person is sitting", "the person is standing"],
+  "a vehicle stops moving":                    ["the vehicle is moving", "the vehicle is stationary"]
+}
