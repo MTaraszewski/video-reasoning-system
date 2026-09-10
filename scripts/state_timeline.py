@@ -19,29 +19,36 @@ import argparse
 import math
 
 from openai import OpenAI
+from PIL import Image
 
 from video_reasoning.config import load_config
 from video_reasoning.decode import frame_to_data_url, sample_frames
 
 
-def crop_frames(frames, box):
-    """Crop every frame to a fractional box.
+def crop_frames(frames, box, max_side):
+    """Crop at NATIVE resolution, then resize the crop back up to max_side.
 
-    The measured limit of state polling is actor size: 694px gave a +0.19
-    excursion, 295px gave +0.05 -- below the noise floor. Cropping is the direct
-    remedy, because it changes how much of the tile the subject occupies without
-    changing the footage. It is also what the field does in production: a zone is
-    configured per camera, once.
+    Order matters and getting it wrong looks like a negative result. Cropping a
+    frame that has already been downscaled to 640px gains nothing: the subject
+    occupies the same pixels it did, in a smaller image with the context removed.
+    Measured -- that collapsed the score range from 0.12 to 0.03.
+
+    Cropping the full-resolution frame and resizing the crop up is what actually
+    enlarges the subject: a 295px actor in a 0.45-height crop of a 1080p frame
+    comes back at ~246px instead of ~98px.
     """
     if not box:
         return frames
     x0, y0, x1, y1 = box
-    out = []
     for f in frames:
         w, h = f.image.size
-        f.image = f.image.crop((int(x0 * w), int(y0 * h), int(x1 * w), int(y1 * h)))
-        out.append(f)
-    return out
+        c = f.image.crop((int(x0 * w), int(y0 * h), int(x1 * w), int(y1 * h)))
+        scale = max_side / max(c.size)
+        if scale != 1.0:
+            c = c.resize((max(1, round(c.width * scale)),
+                          max(1, round(c.height * scale))), Image.LANCZOS)
+        f.image = c
+    return frames
 
 
 def ask_once(client, model, frames, states, debug=False):
@@ -147,7 +154,8 @@ def main() -> None:
     # second, and the event is where it crosses zero.
     a, b = args.states[0], args.states[-1]
     if args.crop:
-        print(f"crop   {args.crop}  (fractional, fixed for the whole clip)")
+        print(f"crop   {args.crop}  (fractional, applied at native resolution, "
+              f"then resized to {cfg.sampling.frame_max_side}px)")
     if args.repeat > 1:
         print(f"repeat {args.repeat} polls per timestep, averaged")
     print(f"score = P({b[:24]}) - P({a[:24]}), averaged over both option orders\n")
@@ -156,12 +164,15 @@ def main() -> None:
     series = []
     t = args.start
     while t < args.end:
-        _, frames = sample_frames(args.video, fps=cfg.sampling.fps,
-                                  max_side=cfg.sampling.frame_max_side,
-                                  overlay=False, start_s=t, end_s=t + args.span)
+        # With a crop, decode at native resolution so the crop has pixels to
+        # work with; without one, downscale during decode as usual.
+        _, frames = sample_frames(
+            args.video, fps=cfg.sampling.fps,
+            max_side=(4096 if args.crop else cfg.sampling.frame_max_side),
+            overlay=False, start_s=t, end_s=t + args.span)
         if not frames:
             break
-        frames = crop_frames(frames, args.crop)
+        frames = crop_frames(frames, args.crop, cfg.sampling.frame_max_side)
         pr = poll(client, cfg.model.name, frames, args.states,
                   debug=(t == args.start), repeat=args.repeat)
         pa, pb = pr.get(a, float("nan")), pr.get(b, float("nan"))
