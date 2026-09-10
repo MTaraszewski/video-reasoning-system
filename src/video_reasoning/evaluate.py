@@ -104,6 +104,12 @@ def run_eval(
     # filesystem returned.
     if limit:
         plan = dict(sorted(plan.items())[:limit])
+        # Truths must be narrowed to match. Without this the events of every clip
+        # NOT evaluated are still counted as ground truth with no predictions
+        # against them, so they score as guaranteed misses and every recall and
+        # false-positive figure on a subsample is wrong -- quietly, and in the
+        # direction that makes a change look worse than it is.
+        truths = [t for t in truths if t["video"] in plan]
     data_dir = Path(data_dir)
 
     preds: list[dict] = []

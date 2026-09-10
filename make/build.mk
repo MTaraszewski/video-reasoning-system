@@ -3,7 +3,7 @@
 #   finder  — CPU only, built here: decode, window, merge, schema, CLI, eval
 #   vllm    — pinned upstream image, holds the weights and nothing else
 
-.PHONY: build pull shell clean down
+.PHONY: offset-test build pull shell clean down
 
 build: preflight  ## [any] build the finder image
 	$(COMPOSE) build finder
@@ -122,6 +122,11 @@ EVAL_DATA ?= /data/eval
 # descriptions to the questions asked of real clips, shifting the FP denominator.
 # Containment of the leaked answers works either way; separation keeps the query
 # set stable and comparable between runs.
+OFFSET_VIDEO ?= /data/eval/2018-03-07.16-50-01.16-55-01.admin.G326.r13.mp4
+OFFSET_QUERY ?= a person opens a building door
+OFFSET_TRUTH ?= 3.0 5.733
+OFFSETS      ?= 0,3,9,15
+
 CONTROL_LABELS ?= /data/meva-examples/labels.json
 CONTROL_DATA   ?= /data/meva-examples
 
@@ -143,6 +148,11 @@ eval:  ## [gpu] run the labelled set, print the metric table
 	  $(if $(GPU_HOURLY),--gpu-hourly $(GPU_HOURLY),) \
 	  $(if $(REPLAY),--replay /out/$(REPLAY),)
 	@echo; echo "-> $(OUT_DIR)/eval.json"
+
+offset-test:  ## [gpu] does the reported time follow the EVENT or the WINDOW?
+	$(COMPOSE) run --rm finder python scripts/window_offset_test.py \
+	  --video $(OFFSET_VIDEO) --query "$(OFFSET_QUERY)" \
+	  --truth $(OFFSET_TRUTH) --offsets $(OFFSETS) --backend $(BACKEND)
 
 eval-control:  ## [gpu] CEILING TEST: can the model find events labelled on-screen?
 	@mkdir -p $(OUT_DIR)
