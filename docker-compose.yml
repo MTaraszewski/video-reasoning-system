@@ -24,6 +24,9 @@ services:
       - ./scripts:/app/scripts
       - ./eval:/app/eval
       - ./config.yaml:/app/config.yaml:ro
+      # Read-only: it is configuration, and a container should not rewrite the
+      # mapping the results were produced under.
+      - ./states.json:/app/states.json:ro
       # Data is READ-ONLY: the service must never modify input footage.
       - ${DATA_DIR:-./data}:/data:ro
       - ${OUT_DIR:-./out}:/out
@@ -42,6 +45,9 @@ services:
       - ./src:/app/src
       - ./scripts:/app/scripts
       - ./config.yaml:/app/config.yaml:ro
+      # Read-only: it is configuration, and a container should not rewrite the
+      # mapping the results were produced under.
+      - ./states.json:/app/states.json:ro
       - ${DATA_DIR:-./data}:/data
     working_dir: /app
 
