@@ -1,0 +1,18 @@
+# The models under test. One row per model; columns are tab-separated.
+#
+#   id                  HuggingFace repo id, character for character
+#   gated               yes -> needs HF_TOKEN and accepted terms on the model page
+#   max_model_len       vLLM context. Lowered for 8B models: at bf16 they are
+#                       ~16 GiB of weights on a 22 GiB card, and KV cache takes
+#                       what is left. 32768 does not fit alongside them.
+#   role                why this model is in the sweep at all
+#
+# Cosmos3-Edge is the measured baseline. The other three exist to answer
+# questions the first run could not: does a bigger model in the same family
+# detect presence any better, and does NVIDIA's physical-AI post-training buy
+# anything over the base model it started from?
+id	gated	max_model_len	role
+nvidia/Cosmos3-Edge	no	32768	primary — the brief's recommendation, already measured
+nvidia/Cosmos-Reason2-2B	yes	32768	size-scaling point in the Reason family
+nvidia/Cosmos-Reason2-8B	yes	16384	reference — its model card documents the timestamp mechanism
+Qwen/Qwen3-VL-8B-Instruct	no	16384	CONTROL — the base model Reason2-8B was post-trained from

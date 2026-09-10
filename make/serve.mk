@@ -43,6 +43,23 @@ serve-down:  ## [gpu] stop the model server
 models:  ## [any] ask the endpoint what it is actually serving
 	@curl -s http://localhost:$(VLLM_PORT)/v1/models | python3 -m json.tool
 
+##@ Model sweep
+
+.PHONY: model-sweep model-sweep-probe compare
+
+# One GPU, one model at a time. See models.tsv for what is in the sweep and why.
+model-sweep:  ## [gpu] run probe + eval over every model in models.tsv, serially
+	@bash scripts/model_sweep.sh $(if $(ONLY),--only $(ONLY),)
+
+model-sweep-probe:  ## [gpu] cheap first pass: probe only, no eval
+	@bash scripts/model_sweep.sh --skip-eval $(if $(ONLY),--only $(ONLY),)
+
+# Runs on the host, not in a container: it is pure stdlib, and models.tsv is not
+# mounted into the image. One less moving part for a target whose whole job is to
+# print a table.
+compare:  ## [any] leaderboard from whatever model runs exist
+	@python3 scripts/compare_models.py --out-dir $(OUT_DIR) --registry models.tsv
+
 ##@ Testing without a GPU
 
 .PHONY: fake-serve fake-down fake-test
