@@ -552,6 +552,32 @@ two kinds:
 - **Real** footage, which is the only thing that proves it works. Fixed-camera
   operational footage is the target domain.
 
+**As built: 8 clips, 120 s each, 15 hand-confirmed events** (`data/eval/labels.json`),
+covering all three of the brief's worked examples — *"a person enters through the
+door"*, *"a forklift reverses"* (`Vehicle_Reversing`), *"the machine stops moving"*
+(`Vehicle_Stopping`) — with durations from 1.4 s to 13.6 s.
+
+**A precondition the design did not originally state: an event is only evaluable if
+a human can label it.** This sounds trivial and is not, because it is invisible
+until someone tries. Clips were first selected because their annotation *declared*
+an activity; eight of fourteen candidates then turned out to show that activity at
+26–124 px, where there is no boundary for a person to read. A score computed
+against such a label measures the labeller, not the model.
+
+So clip selection now carries a **measurable gate ahead of it** — the actor's
+median bounding-box height during the event, taken from the dataset's own geometry
+annotations before any video is downloaded, and calibrated against verdicts reached
+by eye. It ranks rather than rejects: a false positive costs a glance at a contact
+sheet, a false negative removes a clip silently and leaves no trace that it existed.
+→ [`DATASETS.md`](DATASETS.md), [`DECISIONS.md §4d`](DECISIONS.md)
+
+**Clips that fail that gate are kept, not discarded.** Three of them are excluded
+from every score and used for something no labelled clip can test: the dataset
+declares events in them that no human can verify, so asking the model for those
+events measures whether it produces confident timestamps in the absence of readable
+evidence. Reported separately — with no ground truth, it is a hallucination probe,
+not an accuracy measurement.
+
 **The metric.** Event-finding is temporal grounding, so we report **temporal IoU**
 based metrics, standard in the moment-retrieval literature:
 
@@ -657,6 +683,12 @@ Nothing in the pipeline can detect that a dataset has written the answers on its
 own frames. It was found here by rendering a contact sheet and reading it — which
 is the argument for looking at evaluation footage before trusting a number
 computed from it.
+
+A second instance found the same way, and worth stating because the failure is the
+opposite shape: footage that carries no answers at all, because the actor is 38 px
+across. Both are invisible to every automated check the pipeline runs, both are
+obvious within seconds of looking, and both would have produced a confident number
+— one far too high, one far too low.
 
 ---
 

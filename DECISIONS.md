@@ -184,6 +184,50 @@ them — it costs nothing in tokens to try.
 
 ---
 
+## 4d. Clip selection — by actor size, not by declared activity
+
+**Screen candidate clips on the actor's median bounding-box height during each
+declared event, using MEVA's `.geom.yml`, before downloading any video.**
+
+An event can only be labelled if a human can see it. Nothing else about a clip
+matters if that fails, and the annotation that declares an activity says nothing
+about how large the actor is in frame.
+
+Calibrated against six clips judged by eye **before this measurement existed**:
+
+| Camera | Median actor h | Hand verdict |
+|---|---|---|
+| `G326` | **694 px** | two events confirmed |
+| `G329` | **295 px** | confirmed (needed zooming) |
+| `G331` | **267 px** | suspect, could not verify |
+| `G301` | **121 px** | all rejected |
+| `G328` | **41 px** | all rejected |
+| `G336` | **38 px** | all rejected |
+
+Monotonic across all six. The bands (250 px, 120 px) sit in the gap the data
+leaves, rather than at a number chosen for looking round.
+
+**It ranks; it never rejects.** The two errors are not symmetric. A false positive
+costs ten seconds looking at a contact sheet. A false negative is *silent* — the
+clip never appears in the output and nothing records that it was dropped. `G329`
+was nearly lost exactly that way, to an eyeball judgement later overturned by
+zooming. Every clip stays in the output; the band annotates.
+
+Cost: `.geom.yml` is 5–70 KB against 56–203 MB per video, so the entire 64-clip
+corpus screens for less than the price of downloading one clip.
+
+### Rejected
+
+| Alternative | Why not |
+|---|---|
+| **Select on "the annotation declares an activity"** (what we did first) | Produced 8 unlabellable candidates from 14, and one clip that lost every event. The declaration is true and useless: it is silent about visibility |
+| **Hard-reject below a threshold** | Converts a recoverable mistake into an invisible one. See above |
+| **Crop the eval clips to the actor using the annotation's boxes** | Framing the model's input with ground-truth geometry is leakage, and would flatter every number. Acceptable as a labelling aid only — but then we would be labelling events the model still cannot see |
+| **Pixel-change screening** (`screen_clips.py`, already built) | Retained for detecting *completely dead* footage, which it does catch. Too blunt here: a person opening a door 40 m away moves a fraction of a percent of pixels, and it cannot tell "active" from "contains your event" |
+| **Sample more dates and times** | The intuitive fix, and wrong. `G336` shows `Open_Trunk` at 204 px and `Vehicle_Stopping` at 38 px — the camera is not uniformly bad. Selecting per *event* rather than per *clip* was the actual fix |
+
+---
+
 ## 5. Scope
 
 | Decision | Reason |
@@ -252,6 +296,32 @@ qualifier *"when prompted correctly"*.
 Recommended keeping `.claude/skills/` outside the submission to avoid shipping
 process detail. **Owner decided to commit them.** Recorded as an owner decision
 against the recommendation.
+
+---
+
+### 6.4 Clip selection: by declared activity → by actor size
+
+**Was:** choose clips whose `.activities.yml` declares an activity worth labelling.
+Reasonable, and it is how the first six clips were picked.
+
+**Now:** rank by the actor's measured size in frame, then choose by event coverage.
+
+**What changed it:** labelling the first set. Eight of fourteen candidates could not
+be labelled by anyone — at 26–124 px there is no boundary to read — and
+`hospital.G301` lost both its events. The declaration was accurate every time; it
+simply does not imply the event is visible.
+
+**What it cost:** one full labelling pass, and it was avoidable. `.geom.yml` sits
+beside `.activities.yml` in the same S3 prefix and was being discarded by an `awk`
+filter matching only `activities.yml`. The question "how big is the actor?" was
+answerable before a single video was downloaded; it was never asked, because the
+selection problem had been framed as "which clips contain events" rather than
+"which clips contain events we can see well enough to label".
+
+**What it recovered:** `Vehicle_Reversing` at 232 px on `school.G300` — the brief's
+*"a forklift reverses"*, which was unlabellable at 41 px on `school.G328`. The
+right dataset, the wrong camera, for a reason nothing in the first selection could
+have surfaced.
 
 ---
 

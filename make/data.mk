@@ -16,7 +16,7 @@
 #   VANTAGE      evaluation-only, GATED, no redistribution
 # Nothing here commits video to the repo. Only our labels are committed.
 
-.PHONY: meva-plan screen-clips verify-data positive-control prepare-clips frames frames-sweep data data-synthetic data-meva data-supervision data-vantage \
+.PHONY: data-eval meva-index meva-screen meva-shortlist event-sheets meva-plan screen-clips verify-data positive-control prepare-clips frames frames-sweep data data-synthetic data-meva data-supervision data-vantage \
         s3-check s3-push s3-push-dry s3-pull s3-status data-list
 
 # The finder mounts /data READ-ONLY, so the service can never modify a client's
@@ -73,6 +73,25 @@ data-meva:  ## [local] fetch MEVA clips that CONTAIN events (CC BY 4.0, no crede
 	@MEVA_MIN_S=$(MEVA_MIN_S) MEVA_DROP=$(MEVA_DROP) bash scripts/fetch_meva.sh \
 	  $(MEVA_MODE) $(DATA_DIR)/meva-$(MEVA_MODE) $(MEVA_LIMIT) "$(MEVA_FILTER)"
 
+# Screening clips BEFORE downloading them. MEVA's .geom.yml is 5-70 KB against
+# 56-203 MB per video, so the whole corpus screens for less than one clip costs.
+MEVA_INDEX  ?= $(DATA_DIR)/meva-index
+SHORTLIST   ?= $(MEVA_INDEX)/shortlist.json
+
+data-eval:  ## [local] rebuild the labelled eval set from labels.json (fetches sources)
+	@bash scripts/fetch_eval_sources.sh $(DATA_DIR)/eval/labels.json $(DATA_DIR)/meva-annotated
+	$(DATAGEN_RUN) python scripts/rebuild_eval_clips.py \
+	  --labels /data/eval/labels.json --src /data/meva-annotated --out /data/eval
+
+meva-index:  ## [local] fetch MEVA ANNOTATIONS ONLY (no video) so clips can be screened first
+	@bash scripts/fetch_meva_index.sh $(MEVA_INDEX)
+
+meva-screen:  ## [local] rank indexed clips by actor size during their declared events
+	$(DATAGEN_RUN) python scripts/screen_geom.py --index /data/meva-index
+
+meva-shortlist:  ## [local] fetch the hand-chosen shortlist (edit shortlist.json first)
+	@bash scripts/fetch_meva_shortlist.sh $(SHORTLIST) $(DATA_DIR)/meva-annotated
+
 data-supervision:  ## [local] fetch Roboflow supervision sample videos (licence unstated — do not redistribute)
 	$(DATAGEN_RUN) python scripts/fetch_supervision.py --out /data/supervision
 
@@ -125,12 +144,17 @@ frames-sweep:  ## [any] ONE frame at several overlay font scales, to compare leg
 	@echo "-> $(OUT_DIR)/sweep  (same frame, varying font size — compare legibility)"
 
 EVAL_DATA_DIR ?= /data/synthetic
+CLIP_SRC     ?= /data/meva-annotated
 CLIP_SECONDS ?= 120
-CLIP_LIMIT   ?= 6
+# Sources to process, not clips in the final eval set — candidates get rejected
+# by hand, so this must exceed the 5-10 the brief asks for. Sources are taken in
+# sorted order, so a limit below the source count silently drops the LAST ones
+# alphabetically, which is where newly fetched clips land.
+CLIP_LIMIT   ?= 24
 
 prepare-clips:  ## [local] trim source footage to 1-3 min and scaffold hand-labelling
 	$(DATAGEN_RUN) python scripts/prepare_clips.py \
-	  --src /data/meva --out /data/eval \
+	  --src $(CLIP_SRC) --out /data/eval \
 	  --seconds $(CLIP_SECONDS) --limit $(CLIP_LIMIT)
 	@echo; echo "Contact sheets: $(DATA_DIR)/eval/sheets/  — label from these"
 
@@ -138,6 +162,11 @@ positive-control:  ## [local] build the ceiling-test set from MEVA example clips
 	$(DATAGEN_RUN) python scripts/make_positive_control.py --src /data/meva-examples
 
 SCREEN_DIR ?= /data/meva-annotated
+
+event-sheets:  ## [local] dense sheet per candidate event, for confirming by eye
+	$(DATAGEN_RUN) python scripts/event_sheets.py \
+	  --labels /data/eval/labels.template.json --data-dir /data/eval \
+	  --pad $(SHEET_PAD) --fps $(SHEET_FPS)
 
 meva-plan:  ## [local] turn MEVA annotations into a trim plan + labelling worksheet
 	$(DATAGEN_RUN) python scripts/meva_labels.py \

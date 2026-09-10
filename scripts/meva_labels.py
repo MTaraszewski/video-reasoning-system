@@ -58,8 +58,13 @@ PHRASING = {
     "Text_On_Phone": "a person looks at a phone",
     "Read_Document": "a person reads a document",
     "Purchasing": "a person buys something",
+    # MEVA uses both spellings across releases; a miss here silently falls back
+    # to the class name, so "Sit_Down" reaches the labeller as "sit down" — a
+    # taxonomy label posing as a client's sentence.
     "Sitting_Down": "a person sits down",
+    "Sit_Down": "a person sits down",
     "Standing_Up": "a person stands up",
+    "Stand_Up": "a person stands up",
     "Riding": "a person rides past",
     "Abandon_Package": "someone leaves a bag behind",
     "Loading": "someone loads something into a vehicle",
@@ -161,11 +166,17 @@ def main() -> None:
                 {
                     "description": PHRASING.get(e["activity"],
                                                 e["activity"].replace("_", " ").lower()),
+                    "phrasing_mapped": e["activity"] in PHRASING,
                     # Times are relative to the TRIMMED clip, which is what the
                     # eval will actually open.
                     "start_s": round(e["start_s"] - start, 3),
                     "end_s": round(e["end_s"] - start, 3),
                     "meva_activity": e["activity"],
+                    # MEVA sometimes spans a whole trajectory rather than the act:
+                    # "comes out through the door" over 23.9s, "drops someone off"
+                    # over 110s. Flagged, never dropped -- a wrong boundary is a
+                    # correction, and a silently discarded event is a lost one.
+                    "span_suspect": (e["end_s"] - e["start_s"]) > 20.0,
                     "confirmed_by_hand": False,
                 }
                 for e in inside

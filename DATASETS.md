@@ -299,15 +299,135 @@ blunt for real surveillance.
 So the screen is a filter for *completely dead* footage — which is what it caught,
 twice — and the annotations are the better guide to what is worth labelling.
 
-### One caveat about this slice
+### The caveat about this slice — and what it cost
 
-All twelve clips are the **same five-minute window seen from twelve different
-cameras** at one location — twelve viewpoints of one scene, not twelve independent
-scenes. Good for a multi-view comparison, weak as a diverse eval set. Sampling
-across dates and times would fix it, and should be settled before labelling begins.
+All twelve clips first fetched were the **same five-minute window seen from twelve
+different cameras** at one location. This section previously ended: *"Sampling
+across dates and times would fix it, and should be settled before labelling
+begins."*
 
-`UNVERIFIED`: whether MEVA's annotation format carries explicit start/end frame
-times per activity instance.
+It was not settled before labelling began. The cost was one full labelling pass:
+of fourteen candidates, **eight were unlabellable and one clip lost every event it
+had**, leaving three confirmed events across two cameras pointed at the same
+building. Not an eval set. The diagnosis is below, and it turned out to have
+nothing to do with sampling dates.
+
+### Actor size decides whether an event can be labelled at all
+
+The clips were selected because their annotation **declared an activity**. Nothing
+asked how big the actor was in frame — and the annotation is silent on it, so the
+question never came up until contact sheets made it unavoidable.
+
+MEVA publishes `.geom.yml` beside `.activities.yml`: per-frame bounding boxes for
+every actor. The first fetch discarded them, filtering the S3 listing with
+`awk '/activities\.yml$/'`. They answer the size question directly, at 5–70 KB per
+clip against 56–203 MB per video — so the whole corpus can be screened for less
+than the cost of downloading one clip.
+
+Measuring median actor height during each declared event, against verdicts reached
+by eye **before this measurement existed**:
+
+| Camera | Median actor h | Hand verdict |
+|---|---|---|
+| `G326` admin | **694 px** | two events confirmed |
+| `G329` admin | **295 px** | confirmed (needed zooming) |
+| `G331` bus | **267 px** | suspect, could not verify |
+| `G301` hospital | **121 px** | all rejected |
+| `G328` school | **41 px** | all rejected |
+| `G336` school | **38 px** | all rejected |
+
+The ranking is **monotonic with the hand verdicts across all six clips**. The
+threshold sits between 121 and 267 px; `scripts/screen_geom.py` bands at 250 and
+120 px and is calibrated on this table rather than on a guess.
+
+**The screen ranks; it does not reject.** A false positive costs ten seconds
+looking at a sheet. A false negative is silent — the clip never appears and nothing
+records that it was dropped. `G329` was nearly lost that way to an eyeball
+judgement, so every clip stays in the output and the band only annotates.
+
+Applied to the full corpus — 64 clips across six days — it returns **17 in the
+"good" band**, against the brief's five to ten. It also found `Vehicle_Reversing`
+at **232 px on `school.G300`**, the same event that was unlabellable at 41 px on
+`G328`. The brief's "a forklift reverses" was recoverable all along; we had simply
+picked the wrong camera.
+
+**The real lesson is not about dates.** Sampling across days was never the fix.
+Selecting per *event* rather than per *clip* was: `G336` appears at 204 px for
+`Open_Trunk` and 38 px for `Vehicle_Stopping` — the camera is not uniformly bad, we
+had picked its worst events.
+
+### Sheets locate; zoom adjudicates
+
+Two candidate verdicts read off contact sheets were overturned by zooming into the
+source, and both times the sheet reading was **biased late on the start**:
+
+| Event | Read from the sheet | After zoom |
+|---|---|---|
+| `G329` "enters through the door" | "no door visible, person on a staircase" | the person does go through doors |
+| `G326` "opens a building door" | "door shut at 4.2 and 4.7, so the 3.0 start is 1.8 s too early" | person visible behind the glass working the knob from 3.0 s — **MEVA is right** |
+
+One cause: a sheet shows the **object** changing state — the door panel swinging —
+well after the **actor** began the act. Reaching for a knob is small, often behind
+glass, and survives neither a 3.4x downscale nor 0.5 s sampling. Nothing about
+those frames looks ambiguous, which is what makes the error dangerous.
+
+Consequences, both acted on:
+
+- **Event sheets now size their tiles from the measured actor height**, targeting
+  ~150 px on the sheet regardless of camera distance — a 232 px actor gets a
+  1241 px tile, a 694 px actor gets 480 px.
+- **MEVA's spans were more right than assumed.** Of three "too wide" starts
+  flagged, the two checked at full resolution were correct. The genuine over-wide
+  spans were a different failure — whole-trajectory tracking, 110 s for a drop-off
+  and 24 s for coming out of a door — and those *are* obvious on a sheet, precisely
+  because they span the entire clip.
+
+### The eval set as labelled
+
+**8 clips, 120 s each, 15 hand-confirmed events**, in `data/eval/labels.json`.
+
+| Clip | Events |
+|---|---|
+| `03-07 admin.G329` | a person enters through the door |
+| `03-07 admin.G326` | opens a building door; enters through the door |
+| `03-07 bus.G340` | a person gets into a vehicle |
+| `03-11 school.G300` | vehicle door opens; **a vehicle stops moving**; drops someone off; gets out of a vehicle |
+| `03-12 school.G423` | sits down; stands up; hands an object to another person; buys something |
+| `03-12 admin.G326` | comes out through the door |
+| `03-13 school.G300` | **a vehicle reverses** |
+| `03-15 school.G421` | a person buys something |
+
+All three of the brief's worked examples are covered — *"a person enters through
+the door"*, *"a forklift reverses"* (`Vehicle_Reversing`), *"the machine stops
+moving"* (`Vehicle_Stopping`). Event durations run 1.4 s to 13.6 s, median 2.3 s,
+so short and long are both tested on real footage.
+
+**Boundary times are MEVA's, deliberately.** Where a hand reading disagreed, the
+annotation was kept: it is traceable to a published source, and the one case
+checked at full resolution proved the annotation right and the hand reading wrong.
+
+### Reproducing the eval set
+
+The trimmed clips are **not committed** — 400 MB, and the source is public. What is
+committed is `labels.json`, and each entry carries `source`, `trimmed_from_s` and
+`duration_s`. `make data-eval` fetches the source footage from MEVA's public bucket
+(no credentials) and re-cuts each clip with the same settings.
+
+Verified rather than asserted: rebuilding `school.G300` produced a clip with the
+same duration, the same dimensions, and the **same SHA-256 over 60 sampled frames**
+as the original. Re-encoding, not stream copy — a stream copy cuts only at
+keyframes, so the real start drifts by up to a keyframe interval and every label
+silently shifts with it.
+
+### Kept as measured negatives
+
+`G328` (41 px), `G336` (38 px) and `G301` (121 px) stay in the repo, unlabelled and
+excluded from every score. They are a result: **MEVA's distant cameras place actors
+below the size at which a human can confirm an event, so there is no honest ground
+truth to score a model against.** They also enable a test nothing else can run —
+MEVA declares events there that no person can verify, so asking the model for them
+measures whether it invents confident localisations when the evidence is absent.
+Reported separately, never pooled.
 
 ---
 
@@ -442,11 +562,16 @@ To be fixed before labelling starts, so labels stay comparable:
 
 - [ ] Detail sections for ComplexVAD, Street Scene and Assembly101 (§4 lists them;
       only MEVA, `supervision` and VANTAGE have full write-ups)
-- [ ] Which MEVA S3 drop is the smallest slice yielding 5–10 good clips
-- [ ] Confirm MEVA annotation format carries per-instance start/end times
+- [x] Which MEVA S3 drop is the smallest slice yielding 5–10 good clips —
+      `drops-123-r13`, screened by actor size: 17 "good" clips from 64
+- [x] Confirm MEVA annotation format carries per-instance start/end times — yes,
+      `timespan: [{tsr0: [frame0, frame1]}]`, and `.geom.yml` carries per-frame
+      actor boxes
 - [ ] Ask Roboflow about the `supervision` asset licence
 - [ ] Nothing in the set has **forklifts**, one of the brief's own examples. MEVA is
       a training facility — people, vehicles, doors. Needs a separate hunt if
       warehouse material matters
-- [ ] Fix the boundary convention before labelling
-- [ ] Decide how the 5–10 clip budget is split across the six sources
+- [x] Fix the boundary convention before labelling — MEVA's times are kept
+      verbatim; hand readings that disagree are recorded in `note`, not applied
+- [x] Decide how the 5–10 clip budget is split across the six sources — 8 real
+      clips from MEVA, synthetic for the precision floor (exact ground truth)

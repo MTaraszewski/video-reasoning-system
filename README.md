@@ -68,6 +68,45 @@ alternatives rejected, and the decisions that reversed under new evidence.
 > not the model. This section stays empty until a real model runs on real clips, and
 > no number appears here that was not measured on the hardware.
 
+### The evaluation set — built, hand-labelled
+
+**8 clips, 120 s each, 15 events labelled by hand**, from MEVA (CC BY 4.0), in
+`data/eval/labels.json`. All three of the brief's worked examples are covered:
+*"a person enters through the door"*, *"a forklift reverses"* (`Vehicle_Reversing`)
+and *"the machine stops moving"* (`Vehicle_Stopping`). Event durations run 1.4 s to
+13.6 s, median 2.3 s, so short and long events are both tested on real footage.
+
+**First measured finding, and it is about the data rather than the model.** An
+event can only be labelled if a human can see it. MEVA's `.geom.yml` gives
+per-frame actor boxes, and median actor height ranks **monotonically with six
+verdicts reached by eye before that measurement existed**:
+
+| Median actor height | Could a person label it? |
+|---|---|
+| 694 / 295 / 267 px | yes |
+| 121 / 41 / 38 px | no — nothing to read a boundary from |
+
+Three clips are therefore kept **unlabelled and excluded from every score**: at
+26–124 px there is no honest ground truth, so a number computed against them would
+measure the labeller, not the model. They are not wasted — MEVA declares events in
+them that no person can verify, which makes them a test for whether the model
+invents confident localisations when the evidence is absent. Reported separately,
+never pooled.
+
+**The clips are not in this repository; the labels and their provenance are.**
+400 MB of someone else's dataset does not belong in a git history, and shipping it
+would ask you to trust our copy. Instead `labels.json` carries, per clip, the source
+file, the trim offset and the duration — and `make data-eval` fetches the public
+sources and re-cuts them. The rebuild was verified **bit-identical**: the same
+SHA-256 over 60 sampled frames as the clips the labels were made against. So every
+number reported here is reproducible from a published dataset, on your machine,
+without taking our word for the footage.
+
+The screen that predicts labellability from annotation files alone — before any
+video is downloaded — is `scripts/screen_geom.py`. It **ranks and never rejects**: a false
+positive costs ten seconds looking at a contact sheet, a false negative is silent.
+→ [`DATASETS.md`](DATASETS.md)
+
 ### Leaderboard — models × temporal grounding
 
 | Model | Size | R@1 @0.3 | R@1 @0.5 | R@1 @0.7 | mean tIoU | mean rel. err | s / video-min | $ / video-min |

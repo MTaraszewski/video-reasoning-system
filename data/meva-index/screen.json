@@ -1,0 +1,2053 @@
+[
+  {
+    "clip": "2018-03-12.10-00-02.10-05-01.admin.G326",
+    "scene": "admin",
+    "camera": "G326",
+    "events": 1,
+    "median_actor_h": 787,
+    "best_event_actor_h": 787,
+    "band": "good",
+    "activities": [
+      "Exit_Facility"
+    ],
+    "per_event": [
+      {
+        "activity": "Exit_Facility",
+        "frames": [
+          3623,
+          3691
+        ],
+        "median_actor_h": 787,
+        "max_actor_h": 820
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-07.16-50-01.16-55-01.admin.G326",
+    "scene": "admin",
+    "camera": "G326",
+    "events": 2,
+    "median_actor_h": 685,
+    "best_event_actor_h": 705,
+    "band": "good",
+    "activities": [
+      "Enter_Facility",
+      "Open_Facility_Door"
+    ],
+    "per_event": [
+      {
+        "activity": "Open_Facility_Door",
+        "frames": [
+          2556,
+          2638
+        ],
+        "median_actor_h": 665,
+        "max_actor_h": 719
+      },
+      {
+        "activity": "Enter_Facility",
+        "frames": [
+          2621,
+          2691
+        ],
+        "median_actor_h": 705,
+        "max_actor_h": 777
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-15.14-55-00.15-00-00.school.G421",
+    "scene": "school",
+    "camera": "G421",
+    "events": 2,
+    "median_actor_h": 485,
+    "best_event_actor_h": 662,
+    "band": "good",
+    "activities": [
+      "Laptop_Interaction",
+      "Purchasing"
+    ],
+    "per_event": [
+      {
+        "activity": "Purchasing",
+        "frames": [
+          650,
+          830
+        ],
+        "median_actor_h": 662,
+        "max_actor_h": 676
+      },
+      {
+        "activity": "Laptop_Interaction",
+        "frames": [
+          3562,
+          9001
+        ],
+        "median_actor_h": 308,
+        "max_actor_h": 322
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-15.15-35-03.15-40-03.school.G300",
+    "scene": "school",
+    "camera": "G300",
+    "events": 1,
+    "median_actor_h": 571,
+    "best_event_actor_h": 571,
+    "band": "good",
+    "activities": [
+      "Close_Vehicle_Door"
+    ],
+    "per_event": [
+      {
+        "activity": "Close_Vehicle_Door",
+        "frames": [
+          3662,
+          3726
+        ],
+        "median_actor_h": 571,
+        "max_actor_h": 792
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-07.17-05-00.17-10-00.bus.G331",
+    "scene": "bus",
+    "camera": "G331",
+    "events": 2,
+    "median_actor_h": 492,
+    "best_event_actor_h": 498,
+    "band": "good",
+    "activities": [
+      "Embrace_Interaction",
+      "Laptop_Interaction"
+    ],
+    "per_event": [
+      {
+        "activity": "Embrace_Interaction",
+        "frames": [
+          61,
+          264
+        ],
+        "median_actor_h": 498,
+        "max_actor_h": 567
+      },
+      {
+        "activity": "Laptop_Interaction",
+        "frames": [
+          0,
+          336
+        ],
+        "median_actor_h": 485,
+        "max_actor_h": 567
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-07.16-55-00.17-00-00.bus.G340",
+    "scene": "bus",
+    "camera": "G340",
+    "events": 1,
+    "median_actor_h": 475,
+    "best_event_actor_h": 475,
+    "band": "good",
+    "activities": [
+      "Enter_Vehicle"
+    ],
+    "per_event": [
+      {
+        "activity": "Enter_Vehicle",
+        "frames": [
+          1391,
+          1506
+        ],
+        "median_actor_h": 475,
+        "max_actor_h": 475
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-12.10-10-00.10-15-00.school.G299",
+    "scene": "school",
+    "camera": "G299",
+    "events": 1,
+    "median_actor_h": 383,
+    "best_event_actor_h": 383,
+    "band": "good",
+    "activities": [
+      "Embrace_Interaction"
+    ],
+    "per_event": [
+      {
+        "activity": "Embrace_Interaction",
+        "frames": [
+          6204,
+          6354
+        ],
+        "median_actor_h": 383,
+        "max_actor_h": 389
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-12.11-00-00.11-05-00.bus.G340",
+    "scene": "bus",
+    "camera": "G340",
+    "events": 1,
+    "median_actor_h": 376,
+    "best_event_actor_h": 376,
+    "band": "good",
+    "activities": [
+      "Open_Trunk"
+    ],
+    "per_event": [
+      {
+        "activity": "Open_Trunk",
+        "frames": [
+          2761,
+          2851
+        ],
+        "median_actor_h": 376,
+        "max_actor_h": 465
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-11.16-20-04.16-25-04.school.G300",
+    "scene": "school",
+    "camera": "G300",
+    "events": 4,
+    "median_actor_h": 322,
+    "best_event_actor_h": 342,
+    "band": "good",
+    "activities": [
+      "Exit_Vehicle",
+      "Open_Vehicle_Door",
+      "Vehicle_DropsOff_Person",
+      "Vehicle_Stopping"
+    ],
+    "per_event": [
+      {
+        "activity": "Vehicle_Stopping",
+        "frames": [
+          5673,
+          5720
+        ],
+        "median_actor_h": 322,
+        "max_actor_h": 335
+      },
+      {
+        "activity": "Open_Vehicle_Door",
+        "frames": [
+          5671,
+          5782
+        ],
+        "median_actor_h": 322,
+        "max_actor_h": 335
+      },
+      {
+        "activity": "Exit_Vehicle",
+        "frames": [
+          5745,
+          5812
+        ],
+        "median_actor_h": 322,
+        "max_actor_h": 333
+      },
+      {
+        "activity": "Vehicle_DropsOff_Person",
+        "frames": [
+          5691,
+          8999
+        ],
+        "median_actor_h": 342,
+        "max_actor_h": 342
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-11.16-15-00.16-20-00.school.G421",
+    "scene": "school",
+    "camera": "G421",
+    "events": 1,
+    "median_actor_h": 333,
+    "best_event_actor_h": 333,
+    "band": "good",
+    "activities": [
+      "Text_On_Phone"
+    ],
+    "per_event": [
+      {
+        "activity": "Text_On_Phone",
+        "frames": [
+          6354,
+          6565
+        ],
+        "median_actor_h": 333,
+        "max_actor_h": 333
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-12.10-00-01.10-05-01.school.G423",
+    "scene": "school",
+    "camera": "G423",
+    "events": 4,
+    "median_actor_h": 298,
+    "best_event_actor_h": 317,
+    "band": "good",
+    "activities": [
+      "Object_Transfer",
+      "Purchasing",
+      "Sit_Down",
+      "Stand_Up"
+    ],
+    "per_event": [
+      {
+        "activity": "Object_Transfer",
+        "frames": [
+          2868,
+          2931
+        ],
+        "median_actor_h": 317,
+        "max_actor_h": 325
+      },
+      {
+        "activity": "Stand_Up",
+        "frames": [
+          1615,
+          1658
+        ],
+        "median_actor_h": 278,
+        "max_actor_h": 283
+      },
+      {
+        "activity": "Purchasing",
+        "frames": [
+          2868,
+          3042
+        ],
+        "median_actor_h": 317,
+        "max_actor_h": 338
+      },
+      {
+        "activity": "Sit_Down",
+        "frames": [
+          578,
+          639
+        ],
+        "median_actor_h": 234,
+        "max_actor_h": 279
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-07.16-50-00.16-55-00.admin.G329",
+    "scene": "admin",
+    "camera": "G329",
+    "events": 1,
+    "median_actor_h": 295,
+    "best_event_actor_h": 295,
+    "band": "good",
+    "activities": [
+      "Enter_Facility"
+    ],
+    "per_event": [
+      {
+        "activity": "Enter_Facility",
+        "frames": [
+          2679,
+          2734
+        ],
+        "median_actor_h": 295,
+        "max_actor_h": 316
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-07.17-35-00.17-40-00.school.G421",
+    "scene": "school",
+    "camera": "G421",
+    "events": 1,
+    "median_actor_h": 291,
+    "best_event_actor_h": 291,
+    "band": "good",
+    "activities": [
+      "Laptop_Interaction"
+    ],
+    "per_event": [
+      {
+        "activity": "Laptop_Interaction",
+        "frames": [
+          505,
+          1287
+        ],
+        "median_actor_h": 291,
+        "max_actor_h": 291
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-07.17-05-00.17-10-00.bus.G340",
+    "scene": "bus",
+    "camera": "G340",
+    "events": 3,
+    "median_actor_h": 142,
+    "best_event_actor_h": 286,
+    "band": "good",
+    "activities": [
+      "Close_Trunk",
+      "Embrace_Interaction",
+      "Load_Vehicle"
+    ],
+    "per_event": [
+      {
+        "activity": "Embrace_Interaction",
+        "frames": [
+          1349,
+          1499
+        ],
+        "median_actor_h": 286,
+        "max_actor_h": 338
+      },
+      {
+        "activity": "Close_Trunk",
+        "frames": [
+          4270,
+          4340
+        ],
+        "median_actor_h": 142,
+        "max_actor_h": 157
+      },
+      {
+        "activity": "Load_Vehicle",
+        "frames": [
+          2192,
+          2346
+        ],
+        "median_actor_h": 133,
+        "max_actor_h": 140
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-07.16-55-00.17-00-00.admin.G329",
+    "scene": "admin",
+    "camera": "G329",
+    "events": 1,
+    "median_actor_h": 285,
+    "best_event_actor_h": 285,
+    "band": "good",
+    "activities": [
+      "People_Talking"
+    ],
+    "per_event": [
+      {
+        "activity": "People_Talking",
+        "frames": [
+          1960,
+          2331
+        ],
+        "median_actor_h": 285,
+        "max_actor_h": 588
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-07.16-50-00.16-55-00.bus.G331",
+    "scene": "bus",
+    "camera": "G331",
+    "events": 4,
+    "median_actor_h": 228,
+    "best_event_actor_h": 267,
+    "band": "good",
+    "activities": [
+      "Object_Transfer",
+      "Purchasing",
+      "Read_Document",
+      "Text_On_Phone"
+    ],
+    "per_event": [
+      {
+        "activity": "Object_Transfer",
+        "frames": [
+          1269,
+          1339
+        ],
+        "median_actor_h": 221,
+        "max_actor_h": 246
+      },
+      {
+        "activity": "Purchasing",
+        "frames": [
+          1172,
+          1347
+        ],
+        "median_actor_h": 221,
+        "max_actor_h": 246
+      },
+      {
+        "activity": "Read_Document",
+        "frames": [
+          781,
+          9004
+        ],
+        "median_actor_h": 267,
+        "max_actor_h": 272
+      },
+      {
+        "activity": "Text_On_Phone",
+        "frames": [
+          1999,
+          6189
+        ],
+        "median_actor_h": 236,
+        "max_actor_h": 272
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-15.15-15-00.15-20-00.bus.G331",
+    "scene": "bus",
+    "camera": "G331",
+    "events": 1,
+    "median_actor_h": 250,
+    "best_event_actor_h": 250,
+    "band": "good",
+    "activities": [
+      "Abandon_Package"
+    ],
+    "per_event": [
+      {
+        "activity": "Abandon_Package",
+        "frames": [
+          5619,
+          5732
+        ],
+        "median_actor_h": 250,
+        "max_actor_h": 367
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-11.11-50-04.11-55-04.school.G300",
+    "scene": "school",
+    "camera": "G300",
+    "events": 1,
+    "median_actor_h": 232,
+    "best_event_actor_h": 232,
+    "band": "marginal",
+    "activities": [
+      "Vehicle_PicksUp_Person"
+    ],
+    "per_event": [
+      {
+        "activity": "Vehicle_PicksUp_Person",
+        "frames": [
+          1447,
+          2134
+        ],
+        "median_actor_h": 232,
+        "max_actor_h": 266
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-13.17-40-08.17-45-08.school.G300",
+    "scene": "school",
+    "camera": "G300",
+    "events": 1,
+    "median_actor_h": 232,
+    "best_event_actor_h": 232,
+    "band": "marginal",
+    "activities": [
+      "Vehicle_Reversing"
+    ],
+    "per_event": [
+      {
+        "activity": "Vehicle_Reversing",
+        "frames": [
+          197,
+          606
+        ],
+        "median_actor_h": 232,
+        "max_actor_h": 272
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-11.11-35-01.11-40-01.school.G421",
+    "scene": "school",
+    "camera": "G421",
+    "events": 1,
+    "median_actor_h": 228,
+    "best_event_actor_h": 228,
+    "band": "marginal",
+    "activities": [
+      "Set_Down_Object"
+    ],
+    "per_event": [
+      {
+        "activity": "Set_Down_Object",
+        "frames": [
+          1904,
+          2041
+        ],
+        "median_actor_h": 228,
+        "max_actor_h": 354
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-15.15-10-00.15-15-00.bus.G331",
+    "scene": "bus",
+    "camera": "G331",
+    "events": 1,
+    "median_actor_h": 208,
+    "best_event_actor_h": 208,
+    "band": "marginal",
+    "activities": [
+      "Theft"
+    ],
+    "per_event": [
+      {
+        "activity": "Theft",
+        "frames": [
+          6312,
+          6445
+        ],
+        "median_actor_h": 208,
+        "max_actor_h": 333
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-11.13-50-01.13-55-00.school.G336",
+    "scene": "school",
+    "camera": "G336",
+    "events": 3,
+    "median_actor_h": 204,
+    "best_event_actor_h": 204,
+    "band": "marginal",
+    "activities": [
+      "Open_Trunk",
+      "Unload_Vehicle",
+      "Vehicle_DropsOff_Person"
+    ],
+    "per_event": [
+      {
+        "activity": "Open_Trunk",
+        "frames": [
+          5289,
+          5378
+        ],
+        "median_actor_h": 204,
+        "max_actor_h": 224
+      },
+      {
+        "activity": "Unload_Vehicle",
+        "frames": [
+          5536,
+          5590
+        ],
+        "median_actor_h": 204,
+        "max_actor_h": 233
+      },
+      {
+        "activity": "Vehicle_DropsOff_Person",
+        "frames": [
+          5074,
+          6057
+        ],
+        "median_actor_h": 204,
+        "max_actor_h": 233
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-12.11-10-01.11-15-01.school.G423",
+    "scene": "school",
+    "camera": "G423",
+    "events": 1,
+    "median_actor_h": 203,
+    "best_event_actor_h": 203,
+    "band": "marginal",
+    "activities": [
+      "Heavy_Carry"
+    ],
+    "per_event": [
+      {
+        "activity": "Heavy_Carry",
+        "frames": [
+          3261,
+          4223
+        ],
+        "median_actor_h": 203,
+        "max_actor_h": 450
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-07.17-30-01.17-35-01.bus.G505",
+    "scene": "bus",
+    "camera": "G505",
+    "events": 1,
+    "median_actor_h": 192,
+    "best_event_actor_h": 192,
+    "band": "marginal",
+    "activities": [
+      "Unload_Vehicle"
+    ],
+    "per_event": [
+      {
+        "activity": "Unload_Vehicle",
+        "frames": [
+          482,
+          552
+        ],
+        "median_actor_h": 192,
+        "max_actor_h": 396
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-11.11-30-01.11-35-01.school.G421",
+    "scene": "school",
+    "camera": "G421",
+    "events": 4,
+    "median_actor_h": 174,
+    "best_event_actor_h": 184,
+    "band": "marginal",
+    "activities": [
+      "People_Talking",
+      "Read_Document",
+      "Set_Down_Object",
+      "Sit_Down"
+    ],
+    "per_event": [
+      {
+        "activity": "Set_Down_Object",
+        "frames": [
+          1050,
+          1200
+        ],
+        "median_actor_h": 184,
+        "max_actor_h": 243
+      },
+      {
+        "activity": "People_Talking",
+        "frames": [
+          1003,
+          2024
+        ],
+        "median_actor_h": 169,
+        "max_actor_h": 243
+      },
+      {
+        "activity": "Sit_Down",
+        "frames": [
+          1123,
+          1167
+        ],
+        "median_actor_h": 180,
+        "max_actor_h": 241
+      },
+      {
+        "activity": "Read_Document",
+        "frames": [
+          2025,
+          2246
+        ],
+        "median_actor_h": 162,
+        "max_actor_h": 162
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-15.15-35-01.15-40-01.bus.G506",
+    "scene": "bus",
+    "camera": "G506",
+    "events": 1,
+    "median_actor_h": 183,
+    "best_event_actor_h": 183,
+    "band": "marginal",
+    "activities": [
+      "Stand_Up"
+    ],
+    "per_event": [
+      {
+        "activity": "Stand_Up",
+        "frames": [
+          2062,
+          2082
+        ],
+        "median_actor_h": 183,
+        "max_actor_h": 211
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-13.17-05-00.17-10-00.school.G421",
+    "scene": "school",
+    "camera": "G421",
+    "events": 1,
+    "median_actor_h": 182,
+    "best_event_actor_h": 182,
+    "band": "marginal",
+    "activities": [
+      "Object_Transfer"
+    ],
+    "per_event": [
+      {
+        "activity": "Object_Transfer",
+        "frames": [
+          1714,
+          1812
+        ],
+        "median_actor_h": 182,
+        "max_actor_h": 188
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-11.13-50-00.13-55-00.school.G299",
+    "scene": "school",
+    "camera": "G299",
+    "events": 4,
+    "median_actor_h": 154,
+    "best_event_actor_h": 165,
+    "band": "marginal",
+    "activities": [
+      "Hand_Interaction",
+      "People_Talking",
+      "Sit_Down",
+      "Stand_Up"
+    ],
+    "per_event": [
+      {
+        "activity": "Hand_Interaction",
+        "frames": [
+          3589,
+          3689
+        ],
+        "median_actor_h": 165,
+        "max_actor_h": 175
+      },
+      {
+        "activity": "Stand_Up",
+        "frames": [
+          3746,
+          3777
+        ],
+        "median_actor_h": 159,
+        "max_actor_h": 189
+      },
+      {
+        "activity": "People_Talking",
+        "frames": [
+          1362,
+          1749
+        ],
+        "median_actor_h": 106,
+        "max_actor_h": 109
+      },
+      {
+        "activity": "Sit_Down",
+        "frames": [
+          3290,
+          3348
+        ],
+        "median_actor_h": 149,
+        "max_actor_h": 185
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-11.13-50-01.13-55-01.school.G339",
+    "scene": "school",
+    "camera": "G339",
+    "events": 2,
+    "median_actor_h": 144,
+    "best_event_actor_h": 165,
+    "band": "marginal",
+    "activities": [
+      "Heavy_Carry",
+      "Talk_on_Phone"
+    ],
+    "per_event": [
+      {
+        "activity": "Heavy_Carry",
+        "frames": [
+          8918,
+          8999
+        ],
+        "median_actor_h": 124,
+        "max_actor_h": 165
+      },
+      {
+        "activity": "Talk_on_Phone",
+        "frames": [
+          4729,
+          4981
+        ],
+        "median_actor_h": 165,
+        "max_actor_h": 168
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-15.15-40-00.15-45-00.school.G638",
+    "scene": "school",
+    "camera": "G638",
+    "events": 1,
+    "median_actor_h": 163,
+    "best_event_actor_h": 163,
+    "band": "marginal",
+    "activities": [
+      "Sit_Down"
+    ],
+    "per_event": [
+      {
+        "activity": "Sit_Down",
+        "frames": [
+          566,
+          678
+        ],
+        "median_actor_h": 163,
+        "max_actor_h": 177
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-11.13-50-01.13-55-01.school.G421",
+    "scene": "school",
+    "camera": "G421",
+    "events": 1,
+    "median_actor_h": 158,
+    "best_event_actor_h": 158,
+    "band": "marginal",
+    "activities": [
+      "Read_Document"
+    ],
+    "per_event": [
+      {
+        "activity": "Read_Document",
+        "frames": [
+          0,
+          1739
+        ],
+        "median_actor_h": 158,
+        "max_actor_h": 158
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-15.14-50-06.14-55-06.hospital.G341",
+    "scene": "hospital",
+    "camera": "G341",
+    "events": 1,
+    "median_actor_h": 153,
+    "best_event_actor_h": 153,
+    "band": "marginal",
+    "activities": [
+      "Vehicle_PicksUp_Person"
+    ],
+    "per_event": [
+      {
+        "activity": "Vehicle_PicksUp_Person",
+        "frames": [
+          3100,
+          3528
+        ],
+        "median_actor_h": 153,
+        "max_actor_h": 153
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-12.10-00-02.10-05-02.school.G339",
+    "scene": "school",
+    "camera": "G339",
+    "events": 2,
+    "median_actor_h": 142,
+    "best_event_actor_h": 151,
+    "band": "marginal",
+    "activities": [
+      "Close_Vehicle_Door",
+      "Open_Vehicle_Door"
+    ],
+    "per_event": [
+      {
+        "activity": "Open_Vehicle_Door",
+        "frames": [
+          2806,
+          2871
+        ],
+        "median_actor_h": 133,
+        "max_actor_h": 151
+      },
+      {
+        "activity": "Close_Vehicle_Door",
+        "frames": [
+          2420,
+          2484
+        ],
+        "median_actor_h": 151,
+        "max_actor_h": 151
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-13.17-25-03.17-30-03.school.G336",
+    "scene": "school",
+    "camera": "G336",
+    "events": 3,
+    "median_actor_h": 134,
+    "best_event_actor_h": 147,
+    "band": "marginal",
+    "activities": [
+      "Hand_Interaction",
+      "Heavy_Carry",
+      "Talk_on_Phone"
+    ],
+    "per_event": [
+      {
+        "activity": "Heavy_Carry",
+        "frames": [
+          2096,
+          3205
+        ],
+        "median_actor_h": 58,
+        "max_actor_h": 118
+      },
+      {
+        "activity": "Hand_Interaction",
+        "frames": [
+          5120,
+          5210
+        ],
+        "median_actor_h": 134,
+        "max_actor_h": 137
+      },
+      {
+        "activity": "Talk_on_Phone",
+        "frames": [
+          5289,
+          8999
+        ],
+        "median_actor_h": 147,
+        "max_actor_h": 165
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-11.13-50-00.13-54-59.school.G330",
+    "scene": "school",
+    "camera": "G330",
+    "events": 4,
+    "median_actor_h": 103,
+    "best_event_actor_h": 136,
+    "band": "marginal",
+    "activities": [
+      "Hand_Interaction",
+      "Pick_Up_Object",
+      "Sit_Down",
+      "Stand_Up"
+    ],
+    "per_event": [
+      {
+        "activity": "Pick_Up_Object",
+        "frames": [
+          2871,
+          2952
+        ],
+        "median_actor_h": 54,
+        "max_actor_h": 100
+      },
+      {
+        "activity": "Hand_Interaction",
+        "frames": [
+          2613,
+          2712
+        ],
+        "median_actor_h": 136,
+        "max_actor_h": 138
+      },
+      {
+        "activity": "Stand_Up",
+        "frames": [
+          3766,
+          3792
+        ],
+        "median_actor_h": 113,
+        "max_actor_h": 122
+      },
+      {
+        "activity": "Sit_Down",
+        "frames": [
+          3305,
+          3366
+        ],
+        "median_actor_h": 93,
+        "max_actor_h": 115
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-15.15-45-01.15-50-01.bus.G506",
+    "scene": "bus",
+    "camera": "G506",
+    "events": 1,
+    "median_actor_h": 134,
+    "best_event_actor_h": 134,
+    "band": "marginal",
+    "activities": [
+      "Text_On_Phone"
+    ],
+    "per_event": [
+      {
+        "activity": "Text_On_Phone",
+        "frames": [
+          193,
+          653
+        ],
+        "median_actor_h": 134,
+        "max_actor_h": 141
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-13.17-05-03.17-10-03.school.G336",
+    "scene": "school",
+    "camera": "G336",
+    "events": 2,
+    "median_actor_h": 83,
+    "best_event_actor_h": 128,
+    "band": "marginal",
+    "activities": [
+      "People_Talking",
+      "Vehicle_Turning_Right"
+    ],
+    "per_event": [
+      {
+        "activity": "Vehicle_Turning_Right",
+        "frames": [
+          4215,
+          4338
+        ],
+        "median_actor_h": 38,
+        "max_actor_h": 38
+      },
+      {
+        "activity": "People_Talking",
+        "frames": [
+          4535,
+          4864
+        ],
+        "median_actor_h": 128,
+        "max_actor_h": 134
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-07.16-50-07.16-55-07.hospital.G301",
+    "scene": "hospital",
+    "camera": "G301",
+    "events": 2,
+    "median_actor_h": 122,
+    "best_event_actor_h": 124,
+    "band": "marginal",
+    "activities": [
+      "Exit_Facility",
+      "Open_Facility_Door"
+    ],
+    "per_event": [
+      {
+        "activity": "Open_Facility_Door",
+        "frames": [
+          2863,
+          2944
+        ],
+        "median_actor_h": 124,
+        "max_actor_h": 125
+      },
+      {
+        "activity": "Exit_Facility",
+        "frames": [
+          2863,
+          3579
+        ],
+        "median_actor_h": 121,
+        "max_actor_h": 125
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-15.15-45-00.15-50-00.school.G638",
+    "scene": "school",
+    "camera": "G638",
+    "events": 2,
+    "median_actor_h": 122,
+    "best_event_actor_h": 122,
+    "band": "marginal",
+    "activities": [
+      "Pick_Up_Object"
+    ],
+    "per_event": [
+      {
+        "activity": "Pick_Up_Object",
+        "frames": [
+          755,
+          815
+        ],
+        "median_actor_h": 122,
+        "max_actor_h": 137
+      },
+      {
+        "activity": "Pick_Up_Object",
+        "frames": [
+          726,
+          816
+        ],
+        "median_actor_h": 122,
+        "max_actor_h": 137
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-11.13-50-01.13-55-01.school.G328",
+    "scene": "school",
+    "camera": "G328",
+    "events": 5,
+    "median_actor_h": 103,
+    "best_event_actor_h": 121,
+    "band": "marginal",
+    "activities": [
+      "Close_Vehicle_Door",
+      "Exit_Vehicle",
+      "Vehicle_Reversing",
+      "Vehicle_Turning_Left",
+      "Vehicle_Turning_Right"
+    ],
+    "per_event": [
+      {
+        "activity": "Vehicle_Turning_Left",
+        "frames": [
+          2760,
+          2886
+        ],
+        "median_actor_h": 103,
+        "max_actor_h": 121
+      },
+      {
+        "activity": "Vehicle_Turning_Right",
+        "frames": [
+          4333,
+          4523
+        ],
+        "median_actor_h": 31,
+        "max_actor_h": 38
+      },
+      {
+        "activity": "Close_Vehicle_Door",
+        "frames": [
+          6058,
+          6114
+        ],
+        "median_actor_h": 88,
+        "max_actor_h": 103
+      },
+      {
+        "activity": "Exit_Vehicle",
+        "frames": [
+          5622,
+          6072
+        ],
+        "median_actor_h": 103,
+        "max_actor_h": 103
+      },
+      {
+        "activity": "Vehicle_Reversing",
+        "frames": [
+          3140,
+          3266
+        ],
+        "median_actor_h": 121,
+        "max_actor_h": 124
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-13.17-30-05.17-35-05.bus.G340",
+    "scene": "bus",
+    "camera": "G340",
+    "events": 2,
+    "median_actor_h": 113,
+    "best_event_actor_h": 121,
+    "band": "marginal",
+    "activities": [
+      "Vehicle_Starting",
+      "Vehicle_UTurn"
+    ],
+    "per_event": [
+      {
+        "activity": "Vehicle_Starting",
+        "frames": [
+          6604,
+          6664
+        ],
+        "median_actor_h": 105,
+        "max_actor_h": 105
+      },
+      {
+        "activity": "Vehicle_UTurn",
+        "frames": [
+          5610,
+          6288
+        ],
+        "median_actor_h": 121,
+        "max_actor_h": 131
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-15.14-50-00.14-55-00.school.G424",
+    "scene": "school",
+    "camera": "G424",
+    "events": 1,
+    "median_actor_h": 117,
+    "best_event_actor_h": 117,
+    "band": "too-small",
+    "activities": [
+      "Riding"
+    ],
+    "per_event": [
+      {
+        "activity": "Riding",
+        "frames": [
+          2382,
+          2712
+        ],
+        "median_actor_h": 117,
+        "max_actor_h": 158
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-12.10-45-00.10-50-00.school.G638",
+    "scene": "school",
+    "camera": "G638",
+    "events": 1,
+    "median_actor_h": 111,
+    "best_event_actor_h": 111,
+    "band": "too-small",
+    "activities": [
+      "Enter_Facility"
+    ],
+    "per_event": [
+      {
+        "activity": "Enter_Facility",
+        "frames": [
+          8710,
+          8756
+        ],
+        "median_actor_h": 111,
+        "max_actor_h": 112
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-15.14-55-07.15-00-07.hospital.G436",
+    "scene": "hospital",
+    "camera": "G436",
+    "events": 4,
+    "median_actor_h": 46,
+    "best_event_actor_h": 111,
+    "band": "too-small",
+    "activities": [
+      "Riding",
+      "Vehicle_PicksUp_Person",
+      "Vehicle_Starting",
+      "Vehicle_UTurn"
+    ],
+    "per_event": [
+      {
+        "activity": "Vehicle_Starting",
+        "frames": [
+          1617,
+          1847
+        ],
+        "median_actor_h": 42,
+        "max_actor_h": 43
+      },
+      {
+        "activity": "Vehicle_UTurn",
+        "frames": [
+          920,
+          1610
+        ],
+        "median_actor_h": 41,
+        "max_actor_h": 45
+      },
+      {
+        "activity": "Vehicle_PicksUp_Person",
+        "frames": [
+          5280,
+          6105
+        ],
+        "median_actor_h": 111,
+        "max_actor_h": 114
+      },
+      {
+        "activity": "Riding",
+        "frames": [
+          124,
+          959
+        ],
+        "median_actor_h": 51,
+        "max_actor_h": 91
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-11.11-50-01.11-55-01.school.G424",
+    "scene": "school",
+    "camera": "G424",
+    "events": 4,
+    "median_actor_h": 106,
+    "best_event_actor_h": 110,
+    "band": "too-small",
+    "activities": [
+      "Close_Trunk",
+      "Enter_Vehicle",
+      "Load_Vehicle",
+      "Open_Trunk"
+    ],
+    "per_event": [
+      {
+        "activity": "Enter_Vehicle",
+        "frames": [
+          1362,
+          1491
+        ],
+        "median_actor_h": 110,
+        "max_actor_h": 110
+      },
+      {
+        "activity": "Open_Trunk",
+        "frames": [
+          1080,
+          1170
+        ],
+        "median_actor_h": 105,
+        "max_actor_h": 114
+      },
+      {
+        "activity": "Close_Trunk",
+        "frames": [
+          1221,
+          1278
+        ],
+        "median_actor_h": 106,
+        "max_actor_h": 117
+      },
+      {
+        "activity": "Load_Vehicle",
+        "frames": [
+          1150,
+          1236
+        ],
+        "median_actor_h": 105,
+        "max_actor_h": 115
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-12.10-50-01.10-55-01.school.G423",
+    "scene": "school",
+    "camera": "G423",
+    "events": 1,
+    "median_actor_h": 104,
+    "best_event_actor_h": 104,
+    "band": "too-small",
+    "activities": [
+      "Talk_on_Phone"
+    ],
+    "per_event": [
+      {
+        "activity": "Talk_on_Phone",
+        "frames": [
+          4924,
+          6678
+        ],
+        "median_actor_h": 104,
+        "max_actor_h": 284
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-12.10-45-01.10-50-01.school.G328",
+    "scene": "school",
+    "camera": "G328",
+    "events": 1,
+    "median_actor_h": 102,
+    "best_event_actor_h": 102,
+    "band": "too-small",
+    "activities": [
+      "Unload_Vehicle"
+    ],
+    "per_event": [
+      {
+        "activity": "Unload_Vehicle",
+        "frames": [
+          6336,
+          6350
+        ],
+        "median_actor_h": 102,
+        "max_actor_h": 138
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-15.14-50-00.14-55-00.school.G638",
+    "scene": "school",
+    "camera": "G638",
+    "events": 1,
+    "median_actor_h": 96,
+    "best_event_actor_h": 96,
+    "band": "too-small",
+    "activities": [
+      "Riding"
+    ],
+    "per_event": [
+      {
+        "activity": "Riding",
+        "frames": [
+          3834,
+          3925
+        ],
+        "median_actor_h": 96,
+        "max_actor_h": 111
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-13.17-05-00.17-10-00.school.G328",
+    "scene": "school",
+    "camera": "G328",
+    "events": 5,
+    "median_actor_h": 85,
+    "best_event_actor_h": 95,
+    "band": "too-small",
+    "activities": [
+      "Exit_Vehicle",
+      "Set_Down_Object",
+      "Vehicle_Stopping",
+      "Vehicle_Turning_Left",
+      "Vehicle_Turning_Right"
+    ],
+    "per_event": [
+      {
+        "activity": "Vehicle_Stopping",
+        "frames": [
+          7999,
+          8088
+        ],
+        "median_actor_h": 95,
+        "max_actor_h": 95
+      },
+      {
+        "activity": "Vehicle_Turning_Left",
+        "frames": [
+          3710,
+          3832
+        ],
+        "median_actor_h": 85,
+        "max_actor_h": 100
+      },
+      {
+        "activity": "Vehicle_Turning_Right",
+        "frames": [
+          5247,
+          5404
+        ],
+        "median_actor_h": 35,
+        "max_actor_h": 35
+      },
+      {
+        "activity": "Set_Down_Object",
+        "frames": [
+          6930,
+          7068
+        ],
+        "median_actor_h": 38,
+        "max_actor_h": 58
+      },
+      {
+        "activity": "Exit_Vehicle",
+        "frames": [
+          8306,
+          8479
+        ],
+        "median_actor_h": 95,
+        "max_actor_h": 95
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-15.15-35-06.15-40-06.hospital.G341",
+    "scene": "hospital",
+    "camera": "G341",
+    "events": 1,
+    "median_actor_h": 90,
+    "best_event_actor_h": 90,
+    "band": "too-small",
+    "activities": [
+      "Stand_Up"
+    ],
+    "per_event": [
+      {
+        "activity": "Stand_Up",
+        "frames": [
+          1896,
+          1974
+        ],
+        "median_actor_h": 90,
+        "max_actor_h": 93
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-12.10-40-01.10-45-01.school.G328",
+    "scene": "school",
+    "camera": "G328",
+    "events": 2,
+    "median_actor_h": 87,
+    "best_event_actor_h": 87,
+    "band": "too-small",
+    "activities": [
+      "Vehicle_DropsOff_Person",
+      "Vehicle_UTurn"
+    ],
+    "per_event": [
+      {
+        "activity": "Vehicle_UTurn",
+        "frames": [
+          5525,
+          5746
+        ],
+        "median_actor_h": 87,
+        "max_actor_h": 98
+      },
+      {
+        "activity": "Vehicle_DropsOff_Person",
+        "frames": [
+          5716,
+          6100
+        ],
+        "median_actor_h": 87,
+        "max_actor_h": 89
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-13.17-35-00.17-40-00.school.G299",
+    "scene": "school",
+    "camera": "G299",
+    "events": 1,
+    "median_actor_h": 78,
+    "best_event_actor_h": 78,
+    "band": "too-small",
+    "activities": [
+      "Exit_Facility"
+    ],
+    "per_event": [
+      {
+        "activity": "Exit_Facility",
+        "frames": [
+          5734,
+          5805
+        ],
+        "median_actor_h": 78,
+        "max_actor_h": 78
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-07.17-05-00.17-10-00.school.G299",
+    "scene": "school",
+    "camera": "G299",
+    "events": 2,
+    "median_actor_h": 72,
+    "best_event_actor_h": 72,
+    "band": "too-small",
+    "activities": [
+      "Exit_Facility",
+      "Open_Facility_Door"
+    ],
+    "per_event": [
+      {
+        "activity": "Open_Facility_Door",
+        "frames": [
+          4410,
+          4463
+        ],
+        "median_actor_h": 72,
+        "max_actor_h": 75
+      },
+      {
+        "activity": "Exit_Facility",
+        "frames": [
+          4410,
+          4519
+        ],
+        "median_actor_h": 72,
+        "max_actor_h": 75
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-09.10-10-01.10-15-01.bus.G340",
+    "scene": "bus",
+    "camera": "G340",
+    "events": 1,
+    "median_actor_h": 63,
+    "best_event_actor_h": 63,
+    "band": "too-small",
+    "activities": [
+      "Vehicle_Reversing"
+    ],
+    "per_event": [
+      {
+        "activity": "Vehicle_Reversing",
+        "frames": [
+          493,
+          743
+        ],
+        "median_actor_h": 63,
+        "max_actor_h": 65
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-13.17-30-02.17-35-02.hospital.G341",
+    "scene": "hospital",
+    "camera": "G341",
+    "events": 1,
+    "median_actor_h": 60,
+    "best_event_actor_h": 60,
+    "band": "too-small",
+    "activities": [
+      "Heavy_Carry"
+    ],
+    "per_event": [
+      {
+        "activity": "Heavy_Carry",
+        "frames": [
+          4910,
+          5528
+        ],
+        "median_actor_h": 60,
+        "max_actor_h": 78
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-11.13-55-08.14-00-08.hospital.G436",
+    "scene": "hospital",
+    "camera": "G436",
+    "events": 1,
+    "median_actor_h": 47,
+    "best_event_actor_h": 47,
+    "band": "too-small",
+    "activities": [
+      "Vehicle_UTurn"
+    ],
+    "per_event": [
+      {
+        "activity": "Vehicle_UTurn",
+        "frames": [
+          2411,
+          2692
+        ],
+        "median_actor_h": 47,
+        "max_actor_h": 47
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-07.16-50-01.16-55-01.school.G328",
+    "scene": "school",
+    "camera": "G328",
+    "events": 5,
+    "median_actor_h": 41,
+    "best_event_actor_h": 41,
+    "band": "too-small",
+    "activities": [
+      "Enter_Vehicle",
+      "Open_Vehicle_Door",
+      "Vehicle_Reversing",
+      "Vehicle_Starting",
+      "Vehicle_Stopping"
+    ],
+    "per_event": [
+      {
+        "activity": "Vehicle_Stopping",
+        "frames": [
+          8051,
+          8102
+        ],
+        "median_actor_h": 41,
+        "max_actor_h": 41
+      },
+      {
+        "activity": "Vehicle_Starting",
+        "frames": [
+          2238,
+          2298
+        ],
+        "median_actor_h": 41,
+        "max_actor_h": 44
+      },
+      {
+        "activity": "Open_Vehicle_Door",
+        "frames": [
+          1369,
+          1436
+        ],
+        "median_actor_h": 41,
+        "max_actor_h": 41
+      },
+      {
+        "activity": "Enter_Vehicle",
+        "frames": [
+          1369,
+          1473
+        ],
+        "median_actor_h": 41,
+        "max_actor_h": 41
+      },
+      {
+        "activity": "Vehicle_Reversing",
+        "frames": [
+          1939,
+          2167
+        ],
+        "median_actor_h": 41,
+        "max_actor_h": 41
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-15.15-30-04.15-35-04.bus.G340",
+    "scene": "bus",
+    "camera": "G340",
+    "events": 1,
+    "median_actor_h": 41,
+    "best_event_actor_h": 41,
+    "band": "too-small",
+    "activities": [
+      "Vehicle_PicksUp_Person"
+    ],
+    "per_event": [
+      {
+        "activity": "Vehicle_PicksUp_Person",
+        "frames": [
+          3719,
+          4325
+        ],
+        "median_actor_h": 41,
+        "max_actor_h": 45
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-07.16-50-06.16-55-06.school.G336",
+    "scene": "school",
+    "camera": "G336",
+    "events": 3,
+    "median_actor_h": 31,
+    "best_event_actor_h": 40,
+    "band": "too-small",
+    "activities": [
+      "Vehicle_Stopping",
+      "Vehicle_Turning_Left",
+      "Vehicle_Turning_Right"
+    ],
+    "per_event": [
+      {
+        "activity": "Vehicle_Stopping",
+        "frames": [
+          1249,
+          1279
+        ],
+        "median_actor_h": 31,
+        "max_actor_h": 31
+      },
+      {
+        "activity": "Vehicle_Turning_Left",
+        "frames": [
+          863,
+          1056
+        ],
+        "median_actor_h": 40,
+        "max_actor_h": 45
+      },
+      {
+        "activity": "Vehicle_Turning_Right",
+        "frames": [
+          1440,
+          1576
+        ],
+        "median_actor_h": 26,
+        "max_actor_h": 27
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-12.10-00-00.10-05-00.hospital.G436",
+    "scene": "hospital",
+    "camera": "G436",
+    "events": 2,
+    "median_actor_h": 40,
+    "best_event_actor_h": 40,
+    "band": "too-small",
+    "activities": [
+      "Vehicle_DropsOff_Person",
+      "Vehicle_Starting"
+    ],
+    "per_event": [
+      {
+        "activity": "Vehicle_Starting",
+        "frames": [
+          4459,
+          4543
+        ],
+        "median_actor_h": 40,
+        "max_actor_h": 43
+      },
+      {
+        "activity": "Vehicle_DropsOff_Person",
+        "frames": [
+          4209,
+          4493
+        ],
+        "median_actor_h": 40,
+        "max_actor_h": 41
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-12.10-40-00.10-45-00.hospital.G436",
+    "scene": "hospital",
+    "camera": "G436",
+    "events": 1,
+    "median_actor_h": 40,
+    "best_event_actor_h": 40,
+    "band": "too-small",
+    "activities": [
+      "Exit_Vehicle"
+    ],
+    "per_event": [
+      {
+        "activity": "Exit_Vehicle",
+        "frames": [
+          3947,
+          4220
+        ],
+        "median_actor_h": 40,
+        "max_actor_h": 40
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-07.17-05-00.17-10-00.school.G336",
+    "scene": "school",
+    "camera": "G336",
+    "events": 3,
+    "median_actor_h": 35,
+    "best_event_actor_h": 38,
+    "band": "too-small",
+    "activities": [
+      "Close_Trunk",
+      "Load_Vehicle",
+      "Open_Trunk"
+    ],
+    "per_event": [
+      {
+        "activity": "Open_Trunk",
+        "frames": [
+          2050,
+          2247
+        ],
+        "median_actor_h": 35,
+        "max_actor_h": 35
+      },
+      {
+        "activity": "Close_Trunk",
+        "frames": [
+          4259,
+          4340
+        ],
+        "median_actor_h": 38,
+        "max_actor_h": 38
+      },
+      {
+        "activity": "Load_Vehicle",
+        "frames": [
+          4157,
+          4242
+        ],
+        "median_actor_h": 33,
+        "max_actor_h": 38
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-09.10-10-00.10-15-01.school.G328",
+    "scene": "school",
+    "camera": "G328",
+    "events": 1,
+    "median_actor_h": 37,
+    "best_event_actor_h": 37,
+    "band": "too-small",
+    "activities": [
+      "Open_Facility_Door"
+    ],
+    "per_event": [
+      {
+        "activity": "Open_Facility_Door",
+        "frames": [
+          470,
+          541
+        ],
+        "median_actor_h": 37,
+        "max_actor_h": 37
+      }
+    ]
+  },
+  {
+    "clip": "2018-03-12.10-45-04.10-50-04.school.G424",
+    "scene": "school",
+    "camera": "G424",
+    "events": 1,
+    "median_actor_h": 37,
+    "best_event_actor_h": 37,
+    "band": "too-small",
+    "activities": [
+      "Vehicle_Turning_Left"
+    ],
+    "per_event": [
+      {
+        "activity": "Vehicle_Turning_Left",
+        "frames": [
+          4793,
+          4928
+        ],
+        "median_actor_h": 37,
+        "max_actor_h": 37
+      }
+    ]
+  }
+]

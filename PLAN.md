@@ -843,3 +843,54 @@ aws service-quotas list-requested-service-quota-change-history \
   mechanism. Testing vLLM's native video-timing path would need a backend that
   sends video files instead of frames. Worth building only if the overlay
   mechanism fails.
+
+- **2026-09-10 (labelling)** — The eval set was invalid, and finding out cost a
+  full labelling pass. Fourteen candidates were located by MEVA's annotations and
+  reviewed on contact sheets; **eight were unlabellable**, `hospital.G301` lost
+  both its events, and what survived was three events across two cameras pointed
+  at the same building.
+
+  **Root cause was in our own selection, not the footage.** Clips were chosen
+  because their annotation *declared an activity*. Nothing asked how large the
+  actor was in frame, and the annotation is silent on it. MEVA publishes
+  `.geom.yml` — per-frame actor boxes — beside `.activities.yml`, and the fetch
+  had been discarding it with `awk '/activities\.yml$/'`. It answers the question
+  directly for 5–70 KB per clip against 56–203 MB per video.
+
+  Median actor height ranks **monotonically with six hand verdicts reached before
+  the measurement existed** (694/295/267 px labellable, 121/41/38 px not), so
+  `scripts/screen_geom.py` is calibrated rather than guessed. It **ranks and never
+  rejects**: a false positive costs ten seconds on a sheet, a false negative is
+  silent, and `G329` was nearly lost that way already. Across the full 64-clip
+  corpus it returns 17 clips in the "good" band and located `Vehicle_Reversing` at
+  232 px — the brief's "a forklift reverses", unlabellable at 41 px on `G328`. We
+  had the right dataset and the wrong camera.
+
+  **Second finding: contact sheets are biased late on event starts.** Twice a
+  sheet reading was overturned by zooming into the source, both times mine and
+  both times too late — a sheet shows the door *panel* swinging long after the
+  actor began working the knob. Sheets locate; they are not evidence about a
+  boundary. Event sheets now size tiles from measured actor height (~150 px on the
+  sheet regardless of camera distance), and MEVA's boundary times are kept
+  verbatim where a hand reading disagrees.
+
+  **Five tooling defects fixed, two of which would have corrupted the labels:**
+  `CLIP_LIMIT ?= 6` silently truncated the sorted source list exactly where newly
+  fetched clips land; `prepare_clips.py` rewrote the labels template wholesale, so
+  any later re-run would have destroyed every hand judgement with `git status`
+  reporting nothing wrong. It now merges — judged rows are carried verbatim,
+  pending rows refresh so upstream fixes reach the labeller, and `--retrim`
+  refuses rather than warns. Also: hour-boundary clips are filed under their END
+  hour in S3 (2 of 6 shortlisted clips 404'd), `Sit_Down`/`Stand_Up` were missing
+  from the phrasing map and reached the labeller as class names, and sheet
+  filenames omitted the date so two clips from one camera were indistinguishable.
+
+  **Result: 8 clips, 120 s each, 15 hand-confirmed events**, covering all three of
+  the brief's worked examples, durations 1.4–13.6 s. `G328`/`G336`/`G301` are kept
+  unlabelled as measured negatives and as a hallucination probe — MEVA declares
+  events there that no human can verify, so asking the model for them tests
+  whether it invents confident localisations when the evidence is absent.
+
+  Still outstanding, all on GPU: re-run the probe (current 80 % / 3.5 s figures
+  were measured through the broken JSON parser and are not reportable), run the
+  eval on these labels, run the hallucination probe, fill the README tables.
