@@ -67,7 +67,7 @@ def queries_for(path: str | Path) -> dict[str, list[str]]:
 def run_eval(
     labels_path: str | Path, data_dir: str | Path, cfg: Config, backend: Backend,
     *, prompt: str | None = None, progress: bool = True,
-    gpu_hourly: float | None = None,
+    gpu_hourly: float | None = None, limit: int | None = None,
 ) -> dict:
     """Evaluate on every labelled clip and report metrics."""
     if getattr(backend, "is_stub", False):
@@ -98,6 +98,12 @@ def run_eval(
         )
 
     plan = queries_for(labels_path)
+    # Subsampling exists so a change can be tried on one or two clips before
+    # committing a metered GPU to the full cross-product. Clips are taken in
+    # sorted order so the subset is reproducible rather than whatever the
+    # filesystem returned.
+    if limit:
+        plan = dict(sorted(plan.items())[:limit])
     data_dir = Path(data_dir)
 
     preds: list[dict] = []

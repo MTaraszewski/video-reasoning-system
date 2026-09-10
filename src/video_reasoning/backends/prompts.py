@@ -83,8 +83,6 @@ TERSE = PromptVariant(
     ),
 )
 
-VARIANTS: dict[str, PromptVariant] = {v.name: v for v in (OVERLAY, NATIVE, TERSE)}
-DEFAULT = OVERLAY
 
 
 def get(name: str | None) -> PromptVariant:
@@ -93,3 +91,68 @@ def get(name: str | None) -> PromptVariant:
     if name not in VARIANTS:
         raise KeyError(f"unknown prompt variant {name!r}; have {sorted(VARIANTS)}")
     return VARIANTS[name]
+
+
+# ---------------------------------------------------------------------------
+# Stage A of two-stage extraction: presence only.
+# ---------------------------------------------------------------------------
+# Deliberately neutral, and deliberately tells the model that "no" is the common
+# answer. In a cross-product eval most (window, description) pairs genuinely do
+# not contain the event -- 89 of 104 in our run -- so a prompt that treats
+# absence as the expected case is describing the task honestly, not biasing it.
+#
+# The answer is one token. That is the whole point: it cannot ramble, it cannot
+# rationalise ("the man on the stairs suggests he is exiting the vehicle"), and
+# it produces a logprob we can turn into a probability instead of accepting a
+# number the model states about itself.
+DETECT = PromptVariant(
+    name="detect",
+    system=(
+        "You judge whether a described action is clearly visible in a short "
+        "sequence of video frames. Most sequences you are shown do NOT contain "
+        "the action. Answering 'no' is correct and expected in that case. Do not "
+        "infer the action from context, from what might be happening off-screen, "
+        "or from what would plausibly come next. Judge only what is visible. "
+        "Answer with exactly one word: yes or no."
+    ),
+    user_template=(
+        "Frames from {start_s:.1f}s to {end_s:.1f}s of a video.\n\n"
+        "Is this clearly visible in these frames: \"{query}\"?\n\n"
+        "Answer yes or no."
+    ),
+)
+
+
+# Stage B: the event is already established as present, so asking where it is no
+# longer presupposes anything. `confidence` is absent from this contract on
+# purpose -- the ranking signal comes from stage A's logprob, and asking the
+# model to state a number produced exactly 1.0 on 28 of 81 predictions.
+LOCALIZE = PromptVariant(
+    name="localize",
+    system=(
+        "You are a precise video event-localization system. You are shown frames "
+        "sampled in temporal order from one segment of a longer video. Each frame "
+        "has its absolute timestamp printed at the bottom-left, for example "
+        "'t=12.375s'. Read those printed timestamps to report when things happen. "
+        "Report only what is visible in the frames."
+    ),
+    user_template=(
+        "Frames from {start_s:.1f}s to {end_s:.1f}s.\n\n"
+        "The following action IS present in these frames: \"{query}\"\n"
+        "Report when it starts and ends, reading the printed timestamps.\n\n"
+        'Respond with JSON only, in exactly this form:\n'
+        '{{"events": [{{"start_s": <number>, "end_s": <number>, '
+        '"evidence": "<short phrase>"}}]}}\n'
+        "Use the printed timestamps. Do not report a zero-length moment, and do "
+        "not report the entire segment: give the span the action actually occupies."
+    ),
+)
+
+
+# `localize` belongs in the sweep like any other variant, but it is only
+# meaningful with `detect.enabled` -- on its own it asserts the event is present,
+# which is the very bias two-stage extraction exists to remove.
+VARIANTS: dict[str, PromptVariant] = {
+    v.name: v for v in (OVERLAY, NATIVE, TERSE, LOCALIZE)
+}
+DEFAULT = OVERLAY

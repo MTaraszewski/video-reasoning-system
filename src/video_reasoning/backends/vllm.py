@@ -12,7 +12,9 @@ GPU rates.
 from __future__ import annotations
 
 import json
+import math
 import time
+from dataclasses import replace
 import uuid
 from pathlib import Path
 
@@ -33,6 +35,9 @@ class VLLMBackend:
         api_key: str = "EMPTY",
         temperature: float = 0.0,
         max_tokens: int = 4096,
+        detect_enabled: bool = False,
+        detect_threshold: float = 0.5,
+        detect_max_tokens: int = 1,
         timeout_s: float = 300.0,
         record_dir: str | Path | None = None,
     ) -> None:
@@ -44,6 +49,9 @@ class VLLMBackend:
         self.base_url = base_url
         self.temperature = temperature
         self.max_tokens = max_tokens
+        self.detect_enabled = detect_enabled
+        self.detect_threshold = detect_threshold
+        self.detect_max_tokens = detect_max_tokens
         self.client = OpenAI(base_url=base_url, api_key=api_key, timeout=timeout_s)
         self.record_dir = Path(record_dir) if record_dir else None
         if self.record_dir:
@@ -88,10 +96,73 @@ class VLLMBackend:
             {"role": "user", "content": content},
         ]
 
+    def detect(self, req: ExtractRequest) -> tuple[float, float, str]:
+        """Stage A — is the described action visible? Returns (p_yes, latency, raw).
+
+        `guided_choice` constrains the output to exactly "yes" or "no", so the
+        model cannot rationalise its way to a positive, and `logprobs` gives the
+        probability behind that single token. That probability is a real signal,
+        unlike a confidence the model states about itself -- which came back as
+        exactly 1.0 on 28 of 81 predictions in the measured run.
+
+        A refusal to answer, or an endpoint that cannot do guided decoding, is
+        treated as "not present": the alternative is inventing a positive, and
+        that is the failure mode this stage exists to remove.
+        """
+        t0 = time.time()
+        try:
+            resp = self.client.chat.completions.create(
+                model=self.model,
+                messages=self._messages(req),
+                temperature=0.0,
+                max_tokens=self.detect_max_tokens,
+                logprobs=True,
+                top_logprobs=8,
+                extra_body={"guided_choice": ["yes", "no"]},
+            )
+        except Exception as e:
+            return 0.0, round(time.time() - t0, 3), f"detect failed: {e}"
+
+        latency = round(time.time() - t0, 3)
+        choice = resp.choices[0]
+        raw = (choice.message.content or "").strip()
+
+        # Prefer the logprob. Softmax over just the yes/no alternatives, because
+        # guided decoding has already excluded everything else.
+        try:
+            top = choice.logprobs.content[0].top_logprobs
+            lp = {t.token.strip().lower(): t.logprob for t in top}
+            if "yes" in lp or "no" in lp:
+                y = math.exp(lp.get("yes", -60.0))
+                n = math.exp(lp.get("no", -60.0))
+                if y + n > 0:
+                    return y / (y + n), latency, raw
+        except Exception:
+            pass
+        # No logprobs available: fall back to the word, but never to a confident
+        # value -- a coarse 0.6 says "yes, weakly", not "certain".
+        return (0.6 if raw.lower().startswith("y") else 0.0), latency, raw
+
     def extract(self, req: ExtractRequest) -> ExtractResult:
         if not req.window.frames:
             return ExtractResult(events=[], model=self.model,
                                  error="window contained no frames")
+
+        p_yes = None
+        detect_latency = 0.0
+        if self.detect_enabled and req.detect_prompt is not None:
+            probe_req = replace(req, system_prompt=req.detect_prompt[0],
+                                user_prompt=req.detect_prompt[1])
+            p_yes, detect_latency, detect_raw = self.detect(probe_req)
+            if p_yes < self.detect_threshold:
+                # Said no. Emit nothing -- and record that it was ASKED, so a
+                # true negative is distinguishable from a window never examined.
+                return ExtractResult(
+                    events=[], model=self.model, latency_s=detect_latency,
+                    raw=detect_raw,
+                    meta={"stage": "detect", "p_present": round(p_yes, 4),
+                          "detected": False, "frames": len(req.window.frames)},
+                )
 
         t0 = time.time()
         try:
@@ -119,11 +190,21 @@ class VLLMBackend:
         events, err = parse_events(text if reasoning else (msg.content or ""))
         events, recon = reconcile_times(events, req.window)
 
+        # Stage A's probability is the ranking signal, replacing whatever the
+        # model may have stated about itself.
+        if p_yes is not None:
+            for e in events:
+                e.confidence = round(p_yes, 4)
+
         result = ExtractResult(
             events=events, raw=msg.content or "", reasoning=reasoning,
-            latency_s=round(latency, 3), model=self.model, error=err,
+            latency_s=round(latency + detect_latency, 3), model=self.model,
+            error=err,
             meta={"finish_reason": resp.choices[0].finish_reason,
-                  "frames": len(req.window.frames), **recon},
+                  "frames": len(req.window.frames),
+                  **({"p_present": round(p_yes, 4), "detected": True}
+                     if p_yes is not None else {}),
+                  **recon},
         )
         self._record(req, result)
         return result

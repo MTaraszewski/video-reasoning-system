@@ -49,6 +49,31 @@ class OverlayConfig(BaseModel):
     font_scale: float = Field(0.045, gt=0, le=0.5)
 
 
+class DetectConfig(BaseModel):
+    """Two-stage extraction: ask IF, then ask WHEN.
+
+    The single-stage prompt asks the model to find moments matching a
+    description, which presupposes the description applies. Measured on real
+    footage, 7 of 81 emitted events carried evidence that denied the event --
+    "Empty hallway with a closed door and no visible people", stated with the
+    model's own confidence of 1.0. Nothing in the pipeline invented those; the
+    model produced them under a prompt that made agreeing easier than declining.
+
+    Splitting the question fixes what we can measure, not just what we ask.
+    Detection and localisation become separately scoreable, so "it never said
+    present" and "it said present in the wrong place" stop being the same number.
+    """
+
+    enabled: bool = False
+    # From the yes/no token logprobs, not from a number the model states. 28 of
+    # 81 predictions came back at exactly 1.0 -- a stated confidence carries no
+    # information, so it cannot rank anything.
+    threshold: float = Field(0.5, ge=0.0, le=1.0)
+    # One token is all a yes/no needs, and it forecloses the runaway generations
+    # that cost 80s per call in the eval.
+    max_tokens: int = Field(1, gt=0)
+
+
 class MergeConfig(BaseModel):
     iou: float = Field(0.3, ge=0.0, le=1.0)
     gap_s: float = Field(0.5, ge=0.0)
@@ -69,6 +94,7 @@ class Config(BaseModel):
     sampling: SamplingConfig = Field(default_factory=SamplingConfig)
     windowing: WindowingConfig = Field(default_factory=WindowingConfig)
     overlay: OverlayConfig = Field(default_factory=OverlayConfig)
+    detect: DetectConfig = Field(default_factory=DetectConfig)
     merge: MergeConfig = Field(default_factory=MergeConfig)
     limits: LimitsConfig = Field(default_factory=LimitsConfig)
 

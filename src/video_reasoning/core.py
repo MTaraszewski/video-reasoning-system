@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 
 from .backends.base import Backend, ExtractRequest
-from .backends.prompts import PromptVariant, get as get_prompt
+from .backends.prompts import DETECT, PromptVariant, get as get_prompt
 from .config import Config
 from .decode import probe, sample_frames
 from .errors import BudgetExceeded, InvalidInput, UnprocessableMedia
@@ -156,6 +156,12 @@ def find_events(
                 system_prompt=variant.system,
                 user_prompt=variant.user(q, w.start_s, w.end_s),
                 video=path.name, prompt_variant=variant.name,
+                # Present only when two-stage extraction is on. The backend asks
+                # this first and localises only if the answer is yes.
+                detect_prompt=(
+                    (DETECT.system, DETECT.user(q, w.start_s, w.end_s))
+                    if config.detect.enabled else None
+                ),
             )
             res = backend.extract(req)
             calls += 1

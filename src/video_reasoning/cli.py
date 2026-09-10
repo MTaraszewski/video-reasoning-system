@@ -324,6 +324,17 @@ def evaluate(
     gpu_hourly: float = typer.Option(None, help="Instance $/hr, for cost per video-minute."),
     replay: str = typer.Option(None, help="Replay recorded exchanges."),
     quiet: bool = typer.Option(False, "--quiet"),
+    limit: int = typer.Option(
+        None, help="Evaluate only the first N clips. For trying a change on a "
+                   "subsample before committing a metered GPU to all of them."),
+    detect: bool = typer.Option(
+        None, "--detect/--no-detect",
+        help="Two-stage extraction: ask yes/no first, localise only on yes, and "
+             "take confidence from the yes/no logprob rather than a number the "
+             "model states about itself."),
+    detect_threshold: float = typer.Option(
+        None, help="P(present) required to localise. Higher trades recall for "
+                   "precision."),
 ) -> None:
     """Run the labelled set and report defensible temporal metrics."""
     from .backends import make_backend
@@ -335,12 +346,13 @@ def evaluate(
             "model.name": model, "model.base_url": base_url,
             "sampling.fps": fps,
             "windowing.window_s": window_s, "windowing.stride_s": stride_s,
+            "detect.enabled": detect, "detect.threshold": detect_threshold,
         })
         be = make_backend(cfg, backend, replay_dir=replay)
         if hasattr(be, "check"):
             be.check()
         res = run_eval(labels, data_dir, cfg, be, prompt=prompt,
-                       progress=not quiet, gpu_hourly=gpu_hourly)
+                       progress=not quiet, gpu_hourly=gpu_hourly, limit=limit)
     except VideoReasoningError as e:
         _fail(e)
 

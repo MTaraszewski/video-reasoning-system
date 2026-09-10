@@ -37,6 +37,9 @@ class ExtractRequest:
     user_prompt: str
     video: str = ""            # which clip
     prompt_variant: str = ""   # which prompt shape
+    # (system, user) for the yes/no presence stage. None means single-stage, so
+    # the two-stage path is opt-in and every existing caller keeps its behaviour.
+    detect_prompt: tuple[str, str] | None = None
 
 
 @dataclass
@@ -261,12 +264,29 @@ def reconcile_times(
     Rejections are returned, not swallowed. A model that hallucinates often is a
     finding about the model, which is what the brief asks us to report.
     """
-    stats = {"clamped": 0, "rejected_out_of_window": 0, "rejected_no_frame": 0}
+    stats = {"clamped": 0, "rejected_out_of_window": 0, "rejected_no_frame": 0,
+             "rejected_zero_length": 0, "rejected_whole_window": 0}
     frame_times = [f.t for f in window.frames]
     out: list[WindowEvent] = []
 
+    span = max(1e-6, window.end_s - window.start_s)
     for e in events:
         s_, t_ = (e.start_s, e.end_s) if e.start_s <= e.end_s else (e.end_s, e.start_s)
+
+        # A point is not an interval. 13 of 81 predictions in the measured run
+        # had start == end, which cannot overlap any labelled span and so scores
+        # zero however close it lands. Counted, not silently dropped: the count
+        # is itself a finding about how the model answers.
+        if t_ - s_ < 1e-3:
+            stats["rejected_zero_length"] += 1
+            continue
+
+        # "Somewhere in this window" is a non-answer wearing an interval's
+        # clothes. 33 of 81 predictions spanned essentially the whole window,
+        # which carries no more information than the window boundaries we chose.
+        if (t_ - s_) / span >= 0.95:
+            stats["rejected_whole_window"] += 1
+            continue
 
         # Beyond plausible reading error: the model did not see this.
         if s_ > window.end_s + tolerance_s or t_ < window.start_s - tolerance_s:

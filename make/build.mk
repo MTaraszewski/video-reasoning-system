@@ -104,6 +104,15 @@ probe:  ## [any] characterise the model: can it ground events, how precisely
 # The hand-labelled real set is what `make eval` should measure -- it is the
 # deliverable. Pointing this at /data/synthetic silently evaluated the wrong
 # dataset and the run looked entirely normal while doing it.
+# Two-stage extraction and subsampling. DETECT=1 asks a yes/no presence question
+# before localising and takes confidence from its logprob; EVAL_LIMIT runs only
+# the first N clips, so a change can be tried for pennies before the full
+# cross-product is committed to a metered box.
+EVAL_OUT   ?= /out/eval.json
+DETECT     ?=
+EVAL_LIMIT ?=
+DETECT_THRESHOLD ?=
+
 LABELS ?= /data/eval/labels.json
 EVAL_DATA ?= /data/eval
 
@@ -125,7 +134,10 @@ eval:  ## [gpu] run the labelled set, print the metric table
 	@$(MAKE) --no-print-directory data-eval
 	$(COMPOSE) run --rm finder video-reasoning evaluate \
 	  --labels $(LABELS) --data-dir $(EVAL_DATA) --backend $(BACKEND) \
-	  -o /out/eval.json \
+	  -o $(EVAL_OUT) \
+	  $(if $(DETECT),--detect,) \
+	  $(if $(DETECT_THRESHOLD),--detect-threshold $(DETECT_THRESHOLD),) \
+	  $(if $(EVAL_LIMIT),--limit $(EVAL_LIMIT),) \
 	  $(if $(PROMPT),--prompt $(PROMPT),) \
 	  $(if $(SAMPLE_FPS),--fps $(SAMPLE_FPS),) \
 	  $(if $(GPU_HOURLY),--gpu-hourly $(GPU_HOURLY),) \

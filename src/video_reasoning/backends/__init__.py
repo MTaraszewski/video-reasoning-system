@@ -38,4 +38,7 @@ def make_backend(cfg: Config, kind: str = "auto", *,
         api_key=cfg.model.api_key, temperature=cfg.model.temperature,
         max_tokens=cfg.model.max_tokens, timeout_s=cfg.model.request_timeout_s,
         record_dir=record_dir,
+        detect_enabled=cfg.detect.enabled,
+        detect_threshold=cfg.detect.threshold,
+        detect_max_tokens=cfg.detect.max_tokens,
     )
