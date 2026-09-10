@@ -38,7 +38,14 @@ declare -a DONE=() SKIPPED=()
 
 # Skip comments, the header, and blanks. Read tab-separated so a role containing
 # spaces stays in one field.
-while IFS=$'\t' read -r id gated maxlen role; do
+# Ask the card what it has, so a model that cannot fit is skipped before its
+# weights are downloaded rather than after. Qwen3-VL-8B cost 138 seconds of
+# download and three minutes of load before vLLM refused to start.
+VRAM_GIB=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null \
+           | head -1 | awk '{printf "%d", $1/1024}')
+[ -n "$VRAM_GIB" ] && echo "GPU has ${VRAM_GIB} GiB" || VRAM_GIB=0
+
+while IFS=$'\t' read -r id gated maxlen minvram role; do
   case "$id" in ''|'#'*|'id') continue ;; esac
   [ -n "$ONLY" ] && case "$id" in *"$ONLY"*) ;; *) continue ;; esac
 
@@ -55,6 +62,15 @@ while IFS=$'\t' read -r id gated maxlen role; do
     echo "      Accept the terms on https://huggingface.co/${id} then:"
     echo "        export HF_TOKEN=hf_xxx"
     SKIPPED+=("$id (gated, no HF_TOKEN)")
+    continue
+  fi
+
+  # A model that cannot fit is a skip with a reason, not a five-minute failure.
+  if [ "$VRAM_GIB" -gt 0 ] && [ -n "$minvram" ] && [ "$VRAM_GIB" -lt "$minvram" ]; then
+    echo "SKIP  needs ${minvram} GiB, this card has ${VRAM_GIB} GiB."
+    echo "      Running it anyway would mean fewer frames and a shorter context"
+    echo "      than the 4B baseline got, which breaks the comparison."
+    SKIPPED+=("$id (needs ${minvram} GiB, have ${VRAM_GIB})")
     continue
   fi
 

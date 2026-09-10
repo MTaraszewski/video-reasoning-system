@@ -2,17 +2,29 @@
 #
 #   id                  HuggingFace repo id, character for character
 #   gated               yes -> needs HF_TOKEN and accepted terms on the model page
-#   max_model_len       vLLM context. Lowered for 8B models: at bf16 they are
-#                       ~16 GiB of weights on a 22 GiB card, and KV cache takes
-#                       what is left. 32768 does not fit alongside them.
+#   max_model_len       vLLM context.
+#   min_vram_gib        MEASURED floor to run at that context, not estimated.
 #   role                why this model is in the sweep at all
 #
-# Cosmos3-Edge is the measured baseline. The other three exist to answer
-# questions the first run could not: does a bigger model in the same family
-# detect presence any better, and does NVIDIA's physical-AI post-training buy
-# anything over the base model it started from?
-id	gated	max_model_len	role
-nvidia/Cosmos3-Edge	no	32768	primary — the brief's recommendation, already measured
-nvidia/Cosmos-Reason2-2B	yes	32768	size-scaling point in the Reason family
-nvidia/Cosmos-Reason2-8B	yes	16384	reference — its model card documents the timestamp mechanism
-Qwen/Qwen3-VL-8B-Instruct	no	16384	CONTROL — the base model Reason2-8B was post-trained from
+# Cosmos3-Edge is the measured baseline. The other three exist to answer questions
+# the first run could not: does a bigger model in the same family detect presence
+# any better, and does NVIDIA's physical-AI post-training buy anything over the
+# base model it started from?
+#
+# THE 8B MODELS DO NOT FIT ON A 24 GB CARD AT OUR WINDOW SIZE. Measured, not
+# predicted: Qwen3-VL-8B loaded 16.65 GiB of weights on an L4's 22.04 GiB usable,
+# leaving 0.65 GiB for KV cache against the 2.25 GiB a 16384 context needs. vLLM
+# put the ceiling at 4720 tokens -- too small for a 48-frame window. Raising
+# gpu_memory_utilization to fit would need ~0.99, which is not safe.
+#
+# Running them anyway, with fewer frames and a shorter context, would break the
+# comparison they exist for: Qwen-vs-Reason2 only isolates NVIDIA's post-training
+# if both run under conditions identical to each other AND to the 4B baseline.
+# Constraints we imposed are not a property of the models. So the 8B rows need a
+# 48 GB card (g6e.2xlarge, L40S) and are marked as such rather than quietly run
+# in a degraded configuration.
+id	gated	max_model_len	min_vram_gib	role
+nvidia/Cosmos3-Edge	no	32768	24	primary — the brief's recommendation, MEASURED: 4.97 of 22.04 GiB used
+nvidia/Cosmos-Reason2-2B	yes	32768	24	size-scaling point in the Reason family; should fit a 24 GB card
+nvidia/Cosmos-Reason2-8B	yes	16384	48	reference — its card documents the timestamp mechanism. NEEDS 48 GB
+Qwen/Qwen3-VL-8B-Instruct	no	16384	48	CONTROL — base model Reason2-8B came from. NEEDS 48 GB (measured: OOM on 24)
