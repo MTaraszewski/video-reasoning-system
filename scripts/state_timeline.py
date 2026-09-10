@@ -24,6 +24,26 @@ from video_reasoning.config import load_config
 from video_reasoning.decode import frame_to_data_url, sample_frames
 
 
+def crop_frames(frames, box):
+    """Crop every frame to a fractional box.
+
+    The measured limit of state polling is actor size: 694px gave a +0.19
+    excursion, 295px gave +0.05 -- below the noise floor. Cropping is the direct
+    remedy, because it changes how much of the tile the subject occupies without
+    changing the footage. It is also what the field does in production: a zone is
+    configured per camera, once.
+    """
+    if not box:
+        return frames
+    x0, y0, x1, y1 = box
+    out = []
+    for f in frames:
+        w, h = f.image.size
+        f.image = f.image.crop((int(x0 * w), int(y0 * h), int(x1 * w), int(y1 * h)))
+        out.append(f)
+    return out
+
+
 def ask_once(client, model, frames, states, debug=False):
     """One classification. Returns {state: probability} over ALL states.
 
@@ -66,7 +86,7 @@ def ask_once(client, model, frames, states, debug=False):
     return {states[letters.index(l)]: v / tot for l, v in probs.items()}
 
 
-def poll(client, model, frames, states, debug=False):
+def poll(client, model, frames, states, debug=False, repeat=1):
     """Ask in BOTH option orders and average — cancels option-order bias.
 
     Measured on one clip: with (a) closed / (b) open the model answered "b" at
@@ -78,11 +98,12 @@ def poll(client, model, frames, states, debug=False):
     cancels it and leaves whatever perception is underneath.
     """
     out: dict[str, list[float]] = {s: [] for s in states}
-    for order in (list(states), list(reversed(states))):
-        got = ask_once(client, model, frames, order, debug=debug)
-        debug = False
-        for k, v in got.items():
-            out[k].append(v)
+    for _ in range(max(1, repeat)):
+        for order in (list(states), list(reversed(states))):
+            got = ask_once(client, model, frames, order, debug=debug)
+            debug = False
+            for k, v in got.items():
+                out[k].append(v)
     return {k: (sum(v) / len(v) if v else float("nan")) for k, v in out.items()}
 
 
@@ -95,6 +116,13 @@ def main() -> None:
     ap.add_argument("--end", type=float, default=20.0)
     ap.add_argument("--step", type=float, default=1.0, help="Seconds between polls.")
     ap.add_argument("--span", type=float, default=2.0, help="Seconds of frames per poll.")
+    ap.add_argument("--crop", nargs=4, type=float, metavar=("X0", "Y0", "X1", "Y1"),
+                    help="Region of interest as FRACTIONS of the frame, e.g. "
+                         "0.3 0.1 0.7 0.6. Chosen once by a human looking at the "
+                         "scene -- never derived from per-frame annotations, "
+                         "which would be leakage.")
+    ap.add_argument("--repeat", type=int, default=1,
+                    help="Polls per timestep, averaged. Reduces variance at N x cost.")
     ap.add_argument("--margin", type=float, default=0.10,
                     help="How far above baseline the score must rise to count as "
                          "the second state.")
@@ -118,6 +146,10 @@ def main() -> None:
     # signed number per timestep: negative means the first state, positive the
     # second, and the event is where it crosses zero.
     a, b = args.states[0], args.states[-1]
+    if args.crop:
+        print(f"crop   {args.crop}  (fractional, fixed for the whole clip)")
+    if args.repeat > 1:
+        print(f"repeat {args.repeat} polls per timestep, averaged")
     print(f"score = P({b[:24]}) - P({a[:24]}), averaged over both option orders\n")
     print(f"     {'t':>7}  {'P(' + a[:18] + ')':>24}  {'P(' + b[:18] + ')':>24}  score")
 
@@ -129,8 +161,9 @@ def main() -> None:
                                   overlay=False, start_s=t, end_s=t + args.span)
         if not frames:
             break
+        frames = crop_frames(frames, args.crop)
         pr = poll(client, cfg.model.name, frames, args.states,
-                  debug=(t == args.start))
+                  debug=(t == args.start), repeat=args.repeat)
         pa, pb = pr.get(a, float("nan")), pr.get(b, float("nan"))
         score = pb - pa
         inside = "*" if args.truth and args.truth[0] <= t <= args.truth[1] else " "
