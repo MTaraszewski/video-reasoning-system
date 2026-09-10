@@ -28,7 +28,7 @@ serve: preflight-gpu  ## [gpu] start the model server on the local GPU (foregrou
 	MODEL="$(MODEL)" VLLM_ARGS="$(VLLM_ARGS) $(VLLM_EXTRA)" $(COMPOSE) up vllm
 
 serve-bg: preflight-gpu  ## [gpu] start the model server in the background
-	MODEL="$(MODEL)" VLLM_ARGS="$(VLLM_ARGS) $(VLLM_EXTRA)" $(COMPOSE) up -d vllm
+	MODEL="$(MODEL)" VLLM_ARGS="$(VLLM_ARGS) $(VLLM_EXTRA)" $(COMPOSE) --progress quiet up -d vllm
 	@$(MAKE) --no-print-directory serve-wait
 
 serve-wait:  ## [gpu] block until the endpoint answers and confirm which model it serves
