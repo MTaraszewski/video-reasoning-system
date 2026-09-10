@@ -10,11 +10,18 @@
 
 .PHONY: serve serve-bg serve-wait serve-logs serve-down models
 
-# Flags carried over from NVIDIA's published reasoner recipe. Edge has no recipe
-# of its own yet, so these are inferred and must be confirmed on first serve.
-VLLM_ARGS ?= --max-model-len 32768 \
-             --media-io-kwargs '{"video": {"num_frames": -1}}' \
-             --allowed-local-media-path /data
+# Confirmed against a real Cosmos3-Edge serve, not copied from a recipe.
+#
+# --media-io-kwargs '{"video": {"num_frames": -1}}' was carried over from NVIDIA's
+# Cosmos3-Nano recipe and REMOVED for two reasons. First, it broke: the JSON is
+# double-quoted inside an already double-quoted make variable, so the shell strips
+# the inner quotes and vLLM receives `{video: {num_frames: -1}}`, rejecting it with
+#     argument --media-io-kwargs: Value {video: {num_frames: -1}} cannot be converted
+# Second, and the reason it is not worth re-quoting: that flag controls how vLLM
+# decodes a VIDEO FILE it is given. We never use that path — frames are decoded
+# here, timestamped, and sent as images — so the flag configures a code path this
+# system does not exercise.
+VLLM_ARGS ?= --max-model-len 32768 --allowed-local-media-path /data
 VLLM_EXTRA ?=
 
 serve: preflight-gpu  ## [gpu] start the model server on the local GPU (foreground)

@@ -112,6 +112,31 @@ comparison, is genuinely cheaper. It costs two provisioning cycles and two weigh
 downloads. Worth it only if GPU budget is tight; otherwise one instance is simpler
 and the simplicity is worth more than the difference.
 
+### The serve command, confirmed on hardware
+
+Flags carried over from NVIDIA's **Cosmos3-Nano** recipe needed one change, found
+only by serving for real:
+
+    --media-io-kwargs '{"video": {"num_frames": -1}}'      REMOVED
+
+Two reasons. It broke — the JSON is double-quoted inside an already double-quoted
+make variable, so the shell strips the inner quotes and vLLM rejects
+`{video: {num_frames: -1}}`. And re-quoting it would be pointless: that flag
+controls how vLLM decodes a **video file** it is handed, and this system never uses
+that path. Frames are decoded here, timestamped, and sent as images.
+
+Working flags:
+
+    --max-model-len 32768 --allowed-local-media-path /data
+
+Also noted, not yet acted on: vLLM warns that `--model` as an option is deprecated
+in favour of a positional argument. Harmless while the version is pinned; it will
+break on an upgrade.
+
+**Measured on `g7e.2xlarge`:** NVIDIA RTX PRO 6000 Blackwell Server Edition,
+**97,887 MiB** VRAM, driver 595.91.07, CUDA 13.2 — three times Cosmos-Reason2-8B's
+documented 32 GB minimum, so every model in the comparison fits.
+
 ### Caveats
 
 - **Prices are strongly region-dependent.** `g7e.2xlarge` is ~$3.36/hr in us-east-1

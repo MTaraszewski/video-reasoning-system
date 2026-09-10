@@ -775,7 +775,7 @@ aws service-quotas list-requested-service-quota-change-history \
   `.ONESHELL` being silently ignored on macOS's GNU Make 3.81 and a `data/` bind
   mount that compose read as a named volume.
   Fetched all three local dataset sources and staged 1.5 GB to
-  `s3://mt-video-reasoning-system` in `eu-central-1`. A region check now resolves
+  the staging bucket in `eu-central-1`. A region check now resolves
   the bucket's true region rather than trusting `AWS_REGION`, after an inherited
   environment variable silently pointed transfers at `eu-west-1` — S3 redirects
   rather than failing, so the only symptom would have been slow, cross-region-billed
@@ -829,3 +829,17 @@ aws service-quotas list-requested-service-quota-change-history \
   `confirmed_by_hand: false` until checked.
   Moved the S3 bucket name out of the repo into a gitignored `make/local.mk`, ahead
   of making the repository public.
+
+- **2026-09-10 (GPU session 1)** — First contact with real hardware.
+  `g7e.2xlarge` confirmed: RTX PRO 6000 Blackwell, **97,887 MiB**, driver
+  595.91.07, CUDA 13.2 — and `preflight-gpu` passed, retiring the
+  unsupported-architecture risk that drove the instance choice. The AMI's console
+  description omitted G7, but its login banner lists it.
+  First flag failure: `--media-io-kwargs`, carried from the Cosmos3-Nano recipe,
+  broke on quoting **and** configures a vLLM code path this system never uses —
+  we decode and timestamp frames ourselves rather than handing vLLM a video file.
+  Removed rather than re-quoted.
+  **Known limitation this creates:** the probe now tests only the burned-overlay
+  mechanism. Testing vLLM's native video-timing path would need a backend that
+  sends video files instead of frames. Worth building only if the overlay
+  mechanism fails.
