@@ -85,19 +85,22 @@ while IFS=$'\t' read -r id gated maxlen minvram role; do
     continue
   fi
 
+  ok=1
   if [ -z "$SKIP_PROBE" ]; then
     echo "-- probe (synthetic, exact ground truth) --"
     MODEL="$id" make --no-print-directory probe \
-      PROMPTS=overlay PROBE_OUT="/out/probe-${s}.json" || echo "  probe failed"
+      PROMPTS=overlay PROBE_OUT="/out/probe-${s}.json" || { echo "  PROBE FAILED"; ok=0; }
   fi
 
   if [ -z "$SKIP_EVAL" ]; then
     echo "-- eval (hand-labelled clips, full cross-product) --"
     MODEL="$id" make --no-print-directory eval \
-      PROMPT=overlay EVAL_OUT="/out/eval-${s}.json" || echo "  eval failed"
+      PROMPT=overlay EVAL_OUT="/out/eval-${s}.json" || { echo "  EVAL FAILED"; ok=0; }
   fi
 
-  DONE+=("$id")
+  # "swept 1 model" while the probe errored is a lie the summary told once
+  # already. A model counts as run only if what we asked for actually ran.
+  if [ "$ok" = "1" ]; then DONE+=("$id"); else SKIPPED+=("$id (ran, but a stage failed)"); fi
 done < "$REG"
 
 make --no-print-directory serve-down >/dev/null 2>&1 || true
