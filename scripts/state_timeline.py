@@ -95,6 +95,12 @@ def main() -> None:
     ap.add_argument("--end", type=float, default=20.0)
     ap.add_argument("--step", type=float, default=1.0, help="Seconds between polls.")
     ap.add_argument("--span", type=float, default=2.0, help="Seconds of frames per poll.")
+    ap.add_argument("--margin", type=float, default=0.10,
+                    help="How far above baseline the score must rise to count as "
+                         "the second state.")
+    ap.add_argument("--dwell", type=float, default=2.0,
+                    help="Seconds the score must stay above the line. Rejects "
+                         "single-poll spikes.")
     args = ap.parse_args()
 
     cfg = load_config()
@@ -134,15 +140,54 @@ def main() -> None:
         t += args.step
 
     print("\n* = inside the labelled event window.")
-    crossings = [(t1, s0, s1) for (t0, s0), (t1, s1) in zip(series, series[1:])
-                 if s0 <= 0 < s1 or s0 >= 0 > s1]
-    if crossings:
-        for t1, s0, s1 in crossings:
-            print(f"crossing at t={t1:.1f}s  ({s0:+.2f} -> {s1:+.2f})")
-    else:
-        rng = max(s for _, s in series) - min(s for _, s in series) if series else 0
-        print(f"no zero crossing. score range {rng:.2f} — if that is small the "
-              f"model is not distinguishing these states at all.")
+    if not series:
+        return
+
+    # Zero is the wrong line. Debiasing removes the OPTION-ORDER bias, but a
+    # residual preference for one state remains -- on the first clip the resting
+    # level was -0.21, not 0, so a real excursion never crossed zero. What marks
+    # the event is departure from the clip's own baseline.
+    vals = sorted(s for _, s in series)
+    baseline = vals[len(vals) // 2]          # median: the scene's usual state
+    line = baseline + args.margin
+    print(f"baseline {baseline:+.2f} (median)   threshold {line:+.2f} "
+          f"(+{args.margin:.2f})   dwell {args.dwell:.0f}s")
+
+    # Intervals above the line, kept only if they last long enough. A single poll
+    # above threshold is noise; a state that persists is a state.
+    runs, cur = [], None
+    for t, sc in series:
+        if sc >= line and cur is None:
+            cur = t
+        elif sc < line and cur is not None:
+            runs.append((cur, t))
+            cur = None
+    if cur is not None:
+        runs.append((cur, series[-1][0] + args.step))
+    runs = [(a, b) for a, b in runs if b - a >= args.dwell]
+
+    print()
+    if not runs:
+        rng = vals[-1] - vals[0]
+        print(f"no interval above baseline for {args.dwell:.0f}s. score range "
+              f"{rng:.2f} — if that is small the model is not distinguishing "
+              f"these states at all.")
+        return
+
+    for a, b in runs:
+        line_out = f"detected  {a:.1f}-{b:.1f}s  ({args.states[-1]})"
+        if args.truth:
+            ts, te = args.truth
+            inter = max(0.0, min(b, te) - max(a, ts))
+            union = max(b, te) - min(a, ts)
+            line_out += f"   tIoU {inter / union:.2f} vs label {ts:.1f}-{te:.1f}s"
+        print(line_out)
+
+    if args.truth:
+        print()
+        print("A state interval answers 'when was it open', while the hand label "
+              "answers 'when did the opening happen'. A late end is expected and "
+              "is a difference in question, not an error.")
 
 
 if __name__ == "__main__":
