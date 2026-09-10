@@ -1107,3 +1107,34 @@ aws service-quotas list-requested-service-quota-change-history \
 
   **Not done:** one clip, one question. Running across all 15 labelled events with
   transition scoring is the number that belongs in the README and does not exist.
+
+- **2026-09-11 (Approach 3 scored)** — `run_transitions.py` runs the
+  caption-parse-derive timeline around every labelled event and scores the
+  transition instant against the label's span. 1s steps, 2s spans, 6s padding.
+
+  **6 of 10 scoreable events hit.** Two of those — `G329` and `G340` — are clips no
+  state-polling framing could touch, so this is a different method rather than the
+  same one with a better score.
+
+  Misses, each with a different cause: `G300` "gets out of a vehicle" landed 0.3s
+  outside the label, which is below the 1s step resolution and is a scoring
+  convention rather than a failure; `G423` sit and stand failed on an **ambiguous
+  subject** -- the caption reads "a person standing near a table in the hallway" in
+  a scene with several people; `G300` "vehicle stops moving" produced no transition
+  at all, consistent with every framing tried today failing on motion.
+
+  **Five of fifteen labelled events are not scoreable**, because no binary state
+  pair expresses them -- including "a vehicle reverses", the brief's own forklift
+  analogue. The denominator of 10 already encodes that.
+
+  **There is no held-out set, and the write-up now says so.** `G326`, `G329`,
+  `G423`, `G300` and `G340` were each used to develop a prompt, a threshold or a
+  state pair before being scored. `G421` is the only clip that never influenced a
+  decision and it has no state pair. The states.json mappings are hand-written by
+  someone who had seen which framings worked; the 1s step, 2s span and the earlier
+  0.10 margin were all chosen by looking at `G326`. A post-hoc split does not fix
+  that -- the knowledge is already in the design. More labelled clips, held back
+  and scored once, is the only fix.
+
+  Also: the system still needs a human to turn a client's sentence into a state
+  pair. That is one cheap text call and is not built.

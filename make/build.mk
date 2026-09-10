@@ -3,7 +3,7 @@
 #   finder  — CPU only, built here: decode, window, merge, schema, CLI, eval
 #   vllm    — pinned upstream image, holds the weights and nothing else
 
-.PHONY: offset-test build pull shell clean down
+.PHONY: transitions offset-test build pull shell clean down
 
 build: preflight  ## [any] build the finder image
 	$(COMPOSE) build finder
@@ -123,6 +123,9 @@ EVAL_DATA ?= /data/eval
 # descriptions to the questions asked of real clips, shifting the FP denominator.
 # Containment of the leaked answers works either way; separation keeps the query
 # set stable and comparable between runs.
+TRANS_STEP ?= 1.0
+TRANS_SPAN ?= 2.0
+
 OFFSET_VIDEO ?= /data/eval/2018-03-07.16-50-01.16-55-01.admin.G326.r13.mp4
 OFFSET_QUERY ?= a person opens a building door
 OFFSET_TRUTH ?= 3.0 5.733
@@ -154,6 +157,13 @@ eval:  ## [gpu] run the labelled set, print the metric table
 	  $(if $(GPU_HOURLY),--gpu-hourly $(GPU_HOURLY),) \
 	  $(if $(REPLAY),--replay /out/$(REPLAY),)
 	@echo; echo "-> $(OUT_DIR)/eval.json"
+
+transitions:  ## [gpu] score caption-parse-derive across every labelled event
+	$(COMPOSE) run --rm finder python scripts/run_transitions.py \
+	  --labels $(LABELS) --data-dir $(EVAL_DATA) \
+	  --step $(TRANS_STEP) --span $(TRANS_SPAN) \
+	  $(if $(EVAL_LIMIT),--limit $(EVAL_LIMIT),) \
+	  --out /out/transitions.json
 
 offset-test:  ## [gpu] does the reported time follow the EVENT or the WINDOW?
 	$(COMPOSE) run --rm finder python scripts/window_offset_test.py \

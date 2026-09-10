@@ -1211,6 +1211,66 @@ Approach 1 requires.
 all 15 labelled events and scoring transitions properly is the number that belongs
 in the README, and it does not exist yet.
 
+### Approach 3 — scored across the labelled set
+
+`scripts/run_transitions.py` runs the caption-parse-derive timeline around every
+labelled event and scores the **transition instant against the label's span**.
+1 s steps, 2 s spans, 6 s of padding either side.
+
+| | event | label | transition |
+|---|---|---|---|
+| HIT | `G329` enters through door | 3.0–4.8 | 3.5 s |
+| HIT | `G326` opens building door | 3.0–5.7 | 5.5 s |
+| HIT | `G326` enters through door | 5.2–7.5 | 5.5 s |
+| HIT | `G340` gets into a vehicle | 3.0–6.8 | 5.5 s |
+| HIT | `G300` vehicle door opens | 9.0–12.7 | 10.5 s |
+| HIT | `G326` comes out through door | 3.0–5.3 | 3.5 s |
+| miss | `G300` vehicle stops moving | 9.1–10.7 | no transition |
+| miss | `G300` gets out of a vehicle | 11.5–13.7 | 0.3 s outside |
+| miss | `G423` sits down | 3.0–5.0 | 2.0 s away |
+| miss | `G423` stands up | 37.6–39.0 | no transition |
+
+**6 of 10.** Two of those hits — `G329` and `G340` — are clips no state-polling
+framing could touch, so this is not the same method with a different score.
+
+**Five of the fifteen labelled events are not scoreable at all**, because no binary
+state pair expresses them: *"a vehicle reverses"*, *"a person buys something"* (×2),
+*"someone hands an object to another person"*, *"a vehicle drops someone off"*.
+That includes the brief's own forklift analogue. The denominator of 10 already
+encodes a limitation and should not be read as full coverage.
+
+### There is no held-out set, and that matters
+
+Every reported number in Approach 2 and 3 is measured on clips that shaped the
+method. `G326`, `G329`, `G423`, `G300` and `G340` were each used to develop a
+prompt, a threshold or a state pair before being scored. `G421` is the only clip
+that never influenced a decision, and it has no state pair, so it contributes
+nothing.
+
+The `states.json` mappings are hand-written, by someone who had seen which
+framings worked. The 1 s step, the 2 s span and the earlier 0.10 margin were all
+chosen by looking at `G326`'s output.
+
+A post-hoc split would not fix this — the knowledge is already in the design. The
+fix is more labelled clips, held back and scored once. That is stated here rather
+than presented as a limitation of scope, because it is the difference between "6
+of 10" and "6 of 10, measured on the data it was tuned against".
+
+### What the misses would take
+
+Each miss has a different cause and a different remedy, and they are not equally
+tractable:
+
+| miss | cause | remedy |
+|---|---|---|
+| `G300` gets out of a vehicle, 0.3 s outside | below the 1 s step resolution | smaller step, or scoring with a tolerance equal to the step |
+| `G423` sits down / stands up | **ambiguous subject** — the caption reads "a person standing near a table in the hallway" in a scene with several people | name the subject spatially, or run per detected person |
+| `G300` vehicle stops moving | **motion is not a state readable from one window** — every framing has failed on it | compare consecutive captions for movement language rather than classifying a state |
+| the five with no state pair | the description does not decompose into a binary state | a richer state space than binary, or a different primitive entirely |
+
+The first is a scoring convention. The second is a prompt problem with a clear
+fix. The third and fourth are the real boundary of the approach.
+
 ### Status and honest limits
 
 Approach 2 is a **probe script** (`scripts/state_timeline.py`), not pipeline code.

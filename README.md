@@ -287,8 +287,45 @@ a state timeline answers *"when was it open"* (6–9 s) while the labels answer 
 did it open"* (3.0–5.7 s). The right measure is the **transition instant against the
 label's span**.
 
-**Status: one clip, one question.** Running it across all 15 labelled events with
-transition scoring is the number that belongs here, and it does not exist yet.
+### Scored across the labelled set
+
+`make transitions` runs this over every labelled event and scores the **transition
+instant against the label's span**:
+
+| | event | label | transition |
+|---|---|---|---|
+| HIT | `G329` enters through door | 3.0–4.8 | 3.5 s |
+| HIT | `G326` opens building door | 3.0–5.7 | 5.5 s |
+| HIT | `G326` enters through door | 5.2–7.5 | 5.5 s |
+| HIT | `G340` gets into a vehicle | 3.0–6.8 | 5.5 s |
+| HIT | `G300` vehicle door opens | 9.0–12.7 | 10.5 s |
+| HIT | `G326` comes out through door | 3.0–5.3 | 3.5 s |
+| miss | `G300` vehicle stops moving | 9.1–10.7 | no transition |
+| miss | `G300` gets out of a vehicle | 11.5–13.7 | 0.3 s outside |
+| miss | `G423` sits down | 3.0–5.0 | 2.0 s away |
+| miss | `G423` stands up | 37.6–39.0 | no transition |
+
+**6 of 10**, and two of those hits — `G329`, `G340` — are clips the previous
+approach could not touch at all.
+
+**Three caveats that belong next to that number, not below it:**
+
+**Five of the fifteen labelled events aren't scoreable.** No binary state pair
+expresses *"a vehicle reverses"*, *"a person buys something"*, *"someone hands an
+object to another person"* or *"a vehicle drops someone off"*. The first is the
+brief's own forklift analogue. A denominator of 10 is not full coverage.
+
+**There is no held-out set.** `G326`, `G329`, `G423`, `G300` and `G340` were each
+used to develop a prompt, a threshold or a state pair before being scored. The
+state mappings in `states.json` are hand-written by someone who had already seen
+which framings worked. 6/10 is measured on the data the method was tuned against,
+and no post-hoc split fixes that — only more labelled clips, held back and scored
+once.
+
+**The system still needs a human in the loop.** A client types a sentence; someone
+has to translate it into a state pair before anything runs. Deriving that
+automatically is one cheap text call and is not built.
+
 → [`DESIGN.md §14a`](DESIGN.md)
 
 ### What we got wrong along the way
