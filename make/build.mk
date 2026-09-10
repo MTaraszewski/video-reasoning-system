@@ -126,6 +126,10 @@ OFFSET_VIDEO ?= /data/eval/2018-03-07.16-50-01.16-55-01.admin.G326.r13.mp4
 OFFSET_QUERY ?= a person opens a building door
 OFFSET_TRUTH ?= 3.0 5.733
 OFFSETS      ?= 0,3,9,15
+# `localize` asserts the event is present. That is the point here: under a prompt
+# that permits refusal the model declines on most windows, including ones that
+# DO contain the event, so there is nothing to measure a slide against.
+OFFSET_PROMPT ?= localize
 
 CONTROL_LABELS ?= /data/meva-examples/labels.json
 CONTROL_DATA   ?= /data/meva-examples
@@ -152,7 +156,8 @@ eval:  ## [gpu] run the labelled set, print the metric table
 offset-test:  ## [gpu] does the reported time follow the EVENT or the WINDOW?
 	$(COMPOSE) run --rm finder python scripts/window_offset_test.py \
 	  --video $(OFFSET_VIDEO) --query "$(OFFSET_QUERY)" \
-	  --truth $(OFFSET_TRUTH) --offsets $(OFFSETS) --backend $(BACKEND)
+	  --truth $(OFFSET_TRUTH) --offsets $(OFFSETS) --backend $(BACKEND) \
+	  --prompt $(OFFSET_PROMPT)
 
 eval-control:  ## [gpu] CEILING TEST: can the model find events labelled on-screen?
 	@mkdir -p $(OUT_DIR)

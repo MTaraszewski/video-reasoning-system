@@ -894,3 +894,63 @@ aws service-quotas list-requested-service-quota-change-history \
   Still outstanding, all on GPU: re-run the probe (current 80 % / 3.5 s figures
   were measured through the broken JSON parser and are not reportable), run the
   eval on these labels, run the hallucination probe, fill the README tables.
+
+- **2026-09-10 (GPU session 2 — the measured run)** — `nvidia/Cosmos3-Edge` on an
+  NVIDIA L4 (23,034 MiB, driver 595.91.07) via vLLM 0.29.0. The architecture
+  resolved as `Cosmos3EdgeForConditionalGeneration` on Ada, retiring the last
+  hardware risk: the version pin was about vLLM, not about Blackwell.
+
+  **Hardware facts, previously `UNVERIFIED`:** encoder cache budget **24,300
+  tokens** — the real ceiling on frames per window, against the 48 we had chosen
+  arbitrarily. GPU KV cache 116,640 tokens, max concurrency 3.56x. Weights and
+  non-torch memory 4.97 GiB of 22.04 GiB, so the 4B model uses under a quarter of
+  the card. Cold start ~3.5 minutes.
+
+  **Capability probe, synthetic:** `overlay` answered 100% of cases at 3.50 s
+  median boundary error; `native` 80% at 3.11 s; `terse` 40% at 51.6 s per call.
+  `overlay` chosen for the eval over the probe's own verdict, which ranked on
+  median error alone and so rewarded `native` for declining the hardest case —
+  a flaw in `verdict()` worth fixing.
+
+  **Eval, 1,352 calls:** R@1 0.000 at every threshold, mean tIoU 0.002,
+  false-positive rate 0.802, mean relative error 3.151 against NVIDIA's <0.30
+  target. 268 s of compute per video-minute at 13 descriptions per clip.
+
+  **The finding.** Across 104 (clip, description) pairs the model reported an
+  event on 47% of the 15 where one existed and 39% of the 89 where none did. It
+  cannot discriminate presence. A second probe — single window, event guaranteed
+  present and centred, real footage — closed the attribution: it answered 13% of
+  the time, against 100% on synthetic. So it localises when told an event is
+  there, and cannot establish the "given".
+
+  **Two of our own defects inflated the picture, both now fixed.** 13 of 81
+  predictions carried confidence 0.485, which is our own 0.5 default through the
+  merge's noisy-OR — an invented number shaped like a measurement. And 57% of
+  predictions were degenerate: 13 zero-length points, 33 spanning essentially the
+  whole window. Two-stage extraction (yes/no first, localise only on yes,
+  confidence from the token logprob) removes both. On a 2-clip subsample it
+  produced 0 degenerate spans and 10 distinct confidence values — and the **same
+  prediction count**, so the presence failure is the model's, not the harness's.
+
+  **A hypothesis raised and withdrawn.** The two-stage subsample showed 11 of 12
+  predictions landing in the last 20% of their window regardless of the question,
+  which would have meant the burned-in timestamp was not grounding the model at
+  all. Checked against all 81 single-stage predictions: mean position 40%, spread
+  across every quartile. The clustering came from a prompt written that afternoon,
+  not from the model. Recorded because it was one message away from being reported
+  as a headline finding.
+
+  **External corroboration.** Roboflow's published Cosmos 3 evaluation finds it
+  strong on slow-changing states in isolated regions and weak on fast motion and
+  small objects, and reports that splitting inference per region of interest beat
+  one combined call. Our configuration — whole frame, motion-event queries, actors
+  at 26-787 px — is their worst case on every axis. The near-zero result is an
+  independent reproduction of the model's own evaluators' caveats.
+
+  **Not measured:** three of the four planned models never ran, so the
+  Qwen-versus-Reason2 comparison isolating NVIDIA's post-training is still open;
+  and `eval-control`, the ceiling test on clips with the activity name burned into
+  the frame, was not run — it is what would separate "cannot recognise events"
+  from "cannot see at this resolution".
+
+  Cost: ~$4 of GPU at a verified $1.22249/hr on `g6.2xlarge`.

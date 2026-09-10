@@ -105,9 +105,24 @@ def main() -> None:
               "throughout, which is the behaviour seen on 13 of 15 real-clip "
               "probe cases.")
         return
-    starts = [r[3][0][0] for r in answered]
+    # A slide needs at least two windows at DIFFERENT offsets. With one answer
+    # the ratio is 0/0, and the 1e-6 guard below turned that into a confident
+    # "0.00 -- tracks the EVENT" on a single data point. Refusing to conclude is
+    # the whole job of this script; a statistic computed from one sample is not
+    # a weaker conclusion, it is no conclusion.
     offsets = [r[0] for r in answered]
-    slide = (max(starts) - min(starts)) / max(1e-6, max(offsets) - min(offsets))
+    if len(answered) < 2 or max(offsets) - min(offsets) < 1e-6:
+        lo, hi, _, evs = answered[0]
+        frac = (evs[0][0] - lo) / max(1e-6, hi - lo)
+        print(f"Only {len(answered)} window answered — no slide can be computed.")
+        print(f"  that one answer sat {frac:.0%} into its window "
+              f"({evs[0][0]:.1f}-{evs[0][1]:.1f}s of {lo:.1f}-{hi:.1f}s)")
+        print("  Suggestive, not conclusive. Gather more answers: more offsets, "
+              "more queries, or a clip the model answers on more often.")
+        return
+
+    starts = [r[3][0][0] for r in answered]
+    slide = (max(starts) - min(starts)) / (max(offsets) - min(offsets))
     print(f"reported start moved {max(starts) - min(starts):.1f}s across "
           f"{max(offsets) - min(offsets):.1f}s of window movement  "
           f"(slide = {slide:.2f})")

@@ -62,11 +62,120 @@ alternatives rejected, and the decisions that reversed under new evidence.
 
 ## Results
 
-> **Status: pipeline implemented, no model measured yet.** Sampling, windowing,
-> merging and partial-event reporting are built, and their behaviour is verified in
-> [`DESIGN.md §6`](DESIGN.md) — but every one of those numbers describes *our code*,
-> not the model. This section stays empty until a real model runs on real clips, and
-> no number appears here that was not measured on the hardware.
+> **Status: measured.** `nvidia/Cosmos3-Edge` was served on an NVIDIA L4 via vLLM
+> 0.29.0 and run against the hand-labelled set — 1,352 model calls, plus a
+> capability probe on synthetic clips and a second probe on the real ones. Every
+> number below was measured on that hardware. Nothing here is projected.
+>
+> **The result is negative, and that is the result.** The brief asks where the
+> limits of these models are. We found a specific, reproducible one.
+
+### Leaderboard — models × temporal grounding
+
+| Model | Size | R@1 @0.3 | R@1 @0.5 | R@1 @0.7 | mean tIoU | mean rel. err | s / video-min |
+|---|---|---|---|---|---|---|---|
+| `nvidia/Cosmos3-Edge` | 4B | **0.000** | **0.000** | **0.000** | **0.002** | **3.151** | **268** |
+| `nvidia/Cosmos-Reason2-8B` | 8B | — | — | — | — | — | — |
+| `nvidia/Cosmos-Reason2-2B` | 2B | — | — | — | — | — | — |
+| `Qwen/Qwen3-VL-8B-Instruct` | 8B | — | — | — | — | — | — |
+
+Only the first row ran. The remaining three are **not measured**, and the
+Qwen-versus-Reason2 comparison — which would isolate what NVIDIA's physical-AI
+post-training buys for temporal localisation — remains an open question, not a
+finding. NVIDIA's own target for mean relative error is <0.30; we measured 3.151.
+
+### The finding: it cannot tell whether an event is present
+
+Every description was asked of every clip — 104 (clip, query) pairs, of which 15
+have a real answer. Asking only each clip's own queries would have measured
+nothing about false positives.
+
+| | pairs | model reported an event |
+|---|---|---|
+| event **is** present | 15 | 7 (**47%**) |
+| event is **absent** | 89 | 35 (**39%**) |
+
+**It reports an event at close to the same rate whether or not one is there.**
+That, not boundary imprecision, is why every tIoU-based number is near zero. With
+n this small the difference is not statistically strong — but the direction is
+clear, and it is corroborated by the probes below.
+
+Concretely: asked for *"a person gets out of a vehicle"* in an indoor stairwell,
+it answered **99–111 s with confidence 0.87**, explaining that the man on the
+stairs *"suggests he is exiting the vehicle."*
+
+### The probes: it localises when told, but cannot detect
+
+A capability probe runs **one window over the whole clip** — no windowing, no
+merging — so whatever error remains belongs to the model.
+
+| | synthetic clips | real footage |
+|---|---|---|
+| answered at all | **100%** | **13%** |
+| median boundary error | **3.50 s** | 9.01 s |
+
+On synthetic clips, where ground truth is exact by construction and the event is
+guaranteed present, the model **does** localise — 3.5 s median error, answering
+every time. On real footage, with the event equally guaranteed and centred in the
+frames shown, it declined on **13 of 15 cases**.
+
+So the capability is real but conditional: *given that an event is there, it can
+say roughly when.* It cannot establish the "given".
+
+**The 3.5 s figure does not generalise, and we withdraw it as a model
+characteristic.** It describes the model's behaviour on synthetic stimuli. The
+distinction only became visible by running the same probe on both.
+
+### Where it breaks, by failure axis
+
+Measured on synthetic clips whose ground truth is exact:
+
+| Axis | Median boundary error |
+|---|---|
+| visually similar distractor | 2.00 s |
+| long event | 3.00 s |
+| baseline | 4.25 s |
+| short event | 5.40 s |
+| **absence of motion** | **7.74 s** |
+
+*"The machine stops moving"* — one of the brief's own three examples — is the
+worst axis by a factor of two. Short events score 5.4 s error on events lasting
+under a second.
+
+### This confirms the vendor's own published evaluation
+
+Roboflow published their [Cosmos 3 evaluation](https://blog.roboflow.com/cosmos-3-vision/):
+strong on **slow-changing states** in fixed-camera footage, weak on **fast motion
+and small objects**, and — the operative finding — *"splitting the region of
+interest per gate and running inference on each gate separately beat one combined
+call"*, with the principle *"isolate each zone and point the model at the state
+that changes slowly, not the motion that changes fast."*
+
+Our configuration was whole-frame, no region of interest, motion-event queries,
+actors 26–787 px in wide surveillance shots. That is their worst-case
+configuration on every axis they name. **Our near-zero result is an independent
+reproduction of the caveats the model's own evaluators published**, on different
+footage, with a different harness.
+
+The honest reading is therefore not "this model does not work". It is: *asked in
+the way a client would naturally ask — open-vocabulary event descriptions over a
+whole frame — it does not work, and the configuration that does work is a
+different question shape than the one the brief poses.*
+
+### What we got wrong along the way
+
+Recorded because the debugging is part of the answer:
+
+- **Our harness invented confidence.** 13 of 81 predictions carried 0.485 — our
+  own 0.5 default laundered through the merge's noisy-OR. An invented number
+  wearing the shape of a measurement. Fixed: confidence now comes from a yes/no
+  logprob, or is absent.
+- **Degenerate spans counted as events.** 13 zero-length points and 33
+  whole-window spans — 57% of all predictions were non-answers in an interval's
+  clothing. Now rejected and counted.
+- **A hypothesis we withdrew.** Twelve samples suggested the model always reports
+  the tail of its window. All 81 refuted it (mean position 40%, spread evenly).
+  The twelve came from a prompt we had written that afternoon.
 
 ### The evaluation set — built, hand-labelled
 

@@ -4,12 +4,37 @@ High-level design: what the system is, how the pieces connect, and which decisio
 are load-bearing. Working notes, verified facts and open risks live in
 [`PLAN.md`](PLAN.md).
 
-Status: **the pipeline is implemented; no model has been run against it yet.**
-The mechanisms in §6 are built and their behaviour is verified — each carries the
-evidence below its rationale. Nothing here reports a *model* result: every claim
-about Cosmos 3 Edge remains a hypothesis until the GPU session. Numbers are either
-cited to a primary source, measured from our own code and labelled as such, or
-marked as still to be measured.
+Status: **measured.** `nvidia/Cosmos3-Edge` was served on an NVIDIA L4 via vLLM
+0.29.0 and run against the hand-labelled set — 1,352 model calls — plus a
+capability probe on synthetic clips and a second on the real ones. The mechanisms
+in §6 are built and their behaviour is verified separately from the model's, each
+carrying the evidence below its rationale.
+
+**The headline result is negative and specific: the model localises an event it is
+told is present, and cannot establish whether one is present.** It reported an
+event on 47% of (clip, description) pairs where the event existed and 39% where it
+did not. Every tIoU-based number follows from that.
+
+Three claims this document previously carried as hypotheses are now settled, and
+one is withdrawn:
+
+- **The timestamp-overlay prompt works better than the alternatives** (§6.1) —
+  `overlay` answered on 100% of probe cases, `native` 80%, `terse` 40% at 15x the
+  latency. `PASS`, measured.
+- **The precision floor exists but does not generalise** (§10) — 3.50 s median
+  boundary error on synthetic clips, where the event is guaranteed present. On
+  real footage the same probe answered 13% of the time. The floor characterises
+  the *stimulus*, not the model, and is withdrawn as a model property.
+- **Absence of motion is the worst failure axis** (§9) — 7.74 s median error
+  against 2.00 s for a visually similar distractor. This is one of the brief's own
+  three worked examples.
+- **Withdrawn:** that the model reports the tail of its window regardless of
+  content. True across 12 samples, refuted across all 81.
+
+Numbers are cited to a primary source, measured from our own code and labelled as
+such, or measured from the model on hardware and labelled with the date.
+Un-run work is marked `not measured` rather than estimated: three of the four
+models in §7 never ran, and the Qwen-versus-Reason2 comparison remains open.
 
 ---
 

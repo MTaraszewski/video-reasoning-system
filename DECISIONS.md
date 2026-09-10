@@ -325,6 +325,62 @@ have surfaced.
 
 ---
 
+### 6.5 GPU: `g7e.2xlarge` chosen -> `g6.2xlarge` measured on
+
+**Was:** `g7e.2xlarge`, RTX PRO 6000 Blackwell, 96 GB, $5.719/hr in eu-central-1.
+Chosen to retire a risk: whether vLLM supported Blackwell at all.
+
+**Now:** `g6.2xlarge`, NVIDIA L4, 24 GB, **$1.22249/hr** (verified against the AWS
+Pricing API, not estimated). Every measured number in this repository came from
+that card.
+
+**What changed it:** `InsufficientInstanceCapacity`, repeatedly, across both
+Blackwell and Ada in every availability zone we could reach. The forced move then
+retired the original question by accident -- the architecture resolved as
+`Cosmos3EdgeForConditionalGeneration` on Ada without incident, so the version pin
+was always about vLLM 0.29.0 and never about the GPU generation.
+
+**What it revealed:** the model uses **4.97 GiB of 22.04 GiB**. The 96 GB card was
+never needed for a 4B model, and the expensive choice bought nothing this project
+used. Recorded because the reasoning that led to it was sound and the conclusion
+was still wrong: we sized the instance against an unmeasured risk instead of
+against the model.
+
+A side effect worth keeping: capacity hunting on AWS cost more wall-clock than the
+measurement did. A quota of 0 in a new region is a support ticket, not a retry.
+
+---
+
+### 6.6 Extraction: one call -> two stages, and confidence from logprobs
+
+**Was:** one call per (window, description), asking the model to find moments
+matching the description and to state a confidence in its JSON.
+
+**Now:** stage A asks a neutral yes/no under a prompt stating that most segments
+do not contain the action; stage B localises only after a yes; confidence is
+P(present) from the yes/no token logprob.
+
+**What changed it:** the measured output. 28 of 81 predictions came back at
+confidence exactly 1.0 -- a stated confidence that ranks nothing -- and 7 carried
+evidence denying the very event they reported ("Empty hallway with a closed door
+and no visible people"). Separately, 13 predictions carried 0.485, which is our
+own 0.5 default passed through the merge's noisy-OR: a number we invented,
+formatted like a measurement.
+
+**What it did not change, which is the point.** On a 2-clip subsample the two-stage
+path produced **the same number of predictions** as the single-stage one. It
+removed every degenerate span and gave ten distinct confidence values instead of
+three clustered defaults -- but the model said "yes" just as often. So the presence
+failure survives the fix, which is what makes it attributable to the model rather
+than to our prompt or our harness.
+
+**Rejected:** dropping events whose evidence asserts absence. Tempting -- it would
+have removed 7 bad predictions -- but it discards a genuine model behaviour to
+make a number look better. The model contradicting itself is a finding; filtering
+it out would hide the finding and leave the score unexplained.
+
+---
+
 ## 7. Open — not yet decided
 
 | Question | Blocked on |
