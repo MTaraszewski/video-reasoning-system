@@ -33,6 +33,18 @@ PREAMBLE = re.compile(
     re.I)
 
 
+def after_think(text: str) -> str:
+    """Keep only what follows the reasoning block.
+
+    The server concatenates the model's thinking and its answer, so the scored
+    text was the model reasoning aloud rather than its conclusion -- visible as
+    a stray "</think>" mid-string in several descriptions.
+    """
+    if "</think>" in text:
+        return text.split("</think>")[-1].strip()
+    return text
+
+
 def strip_preamble(text: str) -> str:
     """Drop the conversational opener.
 
@@ -50,9 +62,17 @@ def strip_preamble(text: str) -> str:
 
 def describe(client, model, frames, subject, max_tokens=400):
     """Free-form: what is the subject doing? No constraint, no forced choice."""
+    # Ask for the STATE, not for a description. "Describe the door" returns
+    # colour, handle and frame -- accurate, and useless for deciding open versus
+    # closed. When the answer happened to mention state the classifier was right
+    # (t=2 closed, t=4 opening, t=6 open); when it described appearance the
+    # classifier had nothing to read and returned noise, scoring +0.91 for "open"
+    # on text saying "closed in most frames".
     content = [{"type": "text", "text":
-                f"Describe {subject} in these frames. Two sentences at most. "
-                f"Say only what is visible."}]
+                f"Look at {subject} in these frames.\n\n"
+                f"What state is it in, and does that state change across the "
+                f"frames? Answer in one or two sentences, saying only what is "
+                f"visible. Begin with the state."}]
     for f in frames:
         content.append({"type": "image_url",
                         "image_url": {"url": frame_to_data_url(f.image)}})
@@ -64,7 +84,7 @@ def describe(client, model, frames, subject, max_tokens=400):
                   {"role": "user", "content": content}],
     )
     msg = r.choices[0].message
-    text = strip_preamble((msg.content or "").strip())
+    text = strip_preamble(after_think((msg.content or "").strip()))
     think = (getattr(msg, "reasoning_content", None) or "").strip()
     # A truncated description is worse than a short one: the conclusion tends to
     # come last, so cutting it off leaves the setup and drops the answer.
