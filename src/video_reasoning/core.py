@@ -155,6 +155,7 @@ def find_events(
                 window=w, query=q,
                 system_prompt=variant.system,
                 user_prompt=variant.user(q, w.start_s, w.end_s),
+                video=path.name, prompt_variant=variant.name,
             )
             res = backend.extract(req)
             calls += 1

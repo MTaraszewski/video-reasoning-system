@@ -30,18 +30,30 @@ class ReplayBackend:
                 f"no recordings at {self.dir}",
                 fix="record a session first: make run RECORD=1, on the GPU box",
             )
-        self._by_key: dict[tuple[int, str], list[dict]] = defaultdict(list)
+        # Keyed on all four identifying fields. Older recordings predate the
+        # video/prompt_variant fields; they still replay, but only when the clip
+        # and prompt are unambiguous, and `ambiguous` reports how many are not.
+        self._by_key: dict[tuple, list[dict]] = defaultdict(list)
         self._n = 0
+        self.ambiguous = 0
         for f in sorted(self.dir.glob("*.json")):
             rec = json.loads(f.read_text())
-            key = (rec["window"]["index"], rec["query"])
+            key = (rec.get("video", ""), rec.get("prompt_variant", ""),
+                   rec["window"]["index"], rec["query"])
+            if not rec.get("video") or not rec.get("prompt_variant"):
+                self.ambiguous += 1
             self._by_key[key].append(rec)
             self._n += 1
         if not self._n:
             raise BackendUnavailable(f"{self.dir} contains no recordings")
 
     def extract(self, req: ExtractRequest) -> ExtractResult:
-        recs = self._by_key.get((req.window.index, req.query))
+        recs = self._by_key.get(
+            (req.video, req.prompt_variant, req.window.index, req.query))
+        if not recs:
+            # Fall back to the pre-video/variant key, so older recordings remain
+            # usable for parser work even though they cannot distinguish a sweep.
+            recs = self._by_key.get(("", "", req.window.index, req.query))
         if not recs:
             return ExtractResult(
                 events=[], model="replay",
@@ -62,4 +74,5 @@ class ReplayBackend:
 
     def describe(self) -> dict:
         return {"backend": self.name, "stub": False,
-                "recordings": self._n, "dir": str(self.dir)}
+                "recordings": self._n, "dir": str(self.dir),
+                "ambiguous_recordings": self.ambiguous}

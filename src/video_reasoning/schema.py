@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class WindowEvent(BaseModel):
@@ -22,8 +22,17 @@ class WindowEvent(BaseModel):
 
     start_s: float = Field(..., description="Event start, absolute seconds.")
     end_s: float = Field(..., description="Event end, absolute seconds.")
-    confidence: float = Field(..., ge=0.0, le=1.0)
+    # Optional, because real output often omits it or echoes the schema's own
+    # range back as a value. An event with times but no confidence is still an
+    # event; discarding it would lose a real detection over a missing field.
+    # The default is deliberately middling — it asserts nothing.
+    confidence: float | None = Field(0.5, ge=0.0, le=1.0)
     evidence: str = Field("", description="One short line of visual justification.")
+
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def _default_confidence(cls, v):
+        return 0.5 if v is None else v
 
     @model_validator(mode="after")
     def _ordered(self) -> "WindowEvent":

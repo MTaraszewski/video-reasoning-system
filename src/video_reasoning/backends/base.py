@@ -23,12 +23,20 @@ from ..windows import Window
 
 @dataclass
 class ExtractRequest:
-    """One (window, query) pair, ready to send."""
+    """One call: which clip, which window, which description, which prompt.
+
+    All four matter for identity. An earlier version carried only window and
+    query, and recordings keyed on those collapsed five clips x three prompt
+    variants into three slots — every variant replaying the same response, which
+    made a replayed prompt sweep produce three identical rows.
+    """
 
     window: Window
     query: str
     system_prompt: str
     user_prompt: str
+    video: str = ""            # which clip
+    prompt_variant: str = ""   # which prompt shape
 
 
 @dataclass
@@ -59,6 +67,93 @@ class Backend(Protocol):
 # --------------------------------------------------------------------------
 
 _THINK = re.compile(r"<think>.*?</think>", re.S | re.I)
+
+# Repairs for malformations observed in REAL Cosmos3-Edge output, not anticipated
+# ones. Across 30 recorded calls, 18 failed to parse — and only 2 of those were the
+# model declining to answer. The other 16 contained perfectly good timestamps
+# wrapped in JSON the model got slightly wrong, and a strict parser threw them all
+# away. Measuring through that parser measured the parser, not the model.
+_REPAIRS = (
+    # 1. Numbers carrying a unit: {"start_s": 4.000s}  (12 of 18 failures)
+    (re.compile(r'(:\s*-?\d+(?:\.\d+)?)s\b'), r"\1"),
+    # 2. The schema's own range echoed as a value: "confidence": 0-1 or "0-1"
+    (re.compile(r'("confidence"\s*:\s*)"?0\s*-\s*1"?'), r"\1null"),
+    # 3. A stray closing bracket mid-object: {"end_s": 13.28], "confidence": ...
+    (re.compile(r'(\d)\s*\](\s*[,}])'), r"\1\2"),
+    # 4. Placeholders left unfilled: "start_s": <number>
+    (re.compile(r':\s*<[^>]*>'), ": null"),
+)
+
+
+def _repair_json(text: str) -> str:
+    """Fix malformations seen in real output, without inventing content.
+
+    Every repair here is syntactic. None supplies a time, a confidence or an
+    event that the model did not itself produce — a parser that guessed values
+    would manufacture evidence, which is worse than dropping the response.
+    """
+    for pattern, replacement in _REPAIRS:
+        text = pattern.sub(replacement, text)
+
+    return _balance(text)
+
+
+def _balance(text: str) -> str:
+    """Close brackets the model left open, in the right place.
+
+    Counting braces and appending the difference is not enough: the common real
+    failure is
+
+        [ {"start_s": 7.0, "end_s": 7.0, "evidence": "x"
+        ]
+
+    where the object is unclosed but the array IS closed. Appending `}` at the
+    end yields `[...]}` — still invalid. The `}` belongs *before* the `]`.
+
+    So walk the text with a stack, skipping string literals, and insert the
+    closers a mismatched bracket implies. Only ever ADDS characters: truncation
+    is the common case, and deleting content could discard a real event.
+    """
+    out: list[str] = []
+    stack: list[str] = []
+    in_str = False
+    escape = False
+
+    for ch in text:
+        if in_str:
+            out.append(ch)
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_str = False
+            continue
+
+        if ch == '"':
+            in_str = True
+            out.append(ch)
+        elif ch in "{[":
+            stack.append(ch)
+            out.append(ch)
+        elif ch in "}]":
+            want = "{" if ch == "}" else "["
+            # Close anything opened more recently than the bracket being closed,
+            # which is exactly the unclosed-object-inside-a-closed-array case.
+            while stack and stack[-1] != want:
+                out.append("}" if stack.pop() == "{" else "]")
+            if stack:
+                stack.pop()
+                out.append(ch)
+            # A closer with nothing open is stray punctuation; drop it.
+        else:
+            out.append(ch)
+
+    if in_str:
+        out.append('"')
+    while stack:
+        out.append("}" if stack.pop() == "{" else "]")
+    return "".join(out)
 _FENCE = re.compile(r"```(?:json)?\s*(.*?)```", re.S)
 _OBJECT = re.compile(r"\{.*\}", re.S)
 
@@ -114,7 +209,11 @@ def parse_events(text: str) -> tuple[list[WindowEvent], str | None]:
         try:
             data = json.loads(raw)
         except json.JSONDecodeError:
-            continue
+            # Try again after repairing the malformations real output exhibits.
+            try:
+                data = json.loads(_repair_json(raw))
+            except json.JSONDecodeError:
+                continue
         if isinstance(data, list):
             data = {"events": data}
         if not isinstance(data, dict):

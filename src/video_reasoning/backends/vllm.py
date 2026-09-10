@@ -134,6 +134,8 @@ class VLLMBackend:
             return
         rec = {
             "model": self.model,
+            "video": req.video,
+            "prompt_variant": req.prompt_variant,
             "query": req.query,
             "window": {"index": req.window.index,
                        "start_s": req.window.start_s, "end_s": req.window.end_s,

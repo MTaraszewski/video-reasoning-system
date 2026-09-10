@@ -117,6 +117,7 @@ def observe(
         window=window, query=case.description,
         system_prompt=variant.system,
         user_prompt=variant.user(case.description, 0.0, duration),
+        video=Path(case.video).name, prompt_variant=variant.name,
     )
     t0 = time.time()
     res = backend.extract(req)

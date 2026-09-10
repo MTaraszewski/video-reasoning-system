@@ -133,9 +133,39 @@ Also noted, not yet acted on: vLLM warns that `--model` as an option is deprecat
 in favour of a positional argument. Harmless while the version is pinned; it will
 break on an upgrade.
 
-**Measured on `g7e.2xlarge`:** NVIDIA RTX PRO 6000 Blackwell Server Edition,
-**97,887 MiB** VRAM, driver 595.91.07, CUDA 13.2 — three times Cosmos-Reason2-8B's
-documented 32 GB minimum, so every model in the comparison fits.
+### The vLLM version, and why the documented one fails
+
+**`v0.29.0`, not the `v0.21.0`** that NVIDIA's Cosmos3-Nano recipe implies for
+CUDA 13 drivers. 0.21.0 fails before reaching the GPU:
+
+    The checkpoint you are trying to load has model type `cosmos3_edge`
+    but Transformers does not recognize this architecture.
+
+Its bundled Transformers predates the model. 0.29.0 resolves the architecture as
+`Cosmos3EdgeForConditionalGeneration` and loads. **Eight minor versions between the
+documented recipe and one that works** — and nothing in either the model card or
+the recipe says so.
+
+### Measured on hardware
+
+`g7e.2xlarge`, NVIDIA RTX PRO 6000 Blackwell Server Edition, driver 595.91.07,
+CUDA 13.2. Figures that were previously estimates or entirely unpublished:
+
+| | Measured | Previously |
+|---|---|---|
+| Total VRAM | **97,887 MiB** | 96 GB (spec) |
+| Cosmos3-Edge checkpoint on disk | **7.19 GiB** | ~9 GB estimated |
+| **Model weights in VRAM** | **4.67 GiB** | unpublished |
+| Weight download | 70 s | unknown |
+| Weight load | 8.55 s | unknown |
+| Encoder cache budget | **24,300 tokens** | unknown |
+
+The weights figure matters most: **4.67 GiB**, against Cosmos-Reason2-8B's
+documented 32 GB minimum. A far smaller card would serve Edge alone — the 96 GB
+instance was sized for the comparison models, not the primary.
+
+The encoder cache budget is the first hard number bearing on **frames per call**,
+which is what sets window length.
 
 ### Caveats
 
