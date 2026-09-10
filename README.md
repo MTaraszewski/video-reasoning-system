@@ -308,6 +308,115 @@ label's span**.
 ### Scored across the labelled set
 
 `make transitions` runs this over every labelled event and scores the **transition
+instant against the label's span**, with a tolerance of one polling step:
+
+| | event | label | transition |
+|---|---|---|---|
+| HIT | `G329` enters through door | 3.0–4.8 | 3.5 s `[partial-after]` |
+| HIT | `G326` opens building door | 3.0–5.7 | 5.5 s |
+| hit~ | `G326` enters through door | 5.2–7.5 | 8.5 s |
+| HIT | `G340` gets into a vehicle | 3.0–6.8 | 5.5 s |
+| HIT | `G300` vehicle door opens | 9.0–12.7 | 10.5 s |
+| miss | `G300` vehicle stops moving | 9.1–10.7 | none `[both flags]` |
+| hit~ | `G300` gets out of a vehicle | 11.5–13.7 | 11.0 s |
+| miss | `G423` sits down | 3.0–5.0 | 2.0 s away |
+| miss | `G423` stands up | 37.6–39.0 | none `[both flags]` |
+| HIT | `G326` comes out through door | 3.0–5.3 | 2.5 s |
+
+**7 of 10 within the polling resolution, 5 of 10 strictly inside.** Two of the hits
+are clips the previous approach could not touch. Three runs of the same command
+gave identical output; a poll-by-poll diff was 133/133 identical.
+
+**Partial events come free.** The brief asks how an event seen only partially is
+reported. A state timeline reads it off the boundary: if the first poll already
+says "open", the opening predates the observed span. Two events began already in
+the target state, three ended still in it.
+
+That also produced a diagnostic we didn't design for. **Both boundary flags plus no
+transition** means the model reported one state for the entire span — it saw
+something consistently, and the question is whether it was the right subject. All
+three motion and posture misses show it, and **all three are multi-actor scenes**:
+*"vehicle stops moving"* reported "stationary" throughout a car park full of parked
+cars; *"stands up"* reported "standing" while describing *"a person near a table"*
+in a room with several people.
+
+**Three caveats that belong next to that number, not below it:**
+
+**Five of the fifteen labelled events aren't scoreable.** No binary state pair
+expresses *"a vehicle reverses"*, *"a person buys something"*, *"someone hands an
+object to another person"* or *"a vehicle drops someone off"*. The first is the
+brief's own forklift analogue.
+
+**There is no held-out set.** `G326`, `G329`, `G423`, `G300` and `G340` were each
+used to develop a prompt, a threshold or a state pair before being scored. The
+state mappings are hand-written by someone who had seen which framings worked. No
+post-hoc split fixes that — only more labelled clips, held back and scored once.
+
+**The system still needs a human in the loop.** A client types a sentence; someone
+has to translate it into a state pair before anything runs.
+
+**What the approach can and cannot express.** Its primitive is a persistent binary
+property of one object, and every limitation follows from that:
+
+| shape of the request | example | works? |
+|---|---|---|
+| configuration of one object | door open / closed | **yes** — 6 of 6 door events hit |
+| posture of one actor | sitting / standing | fails when several people are present |
+| motion | *"a forklift reverses"*, *"the machine stops moving"* | **no** — not readable from one window |
+| relation between actors | *"someone hands an object to another person"* | **no** — not a state of any one object |
+| compound or abstract | *"a person buys something"* | **no** — a sequence, not a state |
+
+Two of the brief's three worked examples are motion, and fall outside. That is the
+honest headline: **the method converts a class of event-detection problems into
+classification the model can actually do, and that class is narrower than what a
+client would naturally ask for.** Being able to say which is which from the
+sentence alone, before spending anything, is the useful part.
+
+→ [`DESIGN.md §14a`](DESIGN.md)
+
+### A third approach: caption, parse, derive
+
+Following that finding to its conclusion gives a design with **no forced choice, no
+logprobs and no threshold** — the three things every failure above traced back to.
+
+Per timestep, ask the model what state the subject is in, free-form. Read the state
+out of its own words deterministically. The event is the transition between
+consecutive states.
+
+On `admin.G326`, label 3.0–5.7 s, 1-second steps:
+
+```
+t=0–4    closed
+t=5      closed   ← sees the change, reverses its direction
+t=6–8    open
+t=9      closed
+t=11–17  closed
+```
+
+Last `closed` at t=5, first `open` at t=6 — the **transition sits at t≈5.5 s,
+inside the label**, and the door returns to closed at t=9, which matches the
+footage independently. Agreement of roughly **0.3 s**, from a model whose best
+synthetic boundary error was 3.5 s and which under the first approach could not
+answer on real footage at all.
+
+The model does the one thing it has done well throughout: describe what it sees.
+Everything after that is code — and the parse is string matching rather than a
+model call, because an order-averaged text classifier scored **exactly 0.00 on
+every description**, the signature of choosing purely by position.
+
+**One failure mode, recorded because it is instructive:** at t=5 it says *"The door
+starts in an open state and closes"* — right moment, wrong direction. Seeing a
+change and getting its sign backwards is a more tractable problem than not seeing
+it.
+
+**How this must be scored.** Interval tIoU is the wrong measure and understates it:
+a state timeline answers *"when was it open"* (6–9 s) while the labels answer *"when
+did it open"* (3.0–5.7 s). The right measure is the **transition instant against the
+label's span**.
+
+### Scored across the labelled set
+
+`make transitions` runs this over every labelled event and scores the **transition
 instant against the label's span**:
 
 | | event | label | transition |

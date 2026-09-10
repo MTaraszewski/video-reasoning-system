@@ -1215,29 +1215,69 @@ in the README, and it does not exist yet.
 
 `scripts/run_transitions.py` runs the caption-parse-derive timeline around every
 labelled event and scores the **transition instant against the label's span**.
-1 s steps, 2 s spans, 6 s of padding either side.
+1 s steps, 2 s spans, 6 s padding either side. The tolerance is one step, fixed at
+the polling resolution and chosen before the run: polling every N seconds cannot
+locate a transition more precisely than N, and both counts are reported so the
+convention cannot inflate the headline.
 
 | | event | label | transition |
 |---|---|---|---|
-| HIT | `G329` enters through door | 3.0–4.8 | 3.5 s |
+| HIT | `G329` enters through door | 3.0–4.8 | 3.5 s `[partial-after]` |
 | HIT | `G326` opens building door | 3.0–5.7 | 5.5 s |
-| HIT | `G326` enters through door | 5.2–7.5 | 5.5 s |
+| hit~ | `G326` enters through door | 5.2–7.5 | 8.5 s |
 | HIT | `G340` gets into a vehicle | 3.0–6.8 | 5.5 s |
 | HIT | `G300` vehicle door opens | 9.0–12.7 | 10.5 s |
-| HIT | `G326` comes out through door | 3.0–5.3 | 3.5 s |
-| miss | `G300` vehicle stops moving | 9.1–10.7 | no transition |
-| miss | `G300` gets out of a vehicle | 11.5–13.7 | 0.3 s outside |
+| miss | `G300` vehicle stops moving | 9.1–10.7 | none `[partial-before] [partial-after]` |
+| hit~ | `G300` gets out of a vehicle | 11.5–13.7 | 11.0 s |
 | miss | `G423` sits down | 3.0–5.0 | 2.0 s away |
-| miss | `G423` stands up | 37.6–39.0 | no transition |
+| miss | `G423` stands up | 37.6–39.0 | none `[partial-before] [partial-after]` |
+| HIT | `G326` comes out through door | 3.0–5.3 | 2.5 s |
 
-**6 of 10.** Two of those hits — `G329` and `G340` — are clips no state-polling
-framing could touch, so this is not the same method with a different score.
+**7 of 10 within the polling resolution, 5 of 10 strictly inside the label.** Two
+of the hits — `G329` and `G340` — are clips no state-polling framing could touch.
 
-**Five of the fifteen labelled events are not scoreable at all**, because no binary
-state pair expresses them: *"a vehicle reverses"*, *"a person buys something"* (×2),
+Reproducible: three runs of the same command produced identical output, and a
+poll-by-poll diff of two of them was 133/133 identical in both caption and parsed
+state.
+
+**Five of the fifteen labelled events are not scoreable**, because no binary state
+pair expresses them: *"a vehicle reverses"*, *"a person buys something"* (×2),
 *"someone hands an object to another person"*, *"a vehicle drops someone off"*.
-That includes the brief's own forklift analogue. The denominator of 10 already
-encodes a limitation and should not be read as full coverage.
+That includes the brief's own forklift analogue, so a denominator of 10 is not full
+coverage.
+
+### Partial events, and a diagnostic that came free
+
+The brief asks how an event seen only partially is reported. Approach 1 inferred it
+from a merged span touching a window edge; Approach 3 reads it off the boundary
+state, with no extra model call. On this run: **2 events were already in the target
+state when polling began, and 3 were still in it when it ended** — the transition
+lies outside the observed span and is reported as partial rather than missed.
+
+The flags also produced a diagnostic we did not design for. Two failures that both
+printed "no transition" are now distinguishable:
+
+- **both flags and no transition** → the model reported *one state for the whole
+  span*. It saw something consistently; the question is whether it was the right
+  subject.
+- **no transition and no flags** → the target state never occurred at all.
+
+All three motion and posture misses fall in the first bucket, and **all three are
+multi-actor scenes**. `vehicle stops moving` reported "stationary" throughout — in a
+car park full of parked cars, which is defensible. `stands up` reported "standing"
+throughout, and the captions name *"a person standing near a table in the hallway"*
+in a room with several people.
+
+**That softens the claim that motion is unreadable.** These are consistent with
+subject ambiguity rather than with an inability to perceive movement. Separating
+the two needs a motion event with an unambiguous subject, which the labelled set
+does not contain — `G300 03-13`'s reversing vehicle is the closest and has no state
+pair.
+
+**A known display bug:** `comes out through the door` prints `HIT … 2.5 s` against a
+3.0–5.3 label. The count is right — some transition was strictly inside — but the
+instant shown is the earliest within tolerance, so the mark and the number can
+disagree.
 
 ### There is no held-out set, and that matters
 

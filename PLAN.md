@@ -1165,3 +1165,38 @@ aws service-quotas list-requested-service-quota-change-history \
   classification the model can do, and that class is narrower than what a client
   would naturally ask. Being able to say which is which from the sentence alone,
   before spending anything, is the part worth having.
+
+- **2026-09-11 (final transition run, and partial events)** — 7 of 10 events show a
+  transition within the polling resolution, 5 of 10 strictly inside the label.
+  Three runs of the same command gave identical output and a poll-by-poll diff of
+  two was 133/133 identical in both caption and parsed state, so the pipeline is
+  reproducible given the same call sequence.
+
+  **Partial-event reporting works and is read off the boundary state**, which is
+  the one place Approach 3 is architecturally stronger than Approach 1: the latter
+  could only infer partiality from a merged span touching a window edge. Two events
+  began already in the target state, three ended still in it.
+
+  **A diagnostic arrived that we did not design for.** Two failures that both
+  printed "no transition" are now distinguishable: both boundary flags plus no
+  transition means the model reported ONE state across the whole span, whereas no
+  flags means the target state never occurred. All three motion and posture misses
+  are in the first bucket and all three are multi-actor scenes -- "vehicle stops
+  moving" reported stationary throughout a car park of parked cars, "stands up"
+  reported standing while describing "a person near a table" in a room with several
+  people.
+
+  **That softens the earlier claim that motion is unreadable.** Those results are
+  equally consistent with subject ambiguity. Separating the two needs a motion event
+  with an unambiguous subject, which the labelled set does not contain. The docs
+  previously stated the motion conclusion more strongly than the evidence supports
+  and have been corrected.
+
+  Known display bug: an event can print HIT with an instant outside the label,
+  because the mark is computed over all transitions while the printed instant is
+  the earliest within tolerance. The count is right, the number beside it can
+  mislead.
+
+  Instance stopped. All results copied off, including 133 captions per run -- any
+  future question about why an event missed can be answered by reading rather than
+  by renting a GPU.
