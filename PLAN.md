@@ -1138,3 +1138,30 @@ aws service-quotas list-requested-service-quota-change-history \
 
   Also: the system still needs a human to turn a client's sentence into a state
   pair. That is one cheap text call and is not built.
+
+- **2026-09-11 (the boundary, stated)** — Consolidated Approach 3's limitations
+  into one statement rather than leaving them scattered, because they all follow
+  from a single fact: the primitive is a persistent binary property of one object.
+
+  Sorting the labelled events by the SHAPE of the request rather than by outcome:
+  object configuration works (6 of 6 door events); actor posture is expressible but
+  fails when several people are present; motion, relations between actors and
+  compound events do not fit the primitive at all.
+
+  Motion has failed under every framing tried -- event queries, state polling,
+  pairwise comparison, captions. A 2-second window shows position, not velocity.
+  Relations are worse: "someone hands an object to another person" has no object
+  whose binary property changes, so no prompt work rescues it.
+
+  Two of the brief's three worked examples -- "a forklift reverses" and "the machine
+  stops moving" -- are motion, and fall outside.
+
+  Also recorded as boundaries rather than bugs: multi-actor scenes need spatial
+  disambiguation the client's sentence does not contain; the state pairs are
+  hand-written and auto-derivation would hit the same wall; resolution equals the
+  step size; there is no held-out set.
+
+  The honest headline: the method converts a class of event-detection problems into
+  classification the model can do, and that class is narrower than what a client
+  would naturally ask. Being able to say which is which from the sentence alone,
+  before spending anything, is the part worth having.

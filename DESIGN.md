@@ -1256,20 +1256,56 @@ fix is more labelled clips, held back and scored once. That is stated here rathe
 than presented as a limitation of scope, because it is the difference between "6
 of 10" and "6 of 10, measured on the data it was tuned against".
 
-### What the misses would take
+### The boundary of the approach
 
-Each miss has a different cause and a different remedy, and they are not equally
-tractable:
+The method's primitive is **a persistent binary property of one object**. Every
+limitation below follows from that, and they are properties of the design rather
+than defects in it.
 
-| miss | cause | remedy |
+Sorting the fifteen labelled events by the *shape* of what is being asked:
+
+| shape | example | works? |
 |---|---|---|
-| `G300` gets out of a vehicle, 0.3 s outside | below the 1 s step resolution | smaller step, or scoring with a tolerance equal to the step |
-| `G423` sits down / stands up | **ambiguous subject** — the caption reads "a person standing near a table in the hallway" in a scene with several people | name the subject spatially, or run per detected person |
-| `G300` vehicle stops moving | **motion is not a state readable from one window** — every framing has failed on it | compare consecutive captions for movement language rather than classifying a state |
-| the five with no state pair | the description does not decompose into a binary state | a richer state space than binary, or a different primitive entirely |
+| configuration of one object | door open / closed | **yes** — 6 of 6 door events hit |
+| posture of one actor | sitting / standing | expressible, but fails when several people are present |
+| **motion** | *"a vehicle reverses"*, *"the machine stops moving"* | **no** — not readable from a single window |
+| **relation between actors** | *"someone hands an object to another person"* | **no** — not a state of any one object |
+| **compound or abstract** | *"a person buys something"*, *"a vehicle drops someone off"* | **no** — a sequence, not a state |
 
-The first is a scoring convention. The second is a prompt problem with a clear
-fix. The third and fourth are the real boundary of the approach.
+Two of the brief's three worked examples — *"a forklift reverses"* and *"the
+machine stops moving"* — are motion, and fall outside.
+
+**Motion is not a state.** It has failed under every framing tried: event queries,
+state polling, pairwise comparison, and captions. A single 2-second window shows
+position, not velocity. Expressing it needs a different primitive — comparing
+consecutive captions for movement language rather than classifying one.
+
+**Relations are not states.** *"Someone hands an object to another person"* is a
+relation between two actors evolving over time. There is no object whose binary
+property changes. No amount of prompt work makes it fit; the primitive is wrong.
+
+**Multi-actor scenes need disambiguation the client's sentence does not contain.**
+*"A person sits down"* is ambiguous when several people are present, and the
+caption picks whichever it finds salient — on `G423` it described "a person
+standing near a table in the hallway" throughout, likely not the person who sat.
+Fixing it needs a spatial reference or a crop, supplied per scene and per query by
+a human.
+
+**The state pairs are hand-written.** Someone must turn *"a person opens a building
+door"* into `closed / open` before anything runs. That is one cheap text call and
+is not built — though it would hit the same wall, since no phrasing turns a
+relation into a binary state.
+
+**Resolution is the step size.** A transition can be located no more precisely than
+the polling interval, which is why scoring uses a tolerance of one step.
+
+**No held-out set.** Every clip that produced a number also shaped a prompt, a
+threshold or a state pair. The fix is more labelled clips, not a post-hoc split.
+
+Taken together: the approach converts a class of event-detection problems into
+classification problems the model can actually do, and **that class is narrower
+than the brief's own examples**. Saying which is which in advance, from the
+client's sentence alone, is the useful part.
 
 ### Status and honest limits
 

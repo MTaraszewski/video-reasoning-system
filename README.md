@@ -245,7 +245,25 @@ subject was ambiguous, so the question was never well posed.
 
 **Status:** these are probe scripts, not pipeline code. `find_events` still runs
 the first approach. Nine questions across five clips is a characterisation, not an
-evaluation. → [`DESIGN.md §14a`](DESIGN.md)
+evaluation. 
+**What the approach can and cannot express.** Its primitive is a persistent binary
+property of one object, and every limitation follows from that:
+
+| shape of the request | example | works? |
+|---|---|---|
+| configuration of one object | door open / closed | **yes** — 6 of 6 door events hit |
+| posture of one actor | sitting / standing | fails when several people are present |
+| motion | *"a forklift reverses"*, *"the machine stops moving"* | **no** — not readable from one window |
+| relation between actors | *"someone hands an object to another person"* | **no** — not a state of any one object |
+| compound or abstract | *"a person buys something"* | **no** — a sequence, not a state |
+
+Two of the brief's three worked examples are motion, and fall outside. That is the
+honest headline: **the method converts a class of event-detection problems into
+classification the model can actually do, and that class is narrower than what a
+client would naturally ask for.** Being able to say which is which from the
+sentence alone, before spending anything, is the useful part.
+
+→ [`DESIGN.md §14a`](DESIGN.md)
 
 ### A third approach: caption, parse, derive
 
