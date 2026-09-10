@@ -36,7 +36,7 @@ class Scene:
     description: str          # how a client would say it
     events: list[tuple[float, float]]
     axis: str                 # which failure axis this probes
-    distractor: bool = False
+    distractor: str | None = None   # "colour" | "direction" | None
     extra: dict = field(default_factory=dict)
 
 
@@ -48,38 +48,57 @@ def _box(draw: ImageDraw.ImageDraw, x: float, w: int, h: int, colour) -> None:
     draw.rectangle([x, H - 40 - h, x + w, H - 40], fill=colour)
 
 
+# The axis name is used by BOTH the scene definitions and the renderer, so it is
+# named once here. An earlier version had render() branch on "machine_stop" while
+# the scene declared "absence_of_motion": the branch never fired, the machine was
+# never drawn, and the clip silently became another moving-box clip. The axis the
+# brief explicitly names — "the machine stops moving" — was never being tested.
+ABSENCE_OF_MOTION = "absence_of_motion"
+
+
 def render(scene: Scene, t: float) -> Image.Image:
     img = Image.new("RGB", (W, H), BG)
     d = ImageDraw.Draw(img)
     _base(d)
 
+    if scene.axis == ABSENCE_OF_MOTION:
+        # A machine that runs, then STOPS. The event is the stillness, so the
+        # element must be plainly moving outside the window and plainly frozen
+        # inside it — the opposite polarity to every other scene here.
+        stopped = any(s <= t <= e for s, e in scene.events)
+        angle = 0.0 if stopped else (t * 2.2)
+        cx, cy, r = W // 2, H // 2 - 10, 70
+        d.ellipse([cx - r, cy - r, cx + r, cy + r], outline=(60, 60, 60), width=5)
+        # Three spokes, so rotation is unambiguous rather than a symmetric blur.
+        for k in range(3):
+            a = angle + k * (2 * math.pi / 3)
+            d.line([cx, cy, cx + r * math.cos(a), cy + r * math.sin(a)],
+                   fill=(200, 40, 40) if k == 0 else (40, 40, 40), width=9)
+        d.ellipse([cx - 9, cy - 9, cx + 9, cy + 9], fill=(30, 30, 30))
+        return img
+
     for (start, end) in scene.events:
         if not (start <= t <= end):
             continue
         frac = (t - start) / max(1e-6, end - start)
-
-        if scene.axis == "machine_stop":
-            # A wheel spins, then stops. The EVENT is the stillness.
-            continue
         size = scene.extra.get("size", 60)
         x = -size + frac * (W + size)
         _box(d, x, size, size + 20, (215, 35, 35))
 
-    if scene.axis == "machine_stop":
-        # Spinning marker outside the event window; frozen inside it.
-        stopped = any(s <= t <= e for s, e in scene.events)
-        angle = 0.0 if stopped else (t * 4.0)
-        cx, cy, r = W // 2, H // 2 - 20, 46
-        d.ellipse([cx - r, cy - r, cx + r, cy + r], outline=(70, 70, 70), width=4)
-        d.line(
-            [cx, cy, cx + r * math.cos(angle), cy + r * math.sin(angle)],
-            fill=(30, 30, 30), width=6,
-        )
-
-    if scene.distractor:
-        # A similar object that never performs the event. Measures false positives.
+    if scene.distractor == "colour":
+        # Differs from the query only in COLOUR: does the model check what the
+        # object IS, or only that something moved?
         dx = (t * 40) % (W + 50) - 50
         _box(d, dx, 40, 40, (60, 110, 205))
+
+    elif scene.distractor == "direction":
+        # Differs only in DIRECTION. Same colour, same size, entering from the
+        # RIGHT — so the query "a red box enters from the LEFT" is false, and the
+        # only way to know that is to read the directional clause rather than
+        # spotting a red box. A colour-only distractor cannot test this.
+        size = 60
+        x = W - (t * 90) % (W + size)
+        _box(d, x, size, size + 20, (215, 35, 35))
 
     return img
 
@@ -117,14 +136,17 @@ SCENES = [
           [(5.0, 32.0)], axis="long", extra={"size": 60}),
 
     Scene("machine-stop", 24.0, "the machine stops moving",
-          [(9.0, 15.0)], axis="absence_of_motion"),
+          [(9.0, 15.0)], axis=ABSENCE_OF_MOTION),
 
     Scene("with-distractor", 20.0, "a red box enters from the left",
-          [(7.0, 11.0)], axis="distractor", distractor=True,
+          [(7.0, 11.0)], axis="distractor", distractor="colour",
           extra={"size": 60}),
 
+    # A hard negative: the query is false, but a box of the SAME colour and size
+    # is moving. Only the direction differs. A model that answers "yes" here is
+    # matching objects, not descriptions.
     Scene("negative", 15.0, "a red box enters from the left",
-          [], axis="negative", distractor=True),
+          [], axis="negative", distractor="direction"),
 ]
 
 

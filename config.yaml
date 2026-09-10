@@ -41,8 +41,16 @@ overlay:
   enabled: true
   format: "t={:.3f}s"
   position: bottom-left
-  font_scale: 0.045         # fraction of frame height; legibility at 640x360 is
-                            # itself a variable the probe sweeps
+  font_scale: 0.045         # fraction of frame height -> 16px at 640x360.
+                            # Chosen by inspection: legible to a human at the
+                            # resolution the model receives, occluding 1.36% of
+                            # the frame. Doubling it to 0.09 costs 4.38% and
+                            # tripling to 0.135 costs 9.44%, all at IDENTICAL
+                            # token cost (the frame is the same pixel size), so
+                            # the only trade is occlusion vs legibility.
+                            # UNVERIFIED: human legibility is not model
+                            # legibility. If the probe shows the model misreading
+                            # timestamps, raise this before blaming the model.
 
 merge:
   # PROVISIONAL. Both thresholds need validating against constructed ground truth.

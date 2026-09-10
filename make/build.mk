@@ -66,17 +66,59 @@ plan:  ## [any] show what a run would cost, without running it
 # are waiting on. A missing target prints "No rule to make target", which reads
 # as a broken repo rather than an unfinished one.
 
-.PHONY: probe eval sweep viz
+.PHONY: probe eval eval-control sweep viz
 
-probe:  ## [gpu] characterise the model  (planned - increment 3)
-	@echo "not implemented yet: 'probe' lands in increment 3, on the GPU box."
-	@echo "It answers: can the model ground events in time, by which mechanism,"
-	@echo "and to what precision floor."
-	@exit 1
+# The probe deliberately sweeps prompt variants: the brief says Edge localises
+# "when prompted correctly", so which prompt wins is itself a result.
+PROMPTS ?= overlay,native,terse
+PROBE_FPS ?= 4
 
-eval:  ## [gpu] run the labelled set, print the metric table  (planned - increment 4)
-	@echo "not implemented yet: 'eval' lands in increment 4 (metrics + hand labels)."
-	@exit 1
+probe:  ## [any] characterise the model: can it ground events, how precisely
+	@mkdir -p $(OUT_DIR)
+	$(COMPOSE) run --rm -e ALLOW_NO_GPU=$(ALLOW_NO_GPU) finder \
+	  video-reasoning probe --backend $(BACKEND) \
+	  --prompts $(PROMPTS) --fps $(PROBE_FPS) -o /out/probe.json \
+	  $(if $(BASE_URL_OVERRIDE),--base-url $(BASE_URL_OVERRIDE),) \
+	  $(if $(RECORD),--record /out/$(RECORD),)
+	@echo; echo "-> $(OUT_DIR)/probe.json"
+
+LABELS ?= /data/synthetic/labels.json
+EVAL_DATA ?= /data/synthetic
+
+# The positive control lives in its own labels file, never mixed into an eval set.
+# queries_for() asks EVERY description of EVERY clip so false positives get
+# measured — which means adding control clips to an eval file also adds their
+# descriptions to the questions asked of real clips, shifting the FP denominator.
+# Containment of the leaked answers works either way; separation keeps the query
+# set stable and comparable between runs.
+CONTROL_LABELS ?= /data/meva-examples/labels.json
+CONTROL_DATA   ?= /data/meva-examples
+
+eval:  ## [gpu] run the labelled set, print the metric table
+	@mkdir -p $(OUT_DIR)
+	$(COMPOSE) run --rm finder video-reasoning evaluate \
+	  --labels $(LABELS) --data-dir $(EVAL_DATA) --backend $(BACKEND) \
+	  -o /out/eval.json \
+	  $(if $(PROMPT),--prompt $(PROMPT),) \
+	  $(if $(SAMPLE_FPS),--fps $(SAMPLE_FPS),) \
+	  $(if $(GPU_HOURLY),--gpu-hourly $(GPU_HOURLY),) \
+	  $(if $(REPLAY),--replay /out/$(REPLAY),)
+	@echo; echo "-> $(OUT_DIR)/eval.json"
+
+eval-control:  ## [gpu] CEILING TEST: can the model find events labelled on-screen?
+	@mkdir -p $(OUT_DIR)
+	@echo "Ceiling test. These clips carry MEVA's annotations BURNED INTO the"
+	@echo "picture, so the model can read the answer. If it fails HERE, it will"
+	@echo "fail on clean footage — and the cause is prompting or vision, not"
+	@echo "event recognition. Never comparable with eval numbers."
+	@echo
+	$(COMPOSE) run --rm finder video-reasoning evaluate \
+	  --labels $(CONTROL_LABELS) --data-dir $(CONTROL_DATA) \
+	  --backend $(BACKEND) -o /out/eval-control.json \
+	  $(if $(PROMPT),--prompt $(PROMPT),) \
+	  $(if $(SAMPLE_FPS),--fps $(SAMPLE_FPS),) \
+	  $(if $(REPLAY),--replay /out/$(REPLAY),)
+	@echo; echo "-> $(OUT_DIR)/eval-control.json"
 
 sweep:  ## [gpu] fps / window / stride frontier  (planned - increment 5)
 	@echo "not implemented yet: 'sweep' lands in increment 5."

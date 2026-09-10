@@ -158,6 +158,32 @@ Full reasoning, download timeline and cost estimates in [`RUNBOOK.md`](RUNBOOK.m
 
 ---
 
+## 4c. Overlay size
+
+**`overlay.font_scale = 0.045`** — 16px at the 640x360 the model receives.
+
+Measured, so the trade-off is explicit rather than aesthetic:
+
+| Scale | Font | Frame occluded | JPEG payload |
+|---|---|---|---|
+| **0.045 (chosen)** | 16px | **1.36%** | 59.5 KB |
+| 0.090 | 32px | 4.38% | 59.7 KB |
+| 0.135 | 48px | 9.44% | 59.6 KB |
+
+**Token cost does not change with font size** — the frame is the same pixel size
+either way — so the only cost of a larger timestamp is occlusion. At 0.135 the box
+spans 47% of the frame width and blacks out a fixed region of a fixed camera
+permanently.
+
+Chosen by inspection at the model's own resolution: 0.045 is legible, and the
+larger sizes buy readability we do not appear to need at the price of a blind spot.
+
+**`UNVERIFIED`: human legibility is not model legibility.** If the probe shows the
+model misreading timestamps, raise this before concluding the model cannot read
+them — it costs nothing in tokens to try.
+
+---
+
 ## 5. Scope
 
 | Decision | Reason |

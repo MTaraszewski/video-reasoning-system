@@ -206,6 +206,28 @@ as the `low_resolution` axis, separately.
 - **Two frame heights appear** — 1920x1080 and 1920x1072. A non-standard crop on
   some cameras. Harmless, but nothing may assume a fixed aspect ratio.
 
+### MEVA's curated example clips carry their answers in the picture
+
+MEVA publishes 121 pre-cut clips named for the activity they contain
+(`ex013-enter-vehicle.mp4`), spanning ~36 activity types. They looked ideal:
+guaranteed events, tiny download, and several map onto the brief's own examples —
+`vehicle-reversing` for *"a forklift reverses"*, `open-facility-door` for *"a
+person enters through the door"*.
+
+**They cannot be used as evaluation data.** The clips are rendered with MEVA's
+annotations burned in: a red box around the actor labelled with the activity name,
+and a header giving the source file and frame number. A model can read the answer
+off the frame.
+
+They are kept as a **`positive_control` ceiling test** instead — if the model
+cannot find an event whose name is written on screen, it will not find it on clean
+footage. Handling, guarantees and the verification are in
+[`DESIGN.md §9a`](DESIGN.md).
+
+**How this was found:** by rendering a contact sheet and looking at it. No
+automated check would have caught it — nothing in a pipeline can notice that a
+dataset has written its labels into its own pixels.
+
 ### One caveat about this slice
 
 All twelve clips are the **same five-minute window seen from twelve different

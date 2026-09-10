@@ -586,6 +586,80 @@ events spanning many windows, and visually similar distractors.
 
 ---
 
+## 9a. Information leakage in evaluation data
+
+Some footage carries its own answers. MEVA publishes 121 curated example clips
+named for the activity they contain — and those clips have MEVA's annotations
+**burned into the picture**: a red box around the actor, labelled with the
+activity name, plus a header giving the source file and frame number.
+
+A model shown such a frame can read `Enter_Vehicle` off the image. Score it and
+you measure OCR, not event recognition — and the score will look excellent.
+
+### Prevention is impossible; containment is not
+
+The leak is in the pixels. It cannot be removed, cropped out (the label box tracks
+the actor), or undone. Three separate responses, and only the last two are
+available:
+
+| | |
+|---|---|
+| **Prevent** | Impossible. The annotation is rendered into the video |
+| **Contain** | Quarantine the clips so they cannot reach a reported number |
+| **Repurpose** | Use the leak deliberately, as a ceiling test |
+
+### Repurposing it: the ceiling test
+
+If the model cannot localise an event whose *name is written on the frame in a box
+around the person doing it*, it will certainly fail on clean footage. That is a
+decisive result for seconds of GPU time, and it separates failure modes that
+clean footage alone cannot:
+
+| Behaviour | Conclusion |
+|---|---|
+| Fails **with** the answer on screen | Cannot read the frame or follow the task. The problem is prompting or vision, not event recognition |
+| Succeeds with the label, fails without | Recognises **text**, not **events** — the interesting finding |
+| Succeeds at both | The pipeline limits the result, not the model |
+
+These clips are labelled with the `positive_control` axis.
+
+### Containment, enforced in code
+
+Three guards, because a convention would eventually be forgotten:
+
+1. **Control axes are excluded from headline metrics.** `metrics.CONTROL_AXES`
+   names them; `evaluate.py` filters both truths and predictions before computing
+   `overall`, and records what it excluded in `overall_excludes`.
+2. **A labels file may not mix control and evaluation clips.** Refused with an
+   error, for a reason that is not obvious — see below.
+3. **Control results are reported on their own row** of the per-axis table, never
+   averaged into anything.
+
+Verified rather than asserted: a mixed set of 6 synthetic clips (7 truths) and 2
+control clips (2 truths) produced a headline computed over **7 truths, not 9**.
+
+### Why mixing files is refused, not merely discouraged
+
+Every description in a labels file is asked of **every clip in that file** — which
+is deliberate, because a system only ever asked questions whose answer is "yes"
+has no measurable false-positive rate.
+
+The side effect is that adding control clips to an evaluation file also adds their
+descriptions to the questions asked of the real clips. The query set grows, the
+false-positive denominator moves, and two runs stop being comparable — while every
+number still looks entirely reasonable. So the files stay separate, and
+`make eval-control` runs the ceiling test on its own.
+
+### The general rule
+
+Leakage of this kind is a property of the *data*, discovered by looking at it.
+Nothing in the pipeline can detect that a dataset has written the answers on its
+own frames. It was found here by rendering a contact sheet and reading it — which
+is the argument for looking at evaluation footage before trusting a number
+computed from it.
+
+---
+
 ## 9b. Testing the model path without a model
 
 The stub backend proves the *pipeline*. It proves nothing about the code that sits

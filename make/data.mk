@@ -16,7 +16,7 @@
 #   VANTAGE      evaluation-only, GATED, no redistribution
 # Nothing here commits video to the repo. Only our labels are committed.
 
-.PHONY: frames frames-sweep data data-synthetic data-meva data-supervision data-vantage \
+.PHONY: verify-data positive-control prepare-clips frames frames-sweep data data-synthetic data-meva data-supervision data-vantage \
         s3-check s3-push s3-push-dry s3-pull s3-status data-list
 
 # The finder mounts /data READ-ONLY, so the service can never modify a client's
@@ -53,8 +53,18 @@ data: data-synthetic  ## [local] generate/fetch everything needed for a first ru
 data-synthetic:  ## [local] generate synthetic clips with EXACT ground truth
 	$(DATAGEN_RUN) python scripts/make_synthetic.py --out /data/synthetic
 
-data-meva:  ## [local] fetch a MEVA slice (CC BY 4.0, no credentials needed)
-	@MEVA_MIN_S=$(MEVA_MIN_S) bash scripts/fetch_meva.sh $(DATA_DIR)/meva $(MEVA_LIMIT) $(MEVA_DROP)
+# Selection is by ACTIVITY, not by duration. Most MEVA footage is deliberately
+# uneventful — it exists for a challenge about finding rare events in long empty
+# streams — so an unfiltered pick returns clips with nothing to label.
+#   MEVA_MODE=examples   pre-cut clips named for the activity they contain
+#   MEVA_MODE=annotated  full clips whose annotations declare an activity
+#   MEVA_MODE=raw        unfiltered; these become NEGATIVES
+MEVA_MODE   ?= examples
+MEVA_FILTER ?=
+
+data-meva:  ## [local] fetch MEVA clips that CONTAIN events (CC BY 4.0, no credentials)
+	@MEVA_MIN_S=$(MEVA_MIN_S) MEVA_DROP=$(MEVA_DROP) bash scripts/fetch_meva.sh \
+	  $(MEVA_MODE) $(DATA_DIR)/meva-$(MEVA_MODE) $(MEVA_LIMIT) "$(MEVA_FILTER)"
 
 data-supervision:  ## [local] fetch Roboflow supervision sample videos (licence unstated — do not redistribute)
 	$(DATAGEN_RUN) python scripts/fetch_supervision.py --out /data/supervision
@@ -106,6 +116,22 @@ frames-sweep:  ## [any] ONE frame at several overlay font scales, to compare leg
 	@mkdir -p $(OUT_DIR)/sweep
 	$(COMPOSE) run --rm finder video-reasoning frames $(VIDEO_IN) -o /out/sweep --sweep
 	@echo "-> $(OUT_DIR)/sweep  (same frame, varying font size — compare legibility)"
+
+EVAL_DATA_DIR ?= /data/synthetic
+CLIP_SECONDS ?= 120
+CLIP_LIMIT   ?= 6
+
+prepare-clips:  ## [local] trim source footage to 1-3 min and scaffold hand-labelling
+	$(DATAGEN_RUN) python scripts/prepare_clips.py \
+	  --src /data/meva --out /data/eval \
+	  --seconds $(CLIP_SECONDS) --limit $(CLIP_LIMIT)
+	@echo; echo "Contact sheets: $(DATA_DIR)/eval/sheets/  — label from these"
+
+positive-control:  ## [local] build the ceiling-test set from MEVA example clips
+	$(DATAGEN_RUN) python scripts/make_positive_control.py --src /data/meva-examples
+
+verify-data:  ## [any] check every clip actually shows what its label claims
+	$(COMPOSE) run --rm finder python scripts/verify_synthetic.py $(EVAL_DATA_DIR)
 
 data-list:  ## [any] show what is present locally
 	@echo "Local data under $(DATA_DIR)/:"
