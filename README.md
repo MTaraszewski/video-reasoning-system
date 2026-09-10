@@ -72,12 +72,21 @@ alternatives rejected, and the decisions that reversed under new evidence.
 
 ### Leaderboard — models × temporal grounding
 
-| Model | Size | R@1 @0.3 | R@1 @0.5 | R@1 @0.7 | mean tIoU | mean rel. err | s / video-min |
-|---|---|---|---|---|---|---|---|
-| `nvidia/Cosmos3-Edge` | 4B | **0.000** | **0.000** | **0.000** | **0.002** | **3.151** | **268** |
-| `nvidia/Cosmos-Reason2-8B` | 8B | — | — | — | — | — | — |
-| `nvidia/Cosmos-Reason2-2B` | 2B | — | — | — | — | — | — |   *probe only, see below*
-| `Qwen/Qwen3-VL-8B-Instruct` | 8B | — | — | — | — | — | — |
+The first six columns come from the **eval** — real clips, hand labels, full
+cross-product. The last two come from the **probe** — synthetic clips, exact
+ground truth, event guaranteed present. They are different experiments and are
+not comparable with each other; both are shown because a model can be measured by
+one and not the other.
+
+| Model | Size | R@1 @0.3 | R@1 @0.5 | R@1 @0.7 | mean tIoU | mean rel. err | s / video-min | probe: answered | probe: median err |
+|---|---|---|---|---|---|---|---|---|---|
+| `nvidia/Cosmos3-Edge` | 4B | **0.000** | **0.000** | **0.000** | **0.002** | **3.151** | **268** | **100%** | **3.50 s** |
+| `nvidia/Cosmos-Reason2-2B` | 2B | not run | not run | not run | not run | not run | not run | **20%** | **9.50 s** |
+| `nvidia/Cosmos-Reason2-8B` | 8B | not run | not run | not run | not run | not run | not run | not run | not run |
+| `Qwen/Qwen3-VL-8B-Instruct` | 8B | not run | not run | not run | not run | not run | not run | not run | not run |
+
+Both probe columns are the `overlay` prompt at 4 fps, so those two rows are
+like-for-like. "not run" is literal — no cell here is estimated.
 
 Cosmos3-Edge is the only model given the full eval. **Cosmos-Reason2-2B was
 probed** (result below); the two 8B models were not run at all — they need ~40 GiB
