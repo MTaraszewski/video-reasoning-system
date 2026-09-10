@@ -117,6 +117,36 @@ def score_once(client, model, text, states):
         return {}
 
 
+def match_text(text: str, states: list[str]) -> dict:
+    """Read the state out of the description with string matching, not a model.
+
+    Order-averaging the model-based text classifier drove every score to exactly
+    0.00, which is the signature of a choice made entirely on position: always
+    answer (b), and averaging both orders gives precisely 0.5/0.5. It never read
+    the text. Note the contrast -- the same treatment on the IMAGE task left a
+    coherent, if weak, signal, so the blindness is specific to this text task.
+
+    It does not matter, because the descriptions say it in plain words: "The door
+    is closed in all frames", "The door is open in all frames". The distinguishing
+    words between the two state strings are enough to decide, and a deterministic
+    reader cannot invent a preference for whichever option came last.
+    """
+    a, b = states
+    stop = {"the", "is", "a", "an", "in", "of", "at", "on", "and", "it", "its"}
+    wa = [w for w in re.findall(r"[a-z]+", a.lower()) if w not in stop]
+    wb = [w for w in re.findall(r"[a-z]+", b.lower()) if w not in stop]
+    only_a = [w for w in wa if w not in wb]
+    only_b = [w for w in wb if w not in wa]
+    low = text.lower()
+    # Last mention wins: these descriptions often reason ("closed... then opens")
+    # and the conclusion is the later word.
+    pos_a = max((low.rfind(w) for w in only_a), default=-1)
+    pos_b = max((low.rfind(w) for w in only_b), default=-1)
+    if pos_a < 0 and pos_b < 0:
+        return {}
+    return {a: 1.0, b: 0.0} if pos_a > pos_b else {a: 0.0, b: 1.0}
+
+
 def score_text(client, model, text, states):
     """Ask in BOTH option orders and average.
 
@@ -169,11 +199,14 @@ def main() -> None:
         if not frames:
             break
         text, think, finish = describe(client, cfg.model.name, frames, subject)
-        pr = score_text(client, cfg.model.name, text, args.states) if text else {}
-        score = pr.get(b, float("nan")) - pr.get(a, float("nan"))
+        pr = match_text(text, args.states) if text else {}
+        score = pr.get(b, float("nan")) - pr.get(a, float("nan")) if pr \
+            else float("nan")
         inside = "*" if args.truth and args.truth[0] <= t <= args.truth[1] else " "
         cut = "  [TRUNCATED]" if finish == "length" else ""
-        print(f" {inside} t={t:>5.1f}s  {score:+.2f}{cut}")
+        verdict = ("?" if score != score else
+                   (args.states[1] if score > 0 else args.states[0]))
+        print(f" {inside} t={t:>5.1f}s  {verdict:<24}{cut}")
         for line in textwrap.wrap(text or "(empty)", 92)[:4]:
             print(f"              {line}")
         t += args.step
