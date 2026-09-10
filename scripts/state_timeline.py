@@ -24,7 +24,7 @@ from video_reasoning.config import load_config
 from video_reasoning.decode import frame_to_data_url, sample_frames
 
 
-def classify(client, model, frames, states, max_retries=1):
+def classify(client, model, frames, states, debug=False):
     """Ask which state fits. Returns (index, probability)."""
     opts = "\n".join(f"({chr(97 + i)}) {s}" for i, s in enumerate(states))
     letters = [chr(97 + i) for i in range(len(states))]
@@ -42,8 +42,15 @@ def classify(client, model, frames, states, max_retries=1):
                               "Answer with a single letter."},
                   {"role": "user", "content": content}],
     )
-    tok = (r.choices[0].message.content or "").strip().lower()[:1]
-    idx = letters.index(tok) if tok in letters else 0
+    msg = r.choices[0].message
+    raw = msg.content or ""
+    if debug:
+        print(f"    [raw={raw[:60]!r} finish={r.choices[0].finish_reason} "
+              f"reasoning={(getattr(msg, 'reasoning_content', None) or '')[:40]!r}]")
+    tok = raw.strip().lower()[:1]
+    # A response that is not one of the offered letters must not silently become
+    # the first option -- that is what made every poll read "(a) closed".
+    idx = letters.index(tok) if tok in letters else None
     # Probability of the chosen letter against the others.
     try:
         lp = {t.token.strip().lower(): t.logprob
@@ -52,7 +59,7 @@ def classify(client, model, frames, states, max_retries=1):
         p = math.exp(lp.get(tok, -60.0)) / tot if tot else 0.0
     except Exception:
         p = float("nan")
-    return idx, p
+    return idx, p, raw
 
 
 def main() -> None:
@@ -85,11 +92,15 @@ def main() -> None:
                                   overlay=False, start_s=t, end_s=t + args.span)
         if not frames:
             break
-        idx, p = classify(client, cfg.model.name, frames, args.states)
-        mark = ""
-        if prev is not None and idx != prev:
-            mark = "  <- CHANGE"
+        idx, p, raw = classify(client, cfg.model.name, frames, args.states,
+                               debug=(t == args.start))
         inside = "*" if args.truth and args.truth[0] <= t <= args.truth[1] else " "
+        if idx is None:
+            print(f" {inside} t={t:>5.1f}s  UNPARSED  raw={raw[:40]!r}")
+            prev = None
+            t += args.step
+            continue
+        mark = "  <- CHANGE" if prev is not None and idx != prev else ""
         print(f" {inside} t={t:>5.1f}s  ({chr(97 + idx)}) {args.states[idx][:38]:<38} "
               f"p={p:.2f}{mark}")
         prev = idx
