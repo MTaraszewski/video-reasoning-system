@@ -1145,6 +1145,72 @@ The same output explains `G423` without a new hypothesis: the description reads
 people. The subject was ambiguous, so the state question was never well posed — a
 prompt failure, not a perception one.
 
+### Approach 3 — caption, parse, derive
+
+Following the reason-then-classify finding to its conclusion produced a design
+with no forced choice, no logprobs and no threshold in it — the three things every
+failure above traced back to.
+
+1. **Caption.** Per timestep, ask the model what state the subject is in and
+   whether it changes. Free-form, a few hundred tokens, no constrained decoding.
+2. **Parse.** Read the state out of the text deterministically, by matching the
+   words that distinguish the two state strings. Last mention wins, because these
+   descriptions reason before concluding. An enumeration ("open/closed") asserts
+   nothing and is ignored. A description with no state word yields `?`, never a
+   guess.
+3. **Derive.** The event is the transition between consecutive states. Its instant
+   is bracketed by the step size.
+
+The model does the one thing it has demonstrably done well throughout — describing
+what it sees. Everything after that is code.
+
+**Why the parse is not a model call.** It was, at first. Order-averaging that
+classifier drove every score to exactly 0.00 — the signature of a choice made
+purely on position, since always answering "(b)" averages to 0.5/0.5 under
+reversal. It never read the text. The image task retained a weak signal under the
+same treatment, so the blindness is specific to text classification. String
+matching cannot invent a preference for whichever option came last.
+
+### Approach 3 — result
+
+`admin.G326` 03-07, label 3.0–5.7 s, 1 s steps and 2 s spans:
+
+```
+t=0–4    closed
+t=5      closed   (description reverses the direction — see below)
+t=6–8    open
+t=9      closed
+t=11–17  closed
+```
+
+Last `closed` at t=5, first `open` at t=6, so the **transition is at t≈5.5 s —
+inside the label**. The door returns to closed at t=9, which matches the contact
+sheet independently. Agreement is roughly **0.3 s** against the label's end, from
+a model whose best synthetic boundary error was 3.5 s and which under Approach 1
+could not answer on real footage at all.
+
+**A failure mode worth recording:** at t=5 the description reads *"The door starts
+in an open state and closes across the frames"* — the change is detected at exactly
+the right moment and its **direction is reversed**. Seeing a change and getting its
+sign wrong is a different, more tractable error than not seeing it.
+
+### How this must be scored
+
+Interval tIoU is the wrong measure here and understates the method. A state
+timeline answers *"when was the door open"* (6–9 s); the hand labels answer *"when
+did the opening happen"* (3.0–5.7 s). Overlapping those compares two different
+questions — which is why the state-polling runs scored 0.26–0.55 while being far
+closer than that suggests.
+
+The right measure is the **transition instant against the label's span**: did the
+state change inside the window a human marked? That is a hit/miss per event with
+resolution equal to the step size, and it is what a fair comparison against
+Approach 1 requires.
+
+**Not yet done:** this has been run on one clip and one question. Running it across
+all 15 labelled events and scoring transitions properly is the number that belongs
+in the README, and it does not exist yet.
+
 ### Status and honest limits
 
 Approach 2 is a **probe script** (`scripts/state_timeline.py`), not pipeline code.

@@ -247,6 +247,50 @@ subject was ambiguous, so the question was never well posed.
 the first approach. Nine questions across five clips is a characterisation, not an
 evaluation. → [`DESIGN.md §14a`](DESIGN.md)
 
+### A third approach: caption, parse, derive
+
+Following that finding to its conclusion gives a design with **no forced choice, no
+logprobs and no threshold** — the three things every failure above traced back to.
+
+Per timestep, ask the model what state the subject is in, free-form. Read the state
+out of its own words deterministically. The event is the transition between
+consecutive states.
+
+On `admin.G326`, label 3.0–5.7 s, 1-second steps:
+
+```
+t=0–4    closed
+t=5      closed   ← sees the change, reverses its direction
+t=6–8    open
+t=9      closed
+t=11–17  closed
+```
+
+Last `closed` at t=5, first `open` at t=6 — the **transition sits at t≈5.5 s,
+inside the label**, and the door returns to closed at t=9, which matches the
+footage independently. Agreement of roughly **0.3 s**, from a model whose best
+synthetic boundary error was 3.5 s and which under the first approach could not
+answer on real footage at all.
+
+The model does the one thing it has done well throughout: describe what it sees.
+Everything after that is code — and the parse is string matching rather than a
+model call, because an order-averaged text classifier scored **exactly 0.00 on
+every description**, the signature of choosing purely by position.
+
+**One failure mode, recorded because it is instructive:** at t=5 it says *"The door
+starts in an open state and closes"* — right moment, wrong direction. Seeing a
+change and getting its sign backwards is a more tractable problem than not seeing
+it.
+
+**How this must be scored.** Interval tIoU is the wrong measure and understates it:
+a state timeline answers *"when was it open"* (6–9 s) while the labels answer *"when
+did it open"* (3.0–5.7 s). The right measure is the **transition instant against the
+label's span**.
+
+**Status: one clip, one question.** Running it across all 15 labelled events with
+transition scoring is the number that belongs here, and it does not exist yet.
+→ [`DESIGN.md §14a`](DESIGN.md)
+
 ### What we got wrong along the way
 
 Recorded because the debugging is part of the answer:

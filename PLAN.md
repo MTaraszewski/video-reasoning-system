@@ -1071,3 +1071,39 @@ aws service-quotas list-requested-service-quota-change-history \
   The lesson worth carrying: four negative results were reported before anyone
   looked at what the model actually said. The moment we printed its own words, the
   diagnosis took one reading.
+
+- **2026-09-10 (Approach 3 — caption, parse, derive)** — Followed the
+  reason-then-classify finding to its conclusion and arrived at a design with no
+  forced choice, no logprobs and no threshold in it. Every failure of the day
+  traced back to one of those three.
+
+  Caption each timestep free-form, read the state out of the model's own words with
+  string matching, and take the event to be the transition between consecutive
+  states.
+
+  **Result on `admin.G326`** (label 3.0-5.7s, 1s steps): closed through t=4, open
+  t=6-8, closed from t=9. Last closed at t=5, first open at t=6, so the transition
+  sits at t~5.5s -- **inside the label** -- and the door returning to closed at t=9
+  matches the contact sheet independently. Agreement of about 0.3s, from a model
+  whose best synthetic boundary error was 3.5s and which under Approach 1 could not
+  answer on real footage at all.
+
+  **Why the parse is not a model call.** It was. Order-averaging that text
+  classifier drove every score to exactly 0.00 -- the signature of choosing purely
+  by position, since always answering "(b)" averages to 0.5/0.5 under reversal. It
+  never read the text at all. The image task kept a weak signal under the same
+  treatment, so the blindness is specific to text classification.
+
+  **Failure mode recorded:** at t=5 the description reads "The door starts in an
+  open state and closes across the frames" -- the change is detected at exactly the
+  right moment with its direction reversed. Seeing a change and getting the sign
+  wrong is more tractable than not seeing it.
+
+  **Scoring must change with the method.** Interval tIoU compares a state interval
+  ("when was it open", 6-9s) against an act label ("when did it open", 3.0-5.7s)
+  and understates the result -- which is why state polling scored 0.26-0.55 while
+  being far closer than that suggests. The right measure is the transition instant
+  against the label's span.
+
+  **Not done:** one clip, one question. Running across all 15 labelled events with
+  transition scoring is the number that belongs in the README and does not exist.
