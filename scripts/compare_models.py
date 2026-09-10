@@ -41,18 +41,29 @@ def row_from_eval(d: dict) -> dict:
 
 
 def row_from_probe(d: dict) -> dict:
-    best = None
+    """Best prompt for this model, and WHICH prompt it was.
+
+    Reporting the best combination per model without naming it compares a model
+    swept over three prompts against one swept over a single prompt, and calls
+    the difference a model difference. Cosmos3-Edge's best was `native` at 80%
+    emit; Cosmos-Reason2-2B only ran `overlay`. Side by side without the label,
+    that reads as a like-for-like comparison and is not one.
+    """
+    best = best_key = None
     for key, s in (d.get("by_prompt_fps") or {}).items():
         if s.get("median_abs_error_s") is None:
             continue
         if best is None or s["median_abs_error_s"] < best["median_abs_error_s"]:
-            best = s
+            best, best_key = s, key
     if not best:
         # A model that emitted nothing at all still has an emit rate, and that
         # is the interesting number -- do not report it as missing data.
+        k = next(iter((d.get("by_prompt_fps") or {})), "")
         any_s = next(iter((d.get("by_prompt_fps") or {}).values()), {})
-        return {"emit": any_s.get("emitted_times"), "floor": None}
-    return {"emit": best.get("emitted_times"), "floor": best.get("median_abs_error_s")}
+        return {"emit": any_s.get("emitted_times"), "floor": None,
+                "combo": k.split("@")[0] if k else ""}
+    return {"emit": best.get("emitted_times"), "floor": best.get("median_abs_error_s"),
+            "combo": (best_key or "").split("@")[0]}
 
 
 def fmt(v, spec: str = "{:.3f}") -> str:
@@ -89,19 +100,26 @@ def main() -> None:
         rows.append(r)
 
     print(f"{'model':<34}{'R@1.3':>7}{'R@1.5':>7}{'mIoU':>8}{'FP':>7}"
-          f"{'relerr':>8}{'emit':>7}{'floor':>8}{'s/vid-min':>11}")
-    print("-" * 96)
+          f"{'relerr':>8}{'emit':>7}{'floor':>8}{'prompt':>9}{'s/vid-min':>11}")
+    print("-" * 105)
     for r in rows:
         print(f"{r['model'][:33]:<34}"
               f"{fmt(r.get('r1_03')):>7}{fmt(r.get('r1_05')):>7}"
               f"{fmt(r.get('miou')):>8}{fmt(r.get('fp'), '{:.2f}'):>7}"
               f"{fmt(r.get('rel'), '{:.2f}'):>8}"
               f"{fmt(r.get('emit'), '{:.0%}'):>7}{fmt(r.get('floor'), '{:.2f}s'):>8}"
+              f"{(r.get('combo') or '—'):>9}"
               f"{fmt(r.get('spm'), '{:.0f}'):>11}")
 
     ran = [r for r in rows if r["ran"]]
     print(f"\n{len(ran)} of {len(rows)} model(s) measured. A dash is 'not run', "
           f"never an estimate.")
+    combos = {r.get("combo") for r in ran if r.get("combo")}
+    if len(combos) > 1:
+        print(f"WARNING  emit/floor come from different prompts across rows "
+              f"({', '.join(sorted(combos))}). Those two columns are NOT "
+              f"like-for-like -- each shows that model's best prompt, and the "
+              f"models were not swept over the same set.")
 
     # The controlled comparison, called out explicitly so it is not buried.
     r2 = next((r for r in rows if "Reason2-8B" in r["model"] and r["ran"]), None)
@@ -111,7 +129,7 @@ def main() -> None:
         d = (r2.get("miou") or 0) - (qw.get("miou") or 0)
         print(f"CONTROLLED COMPARISON — same architecture, same size, the only "
               f"difference is NVIDIA's post-training:")
-        print(f"  Cosmos-Reason2-8B  mIoU {fmt(r2.get('miou'))}  emit {fmt(qw.get('emit'), '{:.0%}')}")
+        print(f"  Cosmos-Reason2-8B  mIoU {fmt(r2.get('miou'))}  emit {fmt(r2.get('emit'), '{:.0%}')}")
         print(f"  Qwen3-VL-8B        mIoU {fmt(qw.get('miou'))}  emit {fmt(qw.get('emit'), '{:.0%}')}")
         print(f"  difference         {d:+.4f} mIoU attributable to post-training")
     else:
