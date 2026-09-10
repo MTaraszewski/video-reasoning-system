@@ -977,6 +977,150 @@ something impossible" need different responses from the caller.
 
 ---
 
+## 14a. Two approaches, and why there is a second
+
+Everything above §14 describes **Approach 1**. It was built to the brief's own
+phrasing — *"a plain-language description of what to look for"* — and it does not
+work. Approach 2 exists because Approach 1's failure was specific enough to point
+at a different design.
+
+### Approach 1 — ask when the event happened
+
+Sample frames, burn absolute timestamps onto them, split into overlapping windows,
+ask the model to report start and end times for a description, merge across window
+boundaries.
+
+**Measured:** 8 clips x 13 descriptions x 13 windows = 1,352 calls.
+
+| | |
+|---|---|
+| R@1 at tIoU 0.3 / 0.5 / 0.7 | 0.000 / 0.000 / 0.000 |
+| mean tIoU | 0.002 |
+| false-positive rate | 0.802 |
+| mean relative error | 3.151 (NVIDIA target <0.30) |
+
+**Why it failed, precisely.** Across 104 (clip, description) pairs the model
+reported an event on **47%** of the 15 where one existed and **39%** of the 89
+where none did. Its output is close to uncorrelated with whether the event is
+there. A follow-up probe separated the two abilities: given a clip where the event
+is guaranteed present, it localises to 3.5 s median error on synthetic footage —
+but on real footage under the same conditions it declined 13 of 15 times.
+
+So the model can place an event it is *told* is present, and cannot establish the
+"told". Every temporal metric is downstream of that.
+
+**It is not the model's fault alone.** `Cosmos-Reason2-2B` — whose model card
+documents the burned-in timestamp mechanism that Cosmos3-Edge's does not mention —
+did *worse* on the same probe: 20% answered against 100%. Two architectures, same
+failure. That rules out the comfortable explanation that the brief simply named
+the wrong model.
+
+### Why Approach 2
+
+Three measurements pointed the same way:
+
+1. **The model cannot decide presence** — but its yes/no logprobs vary
+   meaningfully, so the *signal* exists even when the *decision* is wrong.
+2. **We have no evidence it reads the burned-in timestamps reliably.** Every
+   number in Approach 1 sits downstream of an unverified mechanism.
+3. **Roboflow's published Cosmos 3 evaluation reports the same weaknesses**
+   independently — fast motion and small objects. That corroborates the Approach 1
+   result on different footage with a different harness, which is worth more than
+   another run of our own.
+
+The conclusion drawn from (1) and (2): stop asking the model to report a time, and
+stop asking it to decide anything. Use it as a noisy sensor, sampled repeatedly,
+and do the temporal reasoning in code.
+
+**One published remedy was tested and did not work.** Roboflow report that
+isolating a region of interest and running inference per region beat one combined
+call. We implemented it — a fixed fractional crop, applied at native resolution
+and resized back up — and measured it on the clip Approach 2 was failing:
+`admin.G329`'s score range went from 0.12 uncropped to 0.07 cropped. The
+underlying hypothesis, that subject size in frame is what limits the signal, was
+then disproved outright: a **car door succeeds at 322 px** while a **person in a
+doorway fails at 295 px**. Whatever separates them is not size.
+
+So the design below is not that recipe. Its mechanisms — polling a closed state
+set, cancelling option-order bias by asking in both orders, differencing the
+logprobs, and detecting a sustained departure from the clip's own baseline — come
+from what Approach 1 measured, not from prior art.
+
+### Approach 2 — poll the state, derive the event
+
+For a description like *"a person opens a building door"*, the persistent thing is
+a door and it is `closed` or `open`. The event is a named transition between them.
+
+1. **Poll**, per timestep: *"which describes what you see: (a) the door is closed
+   (b) the door is open"* — a closed set, constrained with vLLM's structured
+   outputs, one token, logprobs returned.
+2. **Cancel option-order bias** by asking in both orders and averaging. This is
+   not optional: with `(a) closed (b) open` the model answered "b" at every
+   timestep, and with the labels swapped it answered "b" again. It was picking the
+   last option, and the probability curve rose at the same moment in both runs, so
+   the apparent detection was positional.
+3. **Score** = P(second state) − P(first state), one signed number per timestep.
+4. **Detect** as a sustained departure from the clip's own baseline (median),
+   held for a minimum dwell. Not a zero crossing: order-averaging removes the
+   positional bias but leaves a residual preference, so the resting level sits
+   away from zero and a real excursion never crosses it.
+
+**The timestamp is ours**, from the sampling grid. The model is never asked what
+time it is.
+
+### Approach 2 — results
+
+| clip | question | outcome |
+|---|---|---|
+| `admin.G326` 03-07 | door closed / open | detected 3.0–9.0 s, **tIoU 0.46** (label 3.0–5.7) |
+| `admin.G326` 03-12 | door closed / open | detected 4.0–8.0 s, **tIoU 0.26** (label 3.0–5.3) |
+| `school.G300` 03-11 | car door closed / open | detected 10.0–14.0 s, **tIoU 0.54** (label 9.0–12.7) |
+| `school.G300` 03-13 | door question, **no door in scene** | **no detection** — true negative |
+| `admin.G329` | doorway empty / person present | miss |
+| `school.G300` 03-11 | vehicle moving / stationary | miss |
+
+Mean tIoU on hits: **0.42**, against **0.002** for Approach 1 across its whole
+eval. Each of the three hits would clear R@1 at tIoU 0.3, which Approach 1 never
+did once.
+
+### The scope rule
+
+It works when the state is a **binary configuration of an object that visibly
+changes shape**. It fails on **presence** and on **motion**.
+
+| state type | example | result |
+|---|---|---|
+| object configuration | door open / closed | works |
+| presence of an actor | person in doorway | fails |
+| motion | vehicle moving / stationary | fails |
+
+This is decidable from the client's sentence before any GPU runs, which makes it a
+usable rule rather than a post-hoc excuse. It also lands squarely on the brief's
+own three examples: *"a person enters through the door"* is a door configuration
+and works; *"a forklift reverses"* and *"the machine stops moving"* are both
+motion, and both fail.
+
+**A hypothesis tested and discarded**: that the difference was object *size*. A car
+door works at 322 px while a person in a doorway fails at 295 px, so size is not
+what separates them.
+
+### Status and honest limits
+
+Approach 2 is a **probe script** (`scripts/state_timeline.py`), not pipeline code.
+It has not been integrated behind `find_events`, run across the full eval set, or
+scored by the same harness. Six questions on four clips is not an evaluation.
+
+The state decomposition — description to state pair — was written by hand for each
+test. Deriving it automatically from the client's sentence is the obvious next
+step and is unbuilt.
+
+A state interval answers *"when was the door open"*; the hand labels answer *"when
+did the opening happen"*. The late ends in the table above are that difference,
+not error. Scoring one against the other understates the method, and a fair
+comparison would need labels of the state kind.
+
+---
+
 ## 14. Risks
 
 | Risk | Impact | Mitigation |

@@ -128,6 +128,11 @@ def main() -> None:
                          "0.3 0.1 0.7 0.6. Chosen once by a human looking at the "
                          "scene -- never derived from per-frame annotations, "
                          "which would be leakage.")
+    ap.add_argument("--max-side", type=int, default=None,
+                    help="Frame size sent to the model. Defaults to config "
+                         "(640, Cosmos3-Edge's robot-control resolution). The "
+                         "encoder budget is 24,300 tokens and we are nowhere near "
+                         "it, so raising this is untested headroom.")
     ap.add_argument("--repeat", type=int, default=1,
                     help="Polls per timestep, averaged. Reduces variance at N x cost.")
     ap.add_argument("--margin", type=float, default=0.10,
@@ -139,6 +144,8 @@ def main() -> None:
     args = ap.parse_args()
 
     cfg = load_config()
+    if args.max_side:
+        cfg.sampling.frame_max_side = args.max_side
     client = OpenAI(base_url=cfg.model.base_url, api_key=cfg.model.api_key,
                     timeout=cfg.model.request_timeout_s)
 
@@ -153,6 +160,7 @@ def main() -> None:
     # signed number per timestep: negative means the first state, positive the
     # second, and the event is where it crosses zero.
     a, b = args.states[0], args.states[-1]
+    print(f"frame  {cfg.sampling.frame_max_side}px max side, {args.span:.0f}s per poll")
     if args.crop:
         print(f"crop   {args.crop}  (fractional, applied at native resolution, "
               f"then resized to {cfg.sampling.frame_max_side}px)")

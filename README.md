@@ -178,25 +178,62 @@ Measured on synthetic clips whose ground truth is exact:
 worst axis by a factor of two. Short events score 5.4 s error on events lasting
 under a second.
 
-### This confirms the vendor's own published evaluation
+### Independently corroborated
 
-Roboflow published their [Cosmos 3 evaluation](https://blog.roboflow.com/cosmos-3-vision/):
-strong on **slow-changing states** in fixed-camera footage, weak on **fast motion
-and small objects**, and — the operative finding — *"splitting the region of
-interest per gate and running inference on each gate separately beat one combined
-call"*, with the principle *"isolate each zone and point the model at the state
-that changes slowly, not the motion that changes fast."*
+Roboflow published their own [Cosmos 3 evaluation](https://blog.roboflow.com/cosmos-3-vision/)
+and report the same weaknesses we measured — **fast motion and small objects**,
+with the model strongest on slow-changing states. Different footage, different
+harness, same conclusion. That is worth more than another run of our own.
 
-Our configuration was whole-frame, no region of interest, motion-event queries,
-actors 26–787 px in wide surveillance shots. That is their worst-case
-configuration on every axis they name. **Our near-zero result is an independent
-reproduction of the caveats the model's own evaluators published**, on different
-footage, with a different harness.
+They also report a remedy: isolating a region of interest and running inference
+per region. **We implemented and measured it, and it did not help here** — a fixed
+crop applied at native resolution took `admin.G329`'s score range from 0.12 down
+to 0.07. The hypothesis behind it, that subject size in frame is the limit, was
+then disproved directly: a car door succeeds at 322 px where a person in a doorway
+fails at 295 px.
 
-The honest reading is therefore not "this model does not work". It is: *asked in
-the way a client would naturally ask — open-vocabulary event descriptions over a
-whole frame — it does not work, and the configuration that does work is a
-different question shape than the one the brief poses.*
+### A second approach, and what it scores
+
+The failure above is specific: the model can *time* an event it is told is
+present, and cannot establish that it is present. So the second approach stops
+asking it to do either.
+
+**Ask what the scene is, repeatedly; derive the event from where the answer
+changes.** For *"a person opens a building door"* the persistent thing is a door,
+and it is closed or open. Each timestep gets a closed-set question — *"which
+describes this: (a) the door is closed (b) the door is open"* — asked in **both
+orders and averaged**, with confidence taken from the token logprobs. The event is
+a sustained departure from the clip's own baseline. **The model is never asked
+what time it is**; the timestamp comes from our sampling grid.
+
+| clip | question | outcome |
+|---|---|---|
+| `admin.G326` 03-07 | door closed / open | detected 3.0–9.0 s, **tIoU 0.46** |
+| `admin.G326` 03-12 | door closed / open | detected 4.0–8.0 s, **tIoU 0.26** |
+| `school.G300` 03-11 | car door closed / open | detected 10.0–14.0 s, **tIoU 0.54** |
+| `school.G300` 03-13 | door question, **no door in scene** | **no detection** — true negative |
+| `admin.G329` | doorway empty / person present | miss |
+| `school.G300` 03-11 | vehicle moving / stationary | miss |
+
+Mean tIoU on hits: **0.42**, against **0.002** for the first approach across its
+entire eval. Each hit would clear R@1 at tIoU 0.3, which the first approach never
+managed once.
+
+**The scope rule is the useful part.** It works when the state is a **binary
+configuration of an object that visibly changes shape**; it fails on **presence**
+and on **motion**. That is decidable from the client's sentence before any GPU
+runs — and it lands on the brief's own examples: *"a person enters through the
+door"* works, while *"a forklift reverses"* and *"the machine stops moving"* are
+both motion, and both fail.
+
+Size is not what separates them: a car door works at 322 px where a person in a
+doorway fails at 295 px.
+
+**Status, stated plainly.** This is a probe script, not pipeline code. Six
+questions on four clips is not an evaluation, the state pairs were written by hand
+rather than derived from the description, and a state interval answers *"when was
+it open"* while our labels answer *"when did the opening happen"* — so the late
+ends in that table are a difference of question, not error. → [`DESIGN.md §14a`](DESIGN.md)
 
 ### What we got wrong along the way
 

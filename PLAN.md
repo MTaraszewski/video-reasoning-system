@@ -997,3 +997,40 @@ aws service-quotas list-requested-service-quota-change-history \
   not going through make would pull 10 GB and then fail.
 
   Cost: ~$14 of GPU across the day, at a verified $1.22249/hr.
+
+- **2026-09-10 (Approach 2)** — Approach 1 is a measured dead end, and its failure
+  was specific enough to point somewhere: the model can time an event it is told
+  is present and cannot establish presence. So Approach 2 stops asking it to
+  report a time or decide anything, and uses it as a noisy sensor sampled over
+  time.
+
+  Poll a closed-set state question per timestep, ask in **both option orders and
+  average**, take confidence from the token logprobs, and detect the event as a
+  sustained departure from the clip's own baseline.
+
+  **Results: three hits at tIoU 0.46, 0.26 and 0.54 (mean 0.42), one clean true
+  negative, two misses.** Approach 1's mean tIoU across its entire eval was 0.002.
+
+  **The scope rule:** works when the state is a binary configuration of an object
+  that visibly changes shape; fails on presence and on motion. Decidable from the
+  description before any GPU time is spent. Two of the brief's three worked
+  examples are motion states and fall outside it.
+
+  **Four errors of mine, each caught by a control rather than by reasoning:**
+  - The first state result was pure option-order bias. It answered "(b)" whichever
+    label sat second, and the probability curve rose at the same moment in both
+    orderings — so the apparent detection was positional. The swap test caught it;
+    nothing about the first run looked wrong.
+  - Cropping "did not help" because the crop ran after the frame had already been
+    downscaled to 640px, so the subject occupied the same pixels in a smaller
+    image with its context removed. An operation in the wrong order produced a
+    clean, plausible negative.
+  - `guided_choice` had been removed from vLLM in v0.12.0 and we are on 0.29. An
+    unrecognised `extra_body` key is silently ignored, so the output was never
+    constrained — in the probe *and* in the two-stage detector shipped earlier.
+  - "Large object" was the wrong explanation for why doors work. A car door
+    succeeds at 322 px where a person in a doorway fails at 295 px.
+
+  **Not done:** Approach 2 is a probe script, not integrated behind `find_events`,
+  not run across the full eval set, and its state pairs are hand-written rather
+  than derived from the description.
