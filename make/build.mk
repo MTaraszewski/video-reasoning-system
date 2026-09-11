@@ -173,7 +173,7 @@ eval:  ## [gpu] run the labelled set, print the metric table
 	  $(if $(SPAN_S),--span-s $(SPAN_S),) \
 	  $(if $(TRIGGER),--trigger,) \
 	  $(if $(REPLAY),--replay /out/$(REPLAY),)
-	@echo; echo "-> $(OUT_DIR)/eval.json"
+	@echo; echo "-> $(OUT_DIR)$(patsubst /out%,%,$(EVAL_OUT))"
 
 transitions:  ## [gpu] score caption-parse-derive across every labelled event
 	$(COMPOSE) run --rm finder python scripts/run_transitions.py \
