@@ -1,0 +1,170 @@
+{
+  "$defs": {
+    "Event": {
+      "description": "A merged, client-facing event.",
+      "properties": {
+        "description": {
+          "description": "Which query this matched.",
+          "title": "Description",
+          "type": "string"
+        },
+        "start_s": {
+          "description": "Absolute seconds from video start.",
+          "title": "Start S",
+          "type": "number"
+        },
+        "end_s": {
+          "description": "Absolute seconds from video start.",
+          "title": "End S",
+          "type": "number"
+        },
+        "confidence": {
+          "description": "Heuristic ranking signal, NOT a calibrated probability. Good for sorting and thresholding; not a probability. How it is computed depends on the strategy that produced the event. `windows` combines the model's self-report with agreement across overlapping windows. `states` uses no self-report at all: it is agreement across polls, times how tightly the boundaries are bracketed, times how much of the interval was actually observed.",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "evidence": {
+          "default": "",
+          "description": "What the model claimed to see.",
+          "title": "Evidence",
+          "type": "string"
+        },
+        "partial": {
+          "default": false,
+          "description": "True if the event touches the edge of the observed region and its true extent is therefore unknown. Reported rather than silently clipped.",
+          "title": "Partial",
+          "type": "boolean"
+        },
+        "source_windows": {
+          "description": "Provenance: which windows produced it. Always empty for the `states` strategy, which has no windows -- its provenance is the poll timeline in `FindEventsResult.polls`.",
+          "items": {
+            "type": "integer"
+          },
+          "title": "Source Windows",
+          "type": "array"
+        }
+      },
+      "required": [
+        "description",
+        "start_s",
+        "end_s",
+        "confidence"
+      ],
+      "title": "Event",
+      "type": "object"
+    },
+    "RunInfo": {
+      "description": "How this result was produced. Present so a number can be traced back.",
+      "properties": {
+        "model": {
+          "title": "Model",
+          "type": "string"
+        },
+        "backend": {
+          "default": "vllm",
+          "enum": [
+            "vllm",
+            "stub"
+          ],
+          "title": "Backend",
+          "type": "string"
+        },
+        "sample_fps": {
+          "title": "Sample Fps",
+          "type": "number"
+        },
+        "window_s": {
+          "title": "Window S",
+          "type": "number"
+        },
+        "stride_s": {
+          "title": "Stride S",
+          "type": "number"
+        },
+        "windows": {
+          "title": "Windows",
+          "type": "integer"
+        },
+        "model_calls": {
+          "title": "Model Calls",
+          "type": "integer"
+        },
+        "elapsed_s": {
+          "title": "Elapsed S",
+          "type": "number"
+        },
+        "stub": {
+          "default": false,
+          "description": "True if produced by the deterministic stub rather than a real model. Stub results are never valid evidence and the eval harness refuses to score them.",
+          "title": "Stub",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "model",
+        "sample_fps",
+        "window_s",
+        "stride_s",
+        "windows",
+        "model_calls",
+        "elapsed_s"
+      ],
+      "title": "RunInfo",
+      "type": "object"
+    }
+  },
+  "description": "The public output.",
+  "properties": {
+    "video": {
+      "title": "Video",
+      "type": "string"
+    },
+    "duration_s": {
+      "title": "Duration S",
+      "type": "number"
+    },
+    "queries": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Queries",
+      "type": "array"
+    },
+    "events": {
+      "items": {
+        "$ref": "#/$defs/Event"
+      },
+      "title": "Events",
+      "type": "array"
+    },
+    "run": {
+      "$ref": "#/$defs/RunInfo"
+    },
+    "polls": {
+      "anyOf": [
+        {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Polls"
+    }
+  },
+  "required": [
+    "video",
+    "duration_s",
+    "queries",
+    "run"
+  ],
+  "title": "FindEventsResult",
+  "type": "object"
+}

@@ -150,33 +150,63 @@ never produces a reported metric — see §12.
 
 ## 4. Components
 
+There are **two engines behind one `find_events`**, chosen by a flag, and the
+second routes per description before spending anything.
+
 ```mermaid
-graph LR
-    A["decode<br/>sample + timestamp"] --> B["windows<br/>plan + assign"]
-    B --> C["extract<br/>model adapter"]
-    C --> D["merge<br/>stitch + dedup"]
-    D --> E["schema<br/>validate"]
+graph TB
+    Q["video + descriptions"] --> ST{"strategy"}
 
-    C <-->|"chat completions"| M["vLLM"]
+    ST -->|"windows — Approach 1"| W1["decode<br/>sample + timestamp"]
+    W1 --> W2["extract<br/>ask WHEN"]
+    W2 --> W3["merge<br/>stitch + dedup"]
+    W3 --> OUT["schema<br/>validate"]
 
-    style C fill:#2d4a8a,stroke:#1a2f5a,color:#fff
+    ST -->|"states — Approach 3"| R{"has a<br/>state pair?"}
+    R -->|"no"| DEC["declined<br/>not expressible"]
+    DEC --> OUT
+    R -->|"yes"| G["group by state set<br/>9 descriptions → 4 subjects"]
+    G --> P["poll<br/>caption each step"]
+    P --> PA["parse<br/>string match"]
+    PA --> DV["derive<br/>transitions → events"]
+    DV --> OUT
+
+    W2 <-->|"chat completions"| M["vLLM"]
+    P <-->|"chat completions"| M
+
+    style W2 fill:#2d4a8a,stroke:#1a2f5a,color:#fff
+    style P fill:#2d4a8a,stroke:#1a2f5a,color:#fff
     style M fill:#3d6b2f,stroke:#254019,color:#fff
+    style DEC fill:#7a3b3b,stroke:#4a1f1f,color:#fff
 ```
 
-| Component | Responsibility | Why it is its own piece |
-|---|---|---|
-| `decode` | Open the video, sample frames at a target rate, burn an absolute timestamp onto each | The timestamp overlay is the mechanism the whole system rests on |
-| `windows` | Plan overlapping windows over the duration; assign frames; cap frames per window | The long-video answer, and the only place the context limit is reasoned about |
-| `extract` | One `(window, query)` → candidate events, via the model adapter | The only component that knows a model exists |
-| `merge` | Stitch candidates across window boundaries; de-duplicate; flag truncation | Where overlapping windows become one clean answer |
-| `schema` | The public contract, validated | The product surface |
+**Only two boxes are blue, and they are the only ones that call a model.** That is
+the whole argument for Approach 3: `parse` and `derive` are string matching and
+arithmetic in code, doing the temporal reasoning the model was measured as unable
+to do, while the model is left with the perception it can do.
 
-Data flows one way. Only `extract` talks to the network, so everything else is
-testable and debuggable offline.
+| Component | Used by | Responsibility |
+|---|---|---|
+| `decode` | both | Open the video, sample frames at a target rate, optionally burn an absolute timestamp onto each |
+| `windows` | windows | Plan overlapping windows; assign frames; cap frames per window |
+| `extract` | windows | One `(window, query)` → candidate events, via the model adapter |
+| `merge` | windows | Stitch candidates across window boundaries; de-duplicate; flag truncation |
+| **router** | states | Description → state pair, or **declined**. Decided before any GPU spend |
+| **`states.poll`** | states | Caption the clip on a grid, or only where the picture changed |
+| **`states.parse`** | states | Read which state a caption asserts. Deterministic — a model was tried here and scored 0.00 |
+| **`states.derive`** | states | Transitions → events, with confidence from agreement, sharpness and coverage |
+| `motion` | states | Inter-frame change signal, for triggered polling |
+| `schema` | both | The public contract, validated |
+
+Data flows one way. Only `extract` and `states.poll` talk to the network, so
+everything else is testable and debuggable offline.
 
 ---
 
 ## 5. Request flow
+
+**Approach 1 — ask the model when the event happened.** One call per
+`(window, description)`, doing three jobs at once.
 
 ```mermaid
 sequenceDiagram
@@ -199,6 +229,40 @@ sequenceDiagram
     F->>F: score, flag partials, validate
     F-->>C: events JSON
 ```
+
+**Approach 3 — caption, parse, derive.** The model is asked only what the scene
+*is*. Notice where the loop sits: once per **subject**, not once per description,
+and the model is never asked about time.
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant F as Finder
+    participant V as vLLM
+
+    C->>F: video + descriptions
+    F->>F: route each description to its state pair
+    Note over F: no pair → declined as not expressible,<br/>never as "no events found"
+    F->>F: group by state set — 9 descriptions, 4 subjects
+
+    loop each subject x each timestep
+        F->>V: frames + "what state is the door in?"
+        V-->>F: a sentence describing the state
+        F->>F: parse the state — string match, no model
+    end
+
+    loop each description
+        F->>F: find transitions into its target state
+        F->>F: place boundaries, refusing to interpolate<br/>across unobserved gaps
+        F->>F: confidence = agreement x sharpness x coverage
+    end
+    F->>F: validate
+    F-->>C: events JSON + the captions behind them
+```
+
+The asymmetry between the two is the finding. Approach 1 asks one question that
+requires detection, localisation and formatting together; Approach 3 asks a
+question with one job and does the rest in code.
 
 ---
 
@@ -414,6 +478,198 @@ The distinction the implementation draws is between **"the event ended here"** a
 
 ---
 
+### 6.7 Long video: how each approach answers the clause, and where one stops
+
+The brief is specific: *"Videos may be longer than what the model can look at in
+one go. Your service must handle that: decide how to sample frames, how to split
+the video into windows, how to merge or de-duplicate events that straddle window
+boundaries, and how to report an event the model saw only partially."*
+
+The two engines answer it differently, and one of them answers it by not having
+the problem.
+
+| clause | `windows` (Approach 1) | `states` (Approach 3) |
+|---|---|---|
+| sample frames | 4 fps, 640px, 48-frame cap — §6.2 | same sampler, same settings |
+| split into windows | 12s window, 9s stride, 3s overlap — §6.3 | **does not window** |
+| merge across boundaries | IoU 0.3, gap 0.5s, span cap 60s — §6.4 | **does not merge** |
+| report a partial event | the span touched a window edge — §6.6 | the span edge, **and** a state that could not be carried across an unobserved gap |
+
+The two "does not" entries are consequences of the design rather than omissions.
+**Approach 3 never fragments an event**, because each poll is independent and
+events are derived from transitions in one continuous timeline. There is no
+boundary for an event to straddle, so there is nothing to merge or de-duplicate,
+and the whole class of bug that §6.4 exists to prevent cannot occur. Its partial
+reporting is richer for the same reason: it can say *"the door was already open
+when the observed span began"*, which a window-edge test cannot express.
+
+**Where it stops is cost, not context.** Every poll shows 2 seconds, so the model's
+context limit is never approached at any video length — the thing the clause is
+really about is solved trivially. But polling is uniform over the whole clip, so
+calls scale linearly with duration and nothing chunks:
+
+```
+cost   = subjects x polls
+polls  = (duration - span_s) / step_s
+
+4 subjects, step_s 1.0, limits.max_model_calls 1000
+  →  polls <= 250  →  duration <= ~251 s  =  4.2 minutes
+  →  a 30-minute video needs 7,196 calls and is REFUSED
+```
+
+The ceiling moves with how many distinct subjects are asked about: one subject
+gives 1,000 polls, about 16.7 minutes; four gives 4.2. It is not a property of the
+model, and it is not the context limit -- every call shows 2 seconds whatever the
+video's length. It is the work budget meeting linear scaling.
+
+Worth being exact about what changed and when. Until `limits.max_model_calls` was
+extended to cover this path, there was no refusal at all: a 30-minute video would
+have run for roughly eight hours and produced a result. The guard converted a
+silent disaster into an explicit one, which is better and is not the same as
+solving it.
+
+So for long video, **Approach 1 handles it and scores 0.000; Approach 3 works and
+caps out at four minutes.** That is the honest position, and neither half of it
+should be quoted without the other.
+
+#### The fix, and why it is shaped the way it is
+
+Not built. But the design follows from the method's own premise rather than from
+taste, so it is worth stating precisely.
+
+**The premise is that the state is persistent.** A door that opens stays open for
+some duration. That has a consequence the uniform grid pays for and does not use:
+*a coarse grid cannot miss a transition, it can only fail to locate it.* As long
+as the polling interval is shorter than the shortest state, every change appears
+as a disagreement between two consecutive polls. Only the boundary is imprecise,
+and only the boundary needs refining.
+
+So: **poll coarsely, then bisect the disagreements.**
+
+```
+coarse pass    step 4s over the whole clip      detects every transition
+refine pass    bisect each disagreeing bracket  locates it to step_s
+```
+
+For a 30-minute clip with 4 subjects and ~20 transitions:
+
+| | calls | resolution |
+|---|---|---|
+| uniform at 1s (today) | 7,196 | 1s |
+| coarse 4s + bisection | ~1,960 | 1s |
+| coarse 8s + bisection | ~1,140 | 1s |
+
+**3.7x to 6.3x cheaper at identical resolution**, because the refinement is spent
+only where something changed — which is what triggered polling was trying to
+achieve, arrived at through the model's own answers instead of a pixel heuristic.
+
+The constraint is explicit and is the thing to get right: **the coarse step must be
+shorter than the shortest state you care about.** Our labelled door-open spans run
+about 4 seconds, so 4s is the safe ceiling on this data and 8s would risk a door
+opening and closing entirely between two polls. That is a measurable property of
+the domain, not a tuning knob.
+
+**Motion belongs here too, but inverted.** Today's triggered run used the change
+signal to *select* the top-12 peaks, and lost the event — it never sampled t=4.0s
+where the grid first reads *open*. Used instead as a **negative filter** — skip a
+coarse poll only where the signal is flat across the entire interval — it can only
+remove provably-static time, and a blind spot costs a skipped poll rather than a
+missed event. That is a far safer use of a signal whose blind spots are documented
+in `motion.py` and real.
+
+This shape is also what makes the approach streamable: a coarse pass over one
+chunk, refinement inside it, emit, carry only the last state forward. Bounded
+memory, bounded latency, and partial events at chunk edges already have a
+representation.
+
+#### Every request is serial, and the GPU is mostly idle
+
+The largest available saving, found last and by accident. From the model server's
+own log during the labelled run, on every line:
+
+```
+Running: 1 reqs, Waiting: 0 reqs, GPU KV cache usage: 1.8%
+```
+
+**One request in flight, ever.** vLLM exists to batch concurrent requests; this
+uses it as a single-request server, with the KV cache at ~2% and the GPU idle
+between generations.
+
+The unit to parallelise is already there. At each timestep the poller issues one
+call per subject -- four independent calls over identical frames, in a serial
+`for` loop. Firing them together is a thread pool around that loop and nothing
+else. Prompt throughput is already ~400 tok/s; generation is where the ~4s goes,
+and four generations at 2% cache occupancy should overlap almost entirely.
+Expected order: **2-3x on wall-clock**, larger than the decode fix and larger than
+coarse-to-fine.
+
+**Unlike the decode fix, this one is not result-neutral.** Concurrency changes
+request interleaving, which changes vLLM's batching, which changes floating-point
+reduction order -- precisely the mechanism recorded above under *"The same input
+does not always give the same answer"*, where one poll read `closed` and then
+`open` under different request histories in the same server. So it needs the same
+treatment as any other change here: run both ways inside one server session,
+compare timelines, and expect near-tie polls to move.
+
+**Why this was found last.** Every cost analysis in this document optimises the
+*number* of calls -- grouping by subject, triggered polling, shared captioning --
+and none of them questioned the cost *of* a call or whether calls could overlap.
+3.92 s/call was treated as a property of the model rather than of how it was being
+driven. The evidence was in the server log the whole time and was read as a
+progress counter. Optimising the algorithm before profiling the implementation is
+the wrong order, and it cost the largest win on the list.
+
+#### The decode cost is worse than the model cost, and it is quadratic
+
+Stated above as if model calls were the binding constraint. **They are not.**
+`sample_frames` decodes from the start of the file on every call -- there is no
+`container.seek()` -- so a poll at t=118s decodes 118 seconds of video to obtain
+two. Measured on `admin.G326`, one poll:
+
+```
+start_s=   0.0   0.26 s
+start_s=  30.0   1.12 s
+start_s=  60.0   1.95 s
+start_s=  90.0   2.84 s
+start_s= 118.0   3.69 s        ~0.029 s per second of offset
+```
+
+Summed over a clip's polls that is quadratic in duration:
+
+| clip length | decode, polls only | against model time |
+|---|---|---|
+| 120s | **235s (~3.9 min)** | ~11% on top of 31 min |
+| 1800s | **~13 hours** | dwarfs the ~8 hours of model calls |
+
+It also accounts for the gap between predicted and observed clip time in the
+labelled run -- 31 minutes of model calls, 35-38 minutes elapsed.
+
+**The fix is `container.seek()` to the keyframe before `start_s`.** A few lines.
+120s of polls drop from 235s to about 31s; 1800s drops from 13 hours to about 8
+minutes.
+
+**It is a prerequisite for the coarse-to-fine design above, not an alternative to
+it.** Coarse-to-fine cuts model calls 3.7-6.3x and barely touches decode:
+
+```
+30-minute clip, coarse 4s -> 450 polls
+  decode without seek    450 x ~26s avg  =  3.3 hours    still dominates
+  decode with seek       450 x 0.26s     =  ~2 minutes
+```
+
+So neither change makes long video work alone. Together they put a 30-minute clip
+at roughly 2.2 hours, dominated by model calls -- which is the regime the work
+budget was designed to govern.
+
+**Not built, and it must be verified rather than trusted.** A subtly wrong seek
+changes *which frames are sampled*, which changes every downstream number while
+still looking entirely reasonable -- the exact failure class this document keeps
+recording. The check is cheap and decisive: sample the same windows with and
+without seek and assert the frame timestamps are identical. Nothing about accuracy
+changes if it is right; if it is wrong, everything does.
+
+---
+
 ## 7. The model adapter
 
 `extract` is the only component that knows a model exists, and it talks to it
@@ -539,7 +795,6 @@ the reviewer's setup to one standard vLLM container.
   "video": "warehouse_02.mp4",
   "duration_s": 142.6,
   "queries": ["a forklift reverses"],
-  "model": "nvidia/Cosmos3-Edge",
   "events": [
     {
       "description": "a forklift reverses",   // which query this matched
@@ -547,12 +802,38 @@ the reviewer's setup to one standard vLLM container.
       "end_s": 15.10,
       "confidence": 0.82,                     // ranking signal, NOT a probability
       "evidence": "forklift moving backward toward the rack",
-      "partial": false,                       // true if truncated by an observation edge
-      "source_windows": [1, 2]                // provenance
+      "partial": false,                       // true if the true extent is unknown
+      "source_windows": [1, 2]                // provenance; empty for `states`
     }
+  ],
+  "run": {                                    // how this result was produced
+    "model": "nvidia/Cosmos3-Edge",
+    "backend": "vllm",
+    "sample_fps": 4.0,
+    "window_s": 12.0,                         // span_s under the `states` strategy
+    "stride_s": 9.0,                          // step_s under the `states` strategy
+    "windows": 16,
+    "model_calls": 16,
+    "elapsed_s": 62.4,
+    "stub": false                             // stub results are refused by the eval
+  },
+  "polls": [                                  // `states` only; null otherwise
+    {"t": 12.0, "subject": "forklift", "state": "the forklift is moving",
+     "truncated": false, "text": "The forklift is moving backward..."}
   ]
 }
 ```
+
+The exact shape is generated from the code, not transcribed by hand:
+
+```bash
+make schema          # writes schema.json, the JSON Schema for this contract
+```
+
+That matters because this section was wrong for a while in three ways at once --
+it showed a top-level `model` that does not exist, and omitted `run` and `polls`
+which do. Prose describing a contract drifts from the contract; a generated
+artifact cannot.
 
 `evidence` and `source_windows` are there so a result can be argued with. A client
 who disagrees with a detection can see what the model claimed to see and which part
@@ -984,6 +1265,67 @@ phrasing — *"a plain-language description of what to look for"* — and it doe
 work. Approach 2 exists because Approach 1's failure was specific enough to point
 at a different design.
 
+### Why one call was the wrong shape
+
+Approach 1 issued **a single model call per (window, description)** and asked it to
+do three jobs at once:
+
+1. decide whether the described event is present in these frames
+2. locate its start and end
+3. report those times in valid JSON with a confidence
+
+The measured failure separates cleanly along those lines. It could do (3) after the
+parser repair — 28 of 30 responses parsed. It could do (2) when told the event was
+present — 3.5 s median boundary error on synthetic clips. It could not do (1) at
+all: an event was reported on 47% of pairs where one existed and 39% where none
+did. One capability out of three, and the call returned a single answer that mixed
+them, so a wrong output never said which stage had failed.
+
+That is the general failure of a complex single call: **the output cannot be
+attributed to a stage, so it cannot be debugged.** Every diagnostic that eventually
+worked came from splitting the job — the probe separated localisation from
+detection, and the caption stage separated perception from scoring. Neither was
+visible while one call did everything.
+
+Approach 3 is the decomposition:
+
+```
+caption (model)  ->  parse state (code)  ->  derive transition (code)
+```
+
+One model call does one thing it is good at — describing what is visible. The two
+stages that were silently wrong in Approach 1, deciding presence and reporting
+time, are now deterministic code whose behaviour can be tested without a GPU.
+
+### Routing: choose the engine from the sentence
+
+Not every description decomposes into a state. Ten of our fifteen labelled events
+do; five do not, and no prompt engineering changes that — *"someone hands an object
+to another person"* is a relation between two actors, not a binary property of one
+object.
+
+So the strategy is a **routing decision made from the client's sentence, before any
+GPU time is spent**:
+
+| the description… | engine |
+|---|---|
+| names a persistent thing with two states | `states` — caption, parse, derive |
+| does not | reported as **not expressible**, not answered |
+
+**Why "not expressible" rather than falling back to `windows`.** Approach 1 is
+available and would produce an answer for those five. It would also be an answer we
+have measured as uninformative — R@1 0.000, and presence reported at nearly the
+same rate whether or not the event occurs. Returning a known-bad answer where a
+client expects a real one is worse than returning nothing and saying why. The
+brief asks for a system a client can call; part of that is refusing questions the
+system cannot answer.
+
+**What is implemented:** `states_map` presence acts as the router — a description
+with no entry is skipped and reported. **What is not:** deriving the state pair
+from the sentence automatically, so a human still writes the mapping. That is one
+cheap text call, and it would correctly fail to produce a pair for the five, which
+is the router's decision function falling out of the derivation step.
+
 ### Approach 1 — ask when the event happened
 
 Sample frames, burn absolute timestamps onto them, split into overlapping windows,
@@ -1296,6 +1638,255 @@ fix is more labelled clips, held back and scored once. That is stated here rathe
 than presented as a limitation of scope, because it is the difference between "6
 of 10" and "6 of 10, measured on the data it was tuned against".
 
+### Triggered polling, and the first full-clip run
+
+Every number above came from short windows placed around a known label. The first
+run over a **whole 120-second clip** (`admin.G326`, *"a person opens a building
+door"*) is the honest test of the method, and it changed three things.
+
+Uniform polling at 1s: **119 calls, 453s**. The timeline is almost entirely
+constant — closed for 0–5, open for 6–8, closed for 9–93, open for 94–96, closed
+after — so the grid spent the overwhelming majority of its budget confirming that
+nothing had happened. 18 of 119 polls (15%) returned no state at all: the
+description asserted neither open nor closed, and the parser declined rather than
+guessing.
+
+Driving the same polls from the change signal (`motion.py`, top-12 peaks):
+**12 calls, 68s** — 9.9x fewer calls, 6.9x faster. Nine of the twelve calls landed
+inside the two events, so the signal found the right places.
+
+It then lost the event anyway. Both runs below come from **one server instance**,
+which turns out to matter:
+
+| | calls | time | event 1 | tIoU vs label | event 2 |
+|---|---|---|---|---|---|
+| uniform, 1s grid | 119 | 467s | 3.50–8.50 @ 1.0 | **0.406** | 93.50–96.50 @ 1.0 |
+| triggered, top-12 | 12 | 68s | 6.25–9.50 @ 0.4, partial | **0.000** | 93.25–95.75 @ 0.4 |
+
+The triggered interval begins after the label ends. The cause is specific: the
+uniform grid first reads *open* at **t=4.0s**, and the trigger never polls there.
+`trigger_min_gap_s` forbids two polls closer than 2s — including at the strongest
+peak, which it had correctly identified. **The change signal finds where; the
+spacing rule then prevents it from resolving when.** That is an argument for
+triggering to locate brackets and sweeping densely inside them, not for triggering
+alone, and it is why `trigger` is off by default.
+
+An earlier version of this table showed the two strategies within 0.75s of each
+other. That comparison was invalid — the runs came from different server
+instances, and the model's answer at one poll differs between them.
+
+**Cost matters here, not as an optimisation but as a feasibility bound.** At 3.8s
+per call, uniform polling of the 13 descriptions across the 8 eval clips is about
+13 hours. The grid is not merely wasteful; it puts the full eval out of reach on
+one GPU.
+
+#### What the full-clip run broke
+
+The first triggered run reported event 1 as **6.25–48.75s** — a 42-second interval
+for a 3-second event — with **confidence 1.0**, on evidence that read *"the door is
+open in all frames."*
+
+Nothing was wrong with the polls. The derivation assumed a uniform grid and kept
+that assumption after the grid was removed. A transition was placed at the
+**midpoint of its bracket**, which is a fair estimate when consecutive polls are
+one step apart and meaningless when they are 82 seconds apart: the door was seen
+open at 7.5s and closed at 90.0s, and the midpoint of that gap is 48.75s. The
+boundary was invented inside unobserved time.
+
+The confidence was worse than the interval. It is the fraction of polls inside the
+span agreeing on the target state, and exactly one informative poll fell inside —
+1/1 = 1.0. That is structurally the same failure as Approach 1's stated
+confidence, whose merged values clustered on constants the code produces --
+0.97 x23 is the merge ceiling itself: a number that
+ranks nothing, arrived at by a different route.
+
+Two changes, both in the derivation rather than the polling:
+
+1. **A state is not carried across an unobserved gap.** Past `carry_steps x
+   step_s`, `states.edge` stops interpolating and reports what was observed: a
+   poll at `t` is evidence about the window `[t, t + span_s]` it was sampled from
+   and nothing outside it, so the span ends there and is marked **partial**.
+   Unknown is not the same as unchanged. This turns 6.25–48.75 into 6.25–9.50.
+2. **Boundary sharpness reaches confidence.** `confidence = agreement x
+   sharpness`, where sharpness is `step_s / widest interpolated bracket`. The same
+   two events now score 1.0 from the uniform grid and 0.4 from the trigger — same
+   events, same states, different evidential strength.
+
+#### What it did not fix
+
+Accuracy. Against the hand label (3.0–5.733s), uniform scores tIoU **0.036** and
+the triggered run scores **0** — its interval starts at 6.25, after the label
+ends. The fix made the output honest, not correct.
+
+The residual is the state-vs-event mismatch already described below: MEVA labels
+the person reaching for and working the knob from 3.0s; the model reports the door
+**visibly open** from ~6s. Both readings were confirmed by hand on this clip. That
+offset is definitional and it caps achievable tIoU on short events no matter how
+dense the polling gets.
+
+#### The same input does not always give the same answer
+
+Temperature is 0, yet the model's answer at one poll moved between runs. Chasing
+it down produced three measurements, in order:
+
+1. **Within one server instance, repeats are bit-identical.** The same triggered
+   command five times: identical timelines, identical intervals, identical
+   confidences. Whatever varies, it is not per-request sampling.
+2. **Across a server restart, the answer changes.** The poll at t=5.0s read
+   *closed*, then *open* after a redeploy, then *closed* again after
+   `serve-down && serve-bg`. The uniform run's first *open* moved from t=6.0 to
+   t=4.0 across the same restart.
+3. **Within one instance, the same frames give different answers under different
+   request histories.** In a single server session, the triggered run read t=5.0
+   as *closed* and the uniform run sixty seconds later read it as *open*. Both
+   sample `[t, t + span_s]` through the same code path, so the frames were
+   identical; the only difference is that one had issued 4 prior requests and the
+   other 5.
+
+The most likely cause is vLLM's batching and prefix-cache state changing
+floating-point reduction order, which flips only near-ties — and t=5.0 is exactly
+a near-tie, since the door panel begins to swing at ~5.0s on this clip. That is a
+**hypothesis**, not a measurement: confirming it needs logprobs at that poll across
+states, which has not been run.
+
+What is established is enough to act on. **A number from this pipeline is a
+property of (input, code, server instance, request history), not of (input, code)
+alone.** Comparisons are therefore only valid inside a single server session, and
+the uniform-vs-triggered table above was re-run for that reason. Results reported
+without that scope — including two figures in an earlier revision of this document
+— compared different things and said so confidently.
+
+#### Poll timestamps and window extents disagree
+
+`_poll_states` samples `[t, t + span_s]` and records the poll at `t`, while
+`parse_state` takes the last state mentioned — so a window in which the state
+*changes* reports its **ending** state. With `step_s=1.0` and `span_s=2.0` those
+two conventions are 2 seconds apart, and consecutive polls overlap by half.
+
+On the fresh uniform run, t=3.0 (window 3.0–5.0) read *closed* and t=4.0 (window
+4.0–6.0) read *open*. Those windows overlap and disagree, so the change is bracketed
+only to their **union, 3.0–6.0**. The derivation reports 3.50 — the midpoint of the
+poll labels — which is a convention, not a measurement. Under the parse's own
+semantics it should be nearer 5.5.
+
+This matters more than it looks, because **the bias is currently helping the score
+for the wrong reason.** The model reports the door *visibly open* later than MEVA's
+*opening* activity; the timestamp convention shifts every boundary earlier. Two
+errors point in opposite directions and partly cancel, and the 0.406 above banks
+that cancellation.
+
+`span_s == step_s` removes the ambiguity at **no extra cost** — the call count is
+set by `step_s` alone — and it was run, in the same server session as the table
+above. The prediction was that the headline number would get worse. It did not
+move at all:
+
+| | event 1 | tIoU | event 2 | extra events | calls | time | `None` polls |
+|---|---|---|---|---|---|---|---|
+| `span_s=2.0` | 3.50–8.50 @1.0 | 0.406 | 93.50–96.50 | — | 119 | 467s | 18 |
+| `span_s=1.0` | 3.50–8.50 @1.0 | 0.406 | 93.50–97.50 | **71.50–72.50 @1.0** | 120 | 433s | 5 |
+
+The model reads t=3.0 as *closed* and t=4.0 as *open* under both settings, so the
+bracket never changes and neither does the interval. The overlap ambiguity is real
+in principle and does not bite on this clip; the experiment **does not separate the
+two cancelling errors**, and the question stays open rather than resolved in either
+direction.
+
+Two side effects are worth keeping. Shorter windows made the model far more
+decisive — `None` fell from 18 polls to 5 — and 7% faster, four frames per call
+instead of eight. They also produced a **spurious event from a single poll**:
+t=72.0 read *open* between *closed* neighbours, and the derivation emitted
+71.50–72.50 **at confidence 1.0**.
+
+That is the third appearance of one failure. Agreement is 1/1 and the bracket is
+one step wide, so both existing factors are maximal, and a one-poll blip scores
+exactly like a five-poll event. Confidence measures how *consistent* and how
+*sharp* an interval is, and nothing about how much evidence stands behind it.
+`span_s` stays at 2.0 — it gains nothing on the real event and costs a false
+positive — and the missing third factor is corroboration.
+
+#### The ground truth is not exhaustive, and now we can prove it
+
+The run also found a door event at **94–96s that our labels do not contain**. It
+was checked by hand and **it is real**.
+
+It is absent because MEVA never annotated it. The annotation file for the entire
+five-minute source holds exactly two activity instances — `Open_Facility_Door` at
+source 85.2–87.9s and `Enter_Facility` at 87.4–89.7s, both of which are in our
+clip and both of which we labelled. Our labels reproduce that file completely.
+There is no third entry.
+
+So MEVA is an annotation of **selected activity instances**, not an index of
+everything that happens on camera. Two things follow:
+
+- **`precision@0.5` is a lower bound, not a measurement.** It is `tp / n_preds`,
+  so a correct detection of an unannotated event sits in the denominator and can
+  never be a true positive. On this clip one of the two detections was charged as
+  an error while being right.
+
+  The other metrics are not affected, and it is worth being exact about why.
+  `false_positive_rate` keys on (video, description) pairs, and this clip does
+  carry that description as a truth, so the extra detection is not counted
+  spurious. `mean_tIoU` and `mean_relative_error` iterate over truths and take the
+  best matching prediction, so surplus predictions cannot reach them. Precision is
+  the only channel through which an incomplete reference reaches the score.
+- **Full-clip running makes this visible in a way windowed evaluation cannot.**
+  Windows placed around known labels can only ever find labelled events; they
+  structurally cannot surface this class of miss.
+
+This does not rescue the tIoU numbers — those measure boundary placement on events
+that *are* labelled, and they remain poor. It bears on precision only.
+
+### Making the full eval affordable
+
+Scoring Approach 3 across the labelled set is the one thing standing between the
+measured work and a shippable claim, and until now it was priced out of reach.
+Every description ran its own sweep of every clip: 8 clips x 9 expressible
+descriptions x 119 polls = **8,568 calls, 9.3 hours** at the measured 3.92 s/call.
+
+Two things reduce that, and neither touches polling density — the timestamps, the
+boundaries and every reported interval stay exactly as they are.
+
+**Descriptions are not subjects.** The nine expressible descriptions reduce to
+four subjects:
+
+| subject | states | descriptions served |
+|---|---|---|
+| door | closed / open | opens a building door, enters through the door, comes out through the door |
+| car door | closed / open | a vehicle door opens, gets into a vehicle, gets out of a vehicle |
+| person | standing / sitting | sits down, stands up |
+| vehicle | moving / stationary | a vehicle stops moving |
+
+Polling each description separately sends identical frames with an identical
+question and pays for the identical answer. Grouping is keyed on the state **set**,
+so *sits down* (standing → sitting) and *stands up* (sitting → standing) share one
+sweep — the poll asks what state the person is in, and which direction counts as
+the event is decided afterwards, in `_events_from_states`. That is a 2.3x saving
+with no quality risk of any kind.
+
+**Subjects need not be separate calls either.** `shared_caption` asks about every
+subject in one call per timestep, one labelled line each, and parses each line
+alone. That collapses the remaining four sweeps into one.
+
+| | calls | wall-clock | resolution | risk |
+|---|---|---|---|---|
+| one sweep per description | 8,568 | 9.3 h | full | — |
+| grouped by state set | 3,808 | 4.1 h | full | none |
+| + shared caption | **952** | **~1.0–1.5 h** | full | attribution |
+
+The risk in the last row is specific and is why it is **off by default**. A single
+caption covering four subjects may mention none of them clearly, and — worse — "the
+car door is open and the building door is closed" contains both answers, so a
+last-mention parse over the whole text would assign the same state to both. The
+mitigation is structural rather than hopeful: the model is asked for one labelled
+line per subject, `split_by_subject` matches longest-subject-first so *car door*
+wins over *door*, and **a subject with no line is reported as no answer rather than
+inheriting a neighbour's.** An honest gap is cheaper to live with than a plausible
+mistake.
+
+Whether the parse rate survives the shared prompt is measurable and **not yet
+measured**. Until it is, the default stays one call per subject, which is still
+2.3x cheaper than what was there before.
+
 ### The boundary of the approach
 
 The method's primitive is **a persistent binary property of one object**. Every
@@ -1308,17 +1899,30 @@ Sorting the fifteen labelled events by the *shape* of what is being asked:
 |---|---|---|
 | configuration of one object | door open / closed | **yes** — 6 of 6 door events hit |
 | posture of one actor | sitting / standing | expressible, but fails when several people are present |
-| **motion** | *"a vehicle reverses"*, *"the machine stops moving"* | **no** — not readable from a single window |
+| **direction of motion** | *"a vehicle reverses"* | **no** — a window shows position, not which way it is going |
+| **presence of motion** | *"the machine stops moving"*, *"a vehicle stops moving"* | **expressible** — `moving / stationary`. Several frames in one window do show whether a thing is where it was |
 | **relation between actors** | *"someone hands an object to another person"* | **no** — not a state of any one object |
 | **compound or abstract** | *"a person buys something"*, *"a vehicle drops someone off"* | **no** — a sequence, not a state |
 
-Two of the brief's three worked examples — *"a forklift reverses"* and *"the
-machine stops moving"* — are motion, and fall outside.
+**"Motion" is two different questions and only one of them is outside.**
 
-**Motion is not a state.** It has failed under every framing tried: event queries,
-state polling, pairwise comparison, and captions. A single 2-second window shows
-position, not velocity. Expressing it needs a different primitive — comparing
-consecutive captions for movement language rather than classifying one.
+*Being stationary* is a persistent property: a 2-second window contains several
+frames, and a thing in the same position across all of them is observably not
+moving. So *"the machine stops moving"* decomposes to `moving / stationary`, and
+`states.json` carries exactly that pair for *"a vehicle stops moving"*. It is
+expressible. Whether the model actually reads it is a separate question, and one
+the labelled set answers — `school.G300` carries that event.
+
+*Direction* is not. *"A forklift reverses"* asks which way a thing is going, and a
+window of positions does not carry a sign. It has failed under every framing
+tried: event queries, state polling, pairwise comparison, and captions. Expressing
+it needs a different primitive — comparing consecutive captions for movement
+language rather than classifying one.
+
+So of the brief's three worked examples, *"a person enters through the door"* and
+*"the machine stops moving"* are in shape, and *"a forklift reverses"* is not. An
+earlier version of this table lumped both motion questions together and claimed
+two of three fell outside. That was pessimistic and wrong.
 
 **Relations are not states.** *"Someone hands an object to another person"* is a
 relation between two actors evolving over time. There is no object whose binary
@@ -1336,8 +1940,10 @@ door"* into `closed / open` before anything runs. That is one cheap text call an
 is not built — though it would hit the same wall, since no phrasing turns a
 relation into a binary state.
 
-**Resolution is the step size.** A transition can be located no more precisely than
-the polling interval, which is why scoring uses a tolerance of one step.
+**Resolution is the bracket width, not the step size.** Under uniform polling those
+are the same thing, which is why scoring uses a tolerance of one step. Under
+triggered polling they are not: resolution is set by wherever the motion peaks
+happened to fall, and the reported confidence now carries that difference.
 
 **No held-out set.** Every clip that produced a number also shaped a prompt, a
 threshold or a state pair. The fix is more labelled clips, not a post-hoc split.

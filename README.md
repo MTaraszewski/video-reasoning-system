@@ -1,589 +1,394 @@
 # Video Reasoning System
 
-**Find events in a video from a plain-language description.** Give it a video and
-a phrase — *"a person enters through the door"*, *"the machine stops moving"* — and
-get back when it happened, with start and end times, in a strict JSON schema.
+**Find events in a video from a plain-language description.** Give it a video and a
+phrase — *"a person opens a building door"*, *"a vehicle stops moving"* — and get
+back when it happened, with start and end times, in a strict JSON schema.
 
 ```
-find_events(video, ["a forklift reverses"]) → [{start_s, end_s, description, confidence}, …]
+find_events(video, ["a person opens a building door"])
+  → [{start_s: 3.5, end_s: 8.5, description: …, confidence: 1.0, partial: false}, …]
 ```
 
 The client never sees frames, windows, prompts, or the model. That concealment is
 the product.
 
----
-
-## The research question
-
-The interesting problem is not calling a model. It is this:
-
-> **A video-reasoning model can only look at a few seconds at a time, and its
-> ability to place events in time is asserted but undocumented. How far does that
-> ability actually go, and what has to be built around it to make it usable?**
-
-NVIDIA's **Cosmos 3 Edge** is claimed to *"localise events with timestamps when
-prompted correctly"*. Its model card says nothing about temporal localisation. So
-the claim is treated here as **a hypothesis to test**, not a specification to build
-on.
+Model: **NVIDIA Cosmos 3 Edge** (4B), served by vLLM v0.29.0 on a single L4.
+Everything runs in Docker. Nothing runs on the host.
 
 ---
 
-## How this was approached
+## Executive summary
 
-As an investigation, not a build. Five stages, in order:
+**The obvious design does not work, and we can prove the failure is the design
+rather than the data.** Sliding a window and asking the model *when* an event
+happened scores **mean tIoU 0.000** across four hand-labelled clips — no overlap
+with any label at all. Asking it only *what the scene is*, repeatedly, and deriving
+the event from state changes in code scores **0.292**.
 
-**1 — Establish what is actually true.** Every model, licence, VRAM figure and
-serving command verified against a primary source before it entered a document or a
-decision. Claims are tagged: `?` unknown · `D` vendor-documented, untested here ·
-`B` asserted by a third party · `PASS`/`FAIL` measured here. Nothing is promoted
-without evidence. → [`PLAN.md §1`](PLAN.md)
+| | Approach 1 — ask *when* | Approach 3 — caption, parse, derive |
+|---|---|---|
+| **mean tIoU** | **0.000** | **0.292** |
+| R@1 tIoU≥0.3 | 0.000 | **0.375** |
+| recall@0.5 | 0.000 | 0.250 |
+| predictions / truths | 14 / 8 | 153 / 8 |
 
-**2 — Design around the uncertainty.** The model sits behind an adapter precisely
-because its localisation mechanism is unconfirmed, so a negative result costs a
-config change rather than a redesign. → [`DESIGN.md`](DESIGN.md)
+Four things make that more than a number:
 
-**3 — Measure the model before measuring the system.** A capability probe runs
-first, on synthetic clips with *exact* constructed ground truth, to find the
-**precision floor** — the best boundary accuracy achievable before any windowing is
-layered on. Without it, a mediocre score is unattributable: model error and
-pipeline error cannot be told apart. → [`DESIGN.md §10`](DESIGN.md)
+**1. The failure is the formulation, not the footage.** On MEVA's curated clips —
+where the activity name is printed in a box around the person doing it — Approach 1
+*still* scores mean tIoU **0.018**. Given the answer written on the frame it cannot
+localise. Tuning prompts on clean video was never going to help.
 
-**4 — Choose evidence that can disprove things.** Clips are selected to stress
-*distinct failure axes* — fast motion, small similar objects, absence of motion,
-overhead views, short events, crowds — not to flatter the system. Three of those
-axes come from weaknesses Roboflow itself published about Cosmos 3.
-→ [`DATASETS.md`](DATASETS.md)
+**2. The diagnosis came before the fix.** One call was being asked to decide
+presence, locate boundaries, and format JSON. Probes showed it can format (28 of 30
+parsed) and can localise when told the event is present (3.1 s median error), and
+cannot decide presence — it reported an event on 47% of pairs where one existed and
+39% where none did. Approach 3 is that decomposition made explicit: the model
+perceives, code does the temporal reasoning.
 
-**5 — Report what was found, including the negative results.** Every choice, the
-alternatives rejected, and the decisions that reversed under new evidence.
-→ [`DECISIONS.md`](DECISIONS.md)
+**3. The ranking signal earns its place.** Confidence is `agreement × sharpness ×
+coverage`, each factor forced by a specific observed failure. At threshold 0.8,
+**77% of predictions can be dropped with no loss of recall, R@1 or mean tIoU.**
+Approach 1's confidence could not do this — 48 of its 81 values were constants
+produced by our own merge code.
+
+**4. It declines questions it cannot answer.** Four of thirteen descriptions do not
+decompose into a state — *"someone hands an object to another person"* is a
+relation, *"a forklift reverses"* is a direction. They are reported as **not
+expressible**, never as "no events found", because returning a known-bad answer
+where a client expects a real one is worse than returning nothing and saying why.
+
+**What it costs:** 1,109 s and $0.377 per video-minute on a single L4.
+
+**What it cannot do yet:** precision is poor (153 predictions for 8 truths, 35
+after thresholding); neither approach reaches tIoU≥0.7, which is the ~3 s
+localisation floor measured before any windowing; the evaluation covers four clips,
+not eight; state pairs are hand-written; and long video is capped at ~4 minutes by
+a decode cost that is quadratic and a fix that is measured but unbuilt. All of that
+is in [Improvements](#improvements--measured-not-built) and
+[Not done](#not-done-and-why).
+
+---
+
+## Quickstart — no GPU, two minutes
+
+```bash
+make preflight        # can this host run it at all?
+make build            # build the CPU image
+make demo             # end-to-end on a generated clip, stub backend
+```
+
+`make demo` uses a stub model, so the output is synthetic and the eval harness
+refuses to score it. It proves the pipeline, not the model.
+
+## Check everything works before renting a GPU
+
+```bash
+make smoke
+```
+
+Runs every check that needs no GPU and reports each one: the host, the image, the
+pipeline end to end, the labelled data, the decoder, and the **real** model adapter
+against a fake endpoint that returns refusals, hallucinations, malformed JSON and
+think-blocks. Takes about three minutes.
+
+It does not prove the model works — nothing in it touches real weights.
+
+## Reproduce the measured results — needs one GPU
+
+```bash
+make preflight                    # can this host run it at all?
+make build                        # build the CPU image
+make data-eval                    # rebuild the 8 labelled clips from public sources
+make pull                         # pull the pinned vLLM image (large; do it early)
+make serve-bg && make serve-wait  # start the model, block until it answers
+
+make eval                                                 # Approach 1   ~1.2 h
+make eval STRATEGY=states EVAL_OUT=/out/eval-states.json   # Approach 3   ~4.1 h
+
+make serve-down
+```
+
+**That is 5.3 hours end to end.** Add `EVAL_LIMIT=4` to both for a ~3-hour version,
+or `EVAL_LIMIT=1` to prove the whole path works in about ten minutes before
+committing a GPU to the rest.
+
+`EVAL_OUT=` is not optional on the second command. Both write `/out/eval.json` by
+default, so without it the second run silently overwrites the first — a trap that
+cost two comparisons during development.
+
+`make data-eval` downloads from MEVA's **public** bucket over plain HTTPS — no AWS
+account, no credentials, no `aws` CLI. The clips are not in the repository;
+`labels.json` is, and it carries the source file, trim offset and duration for each
+clip, which is enough to rebuild the set byte-identically.
+
+`make vars` prints every setting and what it controls. `make help` lists all
+targets, each tagged `[any]`, `[local]` or `[gpu]`.
+
+## Re-run any experiment
+
+Each row reproduces one section of [EXPERIMENTS.md](EXPERIMENTS.md). Rows marked
+`[gpu]` need `make serve-bg` first.
+
+| # | experiment | command |
+|---|---|---|
+| 1–2 | capability probe, prompt sweep | `make data-synthetic && make probe` `[gpu]` |
+| 2 | overlay legibility | `make frames-sweep` |
+| 3 | screen clips by actor size | `make meva-index && make meva-screen` |
+| 4 | contact sheets for hand-labelling | `make event-sheets` |
+| 5 | **Approach 1, full eval** | `make eval` `[gpu]` |
+| 6 | two-stage detect | `make eval DETECT=1` `[gpu]` |
+| 7 | second model | `make model-sweep-probe` `[gpu]` |
+| 9 | Approach 3, one clip, full length | `make run VIDEO=… QUERIES="…" STRATEGY=states` `[gpu]` |
+| 10 | triggered polling | add `TRIGGER=1` to the above `[gpu]` |
+| 12 | non-overlapping poll windows | add `SPAN_S=1.0` to the above `[gpu]` |
+| 13 | **Approach 3, full eval** | `make eval STRATEGY=states EVAL_OUT=/out/eval-states.json` `[gpu]` |
+| 13 | with shared captioning | add `SHARED=1` to the above `[gpu]` |
+
+A concrete single-clip run:
+
+```bash
+make run VIDEO=data/eval/2018-03-07.16-50-01.16-55-01.admin.G326.r13.mp4 \
+  QUERIES="a person opens a building door" STRATEGY=states
+```
+
+Two things to know before comparing runs. `make run` always writes
+`out/events.json`, so **copy it between runs** or the second overwrites the first.
+And a result depends on which vLLM server instance produced it — comparisons are
+only valid inside one `serve-bg` session (experiment 11).
+
+---
+
+## How this started, and how it changed
+
+**The brief** asks for a service that finds events described in plain language. The
+interesting problem is not calling a model:
+
+> A video-reasoning model sees a few seconds at a time, and its ability to place
+> events in time is asserted but undocumented. How far does that ability go, and
+> what has to be built around it?
+
+NVIDIA claims Cosmos 3 Edge *"localises events with timestamps when prompted
+correctly"*. Its model card says nothing about temporal localisation. So the claim
+was treated as a hypothesis to test.
+
+**Approach 1 — ask the model when the event happened.** Slide a 12-second window,
+ask for every moment matching the description, merge across overlaps. This is the
+obvious design and it is what was built first.
+
+It scored **mean tIoU 0.0021 and R@1 0.000** across 8 clips and 15 hand-labelled
+events. Worse than the score was the shape of the failure: the model reported an
+event at nearly the same rate whether one was present (47%) or absent (39%), and 7
+of 81 emitted events carried evidence that **denied** the event — *"Empty hallway
+with a closed door and no visible people"* — at the model's own stated confidence
+of 1.0.
+
+**The diagnosis.** One call was being asked to do three jobs: decide whether the
+event is present, locate its boundaries, and format the answer. Probes showed it
+can do the third (28 of 30 parsed) and the second when told the event is present
+(3.1s median error). It cannot do the first. Mixing all three into one answer meant
+a wrong output never said which stage had failed.
+
+**Approach 2 — ask the model to compare two moments.** If it cannot say *when*,
+perhaps it can say *which of these two spans* shows the event. A comparison is a
+smaller question than a localisation.
+
+It failed for a reason that had nothing to do with vision. Averaged over both
+option orders, it scored **exactly 0.00 on every description** — the signature of
+answering by *position* rather than content. Asked "A or B" it reliably picked
+whichever came last, and reversing the order reversed the answer.
+
+The lesson shaped what came next: **ask the model to describe, not to choose.** A
+free-form sentence has no options to be biased by, and the choosing can be done
+afterwards in code where it is deterministic.
+
+**Approach 3 — caption, parse, derive.** Ask only what the scene *is*, repeatedly:
+*"what state is the door in?"* Parse the answer in code. Derive the event from the
+transition between states. The model does perception, which it can do; the code
+does temporal reasoning, which it cannot.
+
+On `admin.G326`, the same clip where Approach 1 reported the door opening at
+90–102s against a 3.0–5.7s label, Approach 3 returns **3.50–8.50s, tIoU 0.406**.
+
+**Routing.** Not every description decomposes into a binary state. *"Someone hands
+an object to another person"* is a relation between two actors; *"a vehicle
+reverses"* is motion, which a single window cannot show. Four of the thirteen
+labelled descriptions are like that. They are reported as **not expressible** —
+never as "no events found", because the failure is a property of the request, not
+of the model, and returning a known-bad answer where a client expects a real one is
+worse than returning nothing and saying why.
+
+Both approaches stay runnable behind one `find_events`, switched by a flag, so the
+comparison is one argument apart rather than one branch apart.
 
 ---
 
 ## Results
 
-> **Status: measured.** `nvidia/Cosmos3-Edge` was served on an NVIDIA L4 via vLLM
-> 0.29.0 and run against the hand-labelled set — 1,352 model calls, plus a
-> capability probe on synthetic clips and a second probe on the real ones. Every
-> number below was measured on that hardware. Nothing here is projected.
->
-> **The result is negative, and that is the result.** The brief asks where the
-> limits of these models are. We found a specific, reproducible one.
+Both approaches, scored by the same harness on the same four clips, eight
+hand-labelled events:
 
-### Leaderboard — models × temporal grounding
-
-The first six columns come from the **eval** — real clips, hand labels, full
-cross-product. The last two come from the **probe** — synthetic clips, exact
-ground truth, event guaranteed present. They are different experiments and are
-not comparable with each other; both are shown because a model can be measured by
-one and not the other.
-
-| Model | Size | R@1 @0.3 | R@1 @0.5 | R@1 @0.7 | mean tIoU | mean rel. err | s / video-min | probe: answered | probe: median err |
-|---|---|---|---|---|---|---|---|---|---|
-| `nvidia/Cosmos3-Edge` | 4B | **0.000** | **0.000** | **0.000** | **0.002** | **3.151** | **268** | **100%** | **3.50 s** |
-| `nvidia/Cosmos-Reason2-2B` | 2B | not run | not run | not run | not run | not run | not run | **20%** | **9.50 s** |
-| `nvidia/Cosmos-Reason2-8B` | 8B | not run | not run | not run | not run | not run | not run | not run | not run |
-| `Qwen/Qwen3-VL-8B-Instruct` | 8B | not run | not run | not run | not run | not run | not run | not run | not run |
-
-Both probe columns are the `overlay` prompt at 4 fps, so those two rows are
-like-for-like. "not run" is literal — no cell here is estimated.
-
-Cosmos3-Edge is the only model given the full eval. **Cosmos-Reason2-2B was
-probed** (result below); the two 8B models were not run at all — they need ~40 GiB
-and the card we obtained reports 22. So the Qwen-versus-Reason2 comparison, which
-would isolate what NVIDIA's physical-AI post-training buys for temporal
-localisation, remains an open question rather than a finding. NVIDIA's own target
-for mean relative error is <0.30; we measured 3.151.
-
-### A second model does not rescue it
-
-The obvious hypothesis after the first result was that we had picked the wrong
-model. `Cosmos3-Edge`'s card does not mention timestamps at all; the brief
-asserted the capability. `Cosmos-Reason2`'s card **does** document the burned-in
-timestamp mechanism. If the approach worked there, the finding would have been
-"the brief recommended a model this technique isn't documented for".
-
-It does not. On the same synthetic clips, same prompt, same sampling rate:
-
-| Model | Architecture | answered | median boundary error |
-|---|---|---|---|
-| `nvidia/Cosmos3-Edge` (4B) | Nemotron-H | **100%** | **3.50 s** |
-| `nvidia/Cosmos-Reason2-2B` (2B) | Qwen3-VL | **20%** | 9.50 s |
-
-The model whose card documents the mechanism did **worse** — declining 4 of 5
-cases where the event was present by construction. vLLM resolves Reason2-2B as
-`Qwen3VLForConditionalGeneration`, confirming the Reason family is Qwen3-VL with
-NVIDIA post-training on top, so this is a second *architecture* failing too.
-
-Three variables differ at once — size (4B vs 2B), architecture, and whether the
-mechanism is documented — so this is a data point, not a controlled comparison.
-What it does rule out is the comfortable explanation: the failure is not a quirk
-of the one model the brief named.
-
-### The finding: it cannot tell whether an event is present
-
-Every description was asked of every clip — 104 (clip, query) pairs, of which 15
-have a real answer. Asking only each clip's own queries would have measured
-nothing about false positives.
-
-| | pairs | model reported an event |
+| | Approach 1 (windows) | Approach 3 (states) |
 |---|---|---|
-| event **is** present | 15 | 7 (**47%**) |
-| event is **absent** | 89 | 35 (**39%**) |
+| **mean tIoU** | **0.000** | **0.292** |
+| R@1 tIoU≥0.3 | 0.000 | **0.375** |
+| R@1 tIoU≥0.5 | 0.000 | **0.250** |
+| recall@0.5 | 0.000 | 0.250 |
+| precision@0.5 | 0.000 | 0.013 |
+| false-positive rate | 0.857 | 0.869 |
+| predictions / truths | 14 / 8 | 153 / 8 |
+| model calls | 676 | 1,904 |
 
-**It reports an event at close to the same rate whether or not one is there.**
-That, not boundary imprecision, is why every tIoU-based number is near zero. With
-n this small the difference is not statistically strong — but the direction is
-clear, and it is corroborated by the probes below.
+Approach 1 has **no overlap with any label** — not a low score, none at all. Approach
+3 localises three of eight events at tIoU≥0.3 and two at ≥0.5. Restricted to the
+descriptions it accepts, mean tIoU is **0.334** and R@1≥0.3 is **0.429**.
 
-Concretely: asked for *"a person gets out of a vehicle"* in an indoor stairwell,
-it answered **99–111 s with confidence 0.87**, explaining that the man on the
-stairs *"suggests he is exiting the vehicle."*
+**Its weakness is precision: 153 predictions for 8 truths.** But the ranking signal
+works, which is what it was built for:
 
-### The probes: it localises when told, but cannot detect
+| threshold | predictions | mean tIoU | R@1≥0.3 | recall@0.5 |
+|---|---|---|---|---|
+| none | 153 | 0.292 | 0.375 | 0.250 |
+| **confidence ≥ 0.8** | **35** | 0.288 | 0.375 | 0.250 |
+| confidence ≥ 0.9 | 11 | 0.130 | 0.250 | 0.125 |
 
-A capability probe runs **one window over the whole clip** — no windowing, no
-merging — so whatever error remains belongs to the model.
+**77% of predictions can be dropped with no loss of recall or localisation.** At 0.9
+it breaks, so 0.8 is a knee rather than a cliff edge.
 
-| | synthetic clips | real footage |
+**The ceiling test explains why Approach 1 scores zero.** On MEVA's curated clips —
+where the activity name is printed in a box around the person doing it — Approach 1
+still scores **mean tIoU 0.018 and recall 0.000**. Given the answer written on the
+frame, the windowed formulation cannot localise. So its failure is the approach,
+not the footage, and no amount of prompt work on clean video would have rescued it.
+
+Cost: **1,109 s per video-minute, $0.377 per video-minute** at a verified
+$1.22249/hr on `g6.2xlarge`.
+
+The capability probe, on synthetic clips with exact constructed ground truth:
+
+| prompt | emits a time | median absolute error |
 |---|---|---|
-| answered at all | **100%** | **13%** |
-| median boundary error | **3.50 s** | 9.01 s |
-
-On synthetic clips, where ground truth is exact by construction and the event is
-guaranteed present, the model **does** localise — 3.5 s median error, answering
-every time. On real footage, with the event equally guaranteed and centred in the
-frames shown, it declined on **13 of 15 cases**.
-
-So the capability is real but conditional: *given that an event is there, it can
-say roughly when.* It cannot establish the "given".
-
-**The 3.5 s figure does not generalise, and we withdraw it as a model
-characteristic.** It describes the model's behaviour on synthetic stimuli. The
-distinction only became visible by running the same probe on both.
-
-### Where it breaks, by failure axis
-
-Measured on synthetic clips whose ground truth is exact:
-
-| Axis | Median boundary error |
-|---|---|
-| visually similar distractor | 2.00 s |
-| long event | 3.00 s |
-| baseline | 4.25 s |
-| short event | 5.40 s |
-| **absence of motion** | **7.74 s** |
-
-*"The machine stops moving"* — one of the brief's own three examples — is the
-worst axis by a factor of two. Short events score 5.4 s error on events lasting
-under a second.
-
-### Independently corroborated
-
-Roboflow published their own [Cosmos 3 evaluation](https://blog.roboflow.com/cosmos-3-vision/)
-and report the same weaknesses we measured — **fast motion and small objects**,
-with the model strongest on slow-changing states. Different footage, different
-harness, same conclusion. That is worth more than another run of our own.
-
-They also report a remedy: isolating a region of interest and running inference
-per region. **We implemented and measured it, and it did not help here** — a fixed
-crop applied at native resolution took `admin.G329`'s score range from 0.12 down
-to 0.07. The hypothesis behind it, that subject size in frame is the limit, was
-then disproved directly: a car door succeeds at 322 px where a person in a doorway
-fails at 295 px.
-
-### A second approach: poll the state, derive the event
-
-The first approach failed specifically — the model can *time* an event it is told
-is present and cannot establish that it is present. So the second stops asking it
-to do either. Ask what the scene **is**, repeatedly, in both option orders to
-cancel position bias, take confidence from the token logprobs, and call the event
-where the score departs from the clip's own baseline. **The model is never asked
-what time it is**; the timestamp comes from our sampling grid.
-
-| clip | question | outcome |
-|---|---|---|
-| `admin.G326` 03-07 | building door closed / open | **tIoU 0.46** |
-| `admin.G326` 03-12 | building door closed / open | **tIoU 0.26** |
-| `school.G300` | car door closed / open | **tIoU 0.54** / **0.55** — one interval, two labels |
-| `school.G300` 03-13 | door question, no door in scene | **no detection** — true negative |
-| `admin.G329`, `school.G423`, `bus.G340`, `school.G300` motion | four questions | misses |
-
-Three distinct detections, mean tIoU **0.42** where it fires, against **0.002**
-for the first approach across its entire eval.
-
-**We proposed two scope rules and falsified both.** *"Binary configurations work,
-presence and motion fail"* died on a person sitting down. *"Doors work"* died on a
-car door that didn't. Actor size, object size and object class were each
-contradicted by a later test. Six questions is not enough to establish a rule, and
-we are not going to invent one from three successes.
-
-### The finding that reframes all of it
-
-Every probe above capped generation at 1–4 tokens and read a logprob — using a
-reasoning model as a one-token classifier. Letting it describe the scene first, then
-scoring the description, gave this:
-
-> t=2 — *"The door is **closed** in all frames"*
-> t=4 — *"Sixth frame: **a person is opening the door**"*
-> t=6 — *"The door is **open** in some frames, showing a person inside"*
-> t=8 — *"the door seems to be **closed**"*
-
-Against a hand label of 3.0–5.7 s, correct at every timestep. **The perception was
-there the whole time, and four framings were discarding it.**
-
-Two defects sat between it and the score, both ours: we asked *"describe the door"*
-and got appearance rather than state, so the classifier scored **+0.91 for "open"
-on text saying "closed in most frames"**; and the server concatenates the model's
-reasoning with its answer, so the classifier was reading it think aloud. Both are
-fixed. **Whether that recovers the signal end to end is not yet measured**, and is
-not claimed.
-
-That also explains the `G423` miss without a new theory: the description says *"a
-person standing near a table in the hallway"* — in a scene with several people. The
-subject was ambiguous, so the question was never well posed.
-
-**Status:** these are probe scripts, not pipeline code. `find_events` still runs
-the first approach. Nine questions across five clips is a characterisation, not an
-evaluation. 
-**What the approach can and cannot express.** Its primitive is a persistent binary
-property of one object, and every limitation follows from that:
-
-| shape of the request | example | works? |
-|---|---|---|
-| configuration of one object | door open / closed | **yes** — 6 of 6 door events hit |
-| posture of one actor | sitting / standing | fails when several people are present |
-| motion | *"a forklift reverses"*, *"the machine stops moving"* | **no** — not readable from one window |
-| relation between actors | *"someone hands an object to another person"* | **no** — not a state of any one object |
-| compound or abstract | *"a person buys something"* | **no** — a sequence, not a state |
-
-Two of the brief's three worked examples are motion, and fall outside. That is the
-honest headline: **the method converts a class of event-detection problems into
-classification the model can actually do, and that class is narrower than what a
-client would naturally ask for.** Being able to say which is which from the
-sentence alone, before spending anything, is the useful part.
-
-→ [`DESIGN.md §14a`](DESIGN.md)
-
-### A third approach: caption, parse, derive
-
-Following that finding to its conclusion gives a design with **no forced choice, no
-logprobs and no threshold** — the three things every failure above traced back to.
-
-Per timestep, ask the model what state the subject is in, free-form. Read the state
-out of its own words deterministically. The event is the transition between
-consecutive states.
-
-On `admin.G326`, label 3.0–5.7 s, 1-second steps:
-
-```
-t=0–4    closed
-t=5      closed   ← sees the change, reverses its direction
-t=6–8    open
-t=9      closed
-t=11–17  closed
-```
-
-Last `closed` at t=5, first `open` at t=6 — the **transition sits at t≈5.5 s,
-inside the label**, and the door returns to closed at t=9, which matches the
-footage independently. Agreement of roughly **0.3 s**, from a model whose best
-synthetic boundary error was 3.5 s and which under the first approach could not
-answer on real footage at all.
-
-The model does the one thing it has done well throughout: describe what it sees.
-Everything after that is code — and the parse is string matching rather than a
-model call, because an order-averaged text classifier scored **exactly 0.00 on
-every description**, the signature of choosing purely by position.
-
-**One failure mode, recorded because it is instructive:** at t=5 it says *"The door
-starts in an open state and closes"* — right moment, wrong direction. Seeing a
-change and getting its sign backwards is a more tractable problem than not seeing
-it.
-
-**How this must be scored.** Interval tIoU is the wrong measure and understates it:
-a state timeline answers *"when was it open"* (6–9 s) while the labels answer *"when
-did it open"* (3.0–5.7 s). The right measure is the **transition instant against the
-label's span**.
-
-### Scored across the labelled set
-
-`make transitions` runs this over every labelled event and scores the **transition
-instant against the label's span**, with a tolerance of one polling step:
-
-| | event | label | transition |
-|---|---|---|---|
-| HIT | `G329` enters through door | 3.0–4.8 | 3.5 s `[partial-after]` |
-| HIT | `G326` opens building door | 3.0–5.7 | 5.5 s |
-| hit~ | `G326` enters through door | 5.2–7.5 | 8.5 s |
-| HIT | `G340` gets into a vehicle | 3.0–6.8 | 5.5 s |
-| HIT | `G300` vehicle door opens | 9.0–12.7 | 10.5 s |
-| miss | `G300` vehicle stops moving | 9.1–10.7 | none `[both flags]` |
-| hit~ | `G300` gets out of a vehicle | 11.5–13.7 | 11.0 s |
-| miss | `G423` sits down | 3.0–5.0 | 2.0 s away |
-| miss | `G423` stands up | 37.6–39.0 | none `[both flags]` |
-| HIT | `G326` comes out through door | 3.0–5.3 | 2.5 s |
-
-**7 of 10 within the polling resolution, 5 of 10 strictly inside.** Two of the hits
-are clips the previous approach could not touch. Three runs of the same command
-gave identical output; a poll-by-poll diff was 133/133 identical.
-
-**Partial events come free.** The brief asks how an event seen only partially is
-reported. A state timeline reads it off the boundary: if the first poll already
-says "open", the opening predates the observed span. Two events began already in
-the target state, three ended still in it.
-
-That also produced a diagnostic we didn't design for. **Both boundary flags plus no
-transition** means the model reported one state for the entire span — it saw
-something consistently, and the question is whether it was the right subject. All
-three motion and posture misses show it, and **all three are multi-actor scenes**:
-*"vehicle stops moving"* reported "stationary" throughout a car park full of parked
-cars; *"stands up"* reported "standing" while describing *"a person near a table"*
-in a room with several people.
-
-**Three caveats that belong next to that number, not below it:**
-
-**Five of the fifteen labelled events aren't scoreable.** No binary state pair
-expresses *"a vehicle reverses"*, *"a person buys something"*, *"someone hands an
-object to another person"* or *"a vehicle drops someone off"*. The first is the
-brief's own forklift analogue.
-
-**There is no held-out set.** `G326`, `G329`, `G423`, `G300` and `G340` were each
-used to develop a prompt, a threshold or a state pair before being scored. The
-state mappings are hand-written by someone who had seen which framings worked. No
-post-hoc split fixes that — only more labelled clips, held back and scored once.
-
-**The system still needs a human in the loop.** A client types a sentence; someone
-has to translate it into a state pair before anything runs.
-
-**What the approach can and cannot express.** Its primitive is a persistent binary
-property of one object, and every limitation follows from that:
-
-| shape of the request | example | works? |
-|---|---|---|
-| configuration of one object | door open / closed | **yes** — 6 of 6 door events hit |
-| posture of one actor | sitting / standing | fails when several people are present |
-| motion | *"a forklift reverses"*, *"the machine stops moving"* | **no** — not readable from one window |
-| relation between actors | *"someone hands an object to another person"* | **no** — not a state of any one object |
-| compound or abstract | *"a person buys something"* | **no** — a sequence, not a state |
-
-Two of the brief's three worked examples are motion, and fall outside. That is the
-honest headline: **the method converts a class of event-detection problems into
-classification the model can actually do, and that class is narrower than what a
-client would naturally ask for.** Being able to say which is which from the
-sentence alone, before spending anything, is the useful part.
-
-→ [`DESIGN.md §14a`](DESIGN.md)
-
-### A third approach: caption, parse, derive
-
-Following that finding to its conclusion gives a design with **no forced choice, no
-logprobs and no threshold** — the three things every failure above traced back to.
-
-Per timestep, ask the model what state the subject is in, free-form. Read the state
-out of its own words deterministically. The event is the transition between
-consecutive states.
-
-On `admin.G326`, label 3.0–5.7 s, 1-second steps:
-
-```
-t=0–4    closed
-t=5      closed   ← sees the change, reverses its direction
-t=6–8    open
-t=9      closed
-t=11–17  closed
-```
-
-Last `closed` at t=5, first `open` at t=6 — the **transition sits at t≈5.5 s,
-inside the label**, and the door returns to closed at t=9, which matches the
-footage independently. Agreement of roughly **0.3 s**, from a model whose best
-synthetic boundary error was 3.5 s and which under the first approach could not
-answer on real footage at all.
-
-The model does the one thing it has done well throughout: describe what it sees.
-Everything after that is code — and the parse is string matching rather than a
-model call, because an order-averaged text classifier scored **exactly 0.00 on
-every description**, the signature of choosing purely by position.
-
-**One failure mode, recorded because it is instructive:** at t=5 it says *"The door
-starts in an open state and closes"* — right moment, wrong direction. Seeing a
-change and getting its sign backwards is a more tractable problem than not seeing
-it.
-
-**How this must be scored.** Interval tIoU is the wrong measure and understates it:
-a state timeline answers *"when was it open"* (6–9 s) while the labels answer *"when
-did it open"* (3.0–5.7 s). The right measure is the **transition instant against the
-label's span**.
-
-### Scored across the labelled set
-
-`make transitions` runs this over every labelled event and scores the **transition
-instant against the label's span**:
-
-| | event | label | transition |
-|---|---|---|---|
-| HIT | `G329` enters through door | 3.0–4.8 | 3.5 s |
-| HIT | `G326` opens building door | 3.0–5.7 | 5.5 s |
-| HIT | `G326` enters through door | 5.2–7.5 | 5.5 s |
-| HIT | `G340` gets into a vehicle | 3.0–6.8 | 5.5 s |
-| HIT | `G300` vehicle door opens | 9.0–12.7 | 10.5 s |
-| HIT | `G326` comes out through door | 3.0–5.3 | 3.5 s |
-| miss | `G300` vehicle stops moving | 9.1–10.7 | no transition |
-| miss | `G300` gets out of a vehicle | 11.5–13.7 | 0.3 s outside |
-| miss | `G423` sits down | 3.0–5.0 | 2.0 s away |
-| miss | `G423` stands up | 37.6–39.0 | no transition |
-
-**6 of 10**, and two of those hits — `G329`, `G340` — are clips the previous
-approach could not touch at all.
-
-**Three caveats that belong next to that number, not below it:**
-
-**Five of the fifteen labelled events aren't scoreable.** No binary state pair
-expresses *"a vehicle reverses"*, *"a person buys something"*, *"someone hands an
-object to another person"* or *"a vehicle drops someone off"*. The first is the
-brief's own forklift analogue. A denominator of 10 is not full coverage.
-
-**There is no held-out set.** `G326`, `G329`, `G423`, `G300` and `G340` were each
-used to develop a prompt, a threshold or a state pair before being scored. The
-state mappings in `states.json` are hand-written by someone who had already seen
-which framings worked. 6/10 is measured on the data the method was tuned against,
-and no post-hoc split fixes that — only more labelled clips, held back and scored
-once.
-
-**The system still needs a human in the loop.** A client types a sentence; someone
-has to translate it into a state pair before anything runs. Deriving that
-automatically is one cheap text call and is not built.
-
-→ [`DESIGN.md §14a`](DESIGN.md)
-
-### What we got wrong along the way
-
-Recorded because the debugging is part of the answer:
-
-- **Our harness invented confidence.** 13 of 81 predictions carried 0.485 — our
-  own 0.5 default laundered through the merge's noisy-OR. An invented number
-  wearing the shape of a measurement. Fixed: confidence now comes from a yes/no
-  logprob, or is absent.
-- **Degenerate spans counted as events.** 13 zero-length points and 33
-  whole-window spans — 57% of all predictions were non-answers in an interval's
-  clothing. Now rejected and counted.
-- **A hypothesis we withdrew.** Twelve samples suggested the model always reports
-  the tail of its window. All 81 refuted it (mean position 40%, spread evenly).
-  The twelve came from a prompt we had written that afternoon.
-
-### The evaluation set — built, hand-labelled
-
-**8 clips, 120 s each, 15 events labelled by hand**, from MEVA (CC BY 4.0), in
-`data/eval/labels.json`. All three of the brief's worked examples are covered:
-*"a person enters through the door"*, *"a forklift reverses"* (`Vehicle_Reversing`)
-and *"the machine stops moving"* (`Vehicle_Stopping`). Event durations run 1.4 s to
-13.6 s, median 2.3 s, so short and long events are both tested on real footage.
-
-**First measured finding, and it is about the data rather than the model.** An
-event can only be labelled if a human can see it. MEVA's `.geom.yml` gives
-per-frame actor boxes, and median actor height ranks **monotonically with six
-verdicts reached by eye before that measurement existed**:
-
-| Median actor height | Could a person label it? |
-|---|---|
-| 694 / 295 / 267 px | yes |
-| 121 / 41 / 38 px | no — nothing to read a boundary from |
-
-Three clips are therefore kept **unlabelled and excluded from every score**: at
-26–124 px there is no honest ground truth, so a number computed against them would
-measure the labeller, not the model. They are not wasted — MEVA declares events in
-them that no person can verify, which makes them a test for whether the model
-invents confident localisations when the evidence is absent. Reported separately,
-never pooled.
-
-**The clips are not in this repository; the labels and their provenance are.**
-400 MB of someone else's dataset does not belong in a git history, and shipping it
-would ask you to trust our copy. Instead `labels.json` carries, per clip, the source
-file, the trim offset and the duration — and `make data-eval` fetches the public
-sources and re-cuts them. The rebuild was verified **bit-identical**: the same
-SHA-256 over 60 sampled frames as the clips the labels were made against. So every
-number reported here is reproducible from a published dataset, on your machine,
-without taking our word for the footage.
-
-The screen that predicts labellability from annotation files alone — before any
-video is downloaded — is `scripts/screen_geom.py`. It **ranks and never rejects**: a false
-positive costs ten seconds looking at a contact sheet, a false negative is silent.
-→ [`DATASETS.md`](DATASETS.md)
-
-### Figures
-
-| Figure | What it answers |
-|---|---|
-| **Precision floor** — boundary error vs event duration | How accurately can the model place a boundary at all? |
-| **Accuracy/cost frontier** — tIoU vs sampling fps | Is 8 fps worth double the tokens over 4? |
-| **Window/stride sweep** — recall vs overlap | How much overlap does boundary-straddling recovery actually need? |
-| **Per-axis breakdown** — score by failure axis | *Where does it break?* The question the brief actually asks |
-| **Model × axis heatmap** | Does a 4B edge model fail differently from an 8B, or just more? **Not produced** — the 8B models need a 48 GB card |
+| `native` | 80% | **3.11 s** |
+| `overlay` | 100% | 3.50 s |
+| `terse` | 40% | 7.58 s |
+
+That ~3 s floor is the best boundary accuracy available *before* any windowing, on
+clips built to be easy. It bounds everything downstream.
 
 ---
 
-## Running it
+## What it cannot do
 
-Everything runs in Docker. The host needs Docker, and the NVIDIA container toolkit
-only for the model server — the rest is CPU work.
+These follow from the method's primitive — **a persistent binary property of one
+object** — and are properties of the design, not defects in it.
 
-**Works today, no GPU required:**
+| shape | example | works? |
+|---|---|---|
+| configuration of one object | door open / closed | **yes** |
+| posture of one actor | sitting / standing | expressible; fails with several people |
+| presence of motion | *"the machine stops moving"* | **expressible** — `moving / stationary` |
+| direction of motion | *"a vehicle reverses"* | **no** — a window of positions carries no sign |
+| relation between actors | *"hands an object to another person"* | **no** — not a state of any one object |
+| compound | *"a person buys something"* | **no** — a sequence, not a state |
 
-```bash
-make preflight    # can this machine run anything?
-make build        # build the finder image
-make demo         # end-to-end -> events JSON, using the stub backend
-                  #   generates its own clip if data/ is empty, so this is
-                  #   the whole first-run sequence: clone, preflight, build, demo
-make data         # generate the full synthetic set with exact ground truth
-make verify-data  # do the clips actually show what their labels claim?
-make probe        # characterise a model: can it ground events, how precisely
-make plan  VIDEO=clip.mp4 QUERIES="a door opens"   # what a run would cost
-make run   VIDEO=clip.mp4 QUERIES="a door opens;a vehicle stops"
-make frames VIDEO=clip.mp4        # see the timestamped frames the model receives
-make fake-test                    # the real vLLM backend against a fake endpoint
-```
+Of the brief's three worked examples, *"a person enters through the door"* and
+*"the machine stops moving"* are in shape; *"a forklift reverses"* is not.
 
-`make fake-test` is worth knowing about: it exercises the actual model-facing code
-— HTTP, reasoning-block parsing, time reconciliation, the model-identity check —
-against an endpoint that returns reasoning blocks, truncated responses, refusals
-and hallucinated timestamps. No GPU involved.
-
-**Needs a GPU** — or any real endpoint. This is the full sequence on a bare box:
-
-```bash
-make preflight-gpu       # is a GPU visible to CONTAINERS, not just the host?
-make build && make pull  # finder image, then the pinned vLLM image (multi-GB)
-make data-eval           # rebuild the 8 labelled clips from their public sources
-make serve-bg            # start the model, block until it answers
-make probe               # the gating question: can it ground events, how precisely
-make eval                # the labelled set -> metric table
-make eval-control        # ceiling test: can it find events labelled on-screen?
-make down                # stop the containers before you stop paying
-```
-
-`make data-eval` needs no AWS account, credentials or CLI — it fetches over HTTPS
-from MEVA's public bucket and re-cuts each clip to the exact offset and duration
-`labels.json` records.
-
-Build and pull come before everything because `probe`, `eval` and `data-eval` all
-run inside the finder container. A metered box should not idle on a build it could
-have done first.
-
-`probe` and `eval` are built and exercised end to end against a fake endpoint;
-they need a real model to produce a real answer, not to run.
-
-`make help` lists every target, tagged `[local]` / `[gpu]` / `[any]`, with the
-end-to-end workflow.
+Also true and worth saying plainly: the state pairs are hand-written; there is no
+held-out set, so every clip that produced a number also shaped a threshold or a
+prompt; and a result depends on which vLLM server instance produced it (see
+[EXPERIMENTS.md](EXPERIMENTS.md)).
 
 ---
+
+## What was used, and what was not
+
+Four data sources were selected and assessed. **Two produced numbers**, and the
+distinction is worth being explicit about, because an assessed dataset can look
+like a used one.
+
+| source | status | used for |
+|---|---|---|
+| **MEVA** (CC BY 4.0, public bucket) | **used** | the real eval: 8 clips, 15 hand-labelled events |
+| **synthetic** (generated here) | **used** | the capability probe — exact constructed ground truth |
+| MEVA curated examples | fetched, **not used** | the ceiling test (`eval-control`) was never run |
+| `supervision` sample videos | fetched, **not used** | licence unstated, so never a candidate for reported numbers |
+| VANTAGE-Bench | assessed, **never fetched** | gated; needs accepted terms and a token |
+
+**Every measured number in this repository comes from MEVA or from synthetic
+clips.** Nothing else contributed to a result.
+
+The system is not tied to either. `find_events` takes a video path and a list of
+descriptions, so a new dataset needs only clips plus a `labels.json` in the same
+shape — see [DATASETS.md](DATASETS.md#reproducing-the-eval-set). What does *not*
+transfer automatically is `states.json`: the description → state-pair mapping is
+hand-written, so a new domain needs that written too. Deriving it from the
+description is one cheap text call and is not built.
+
+## Improvements — measured, not built
+
+These are not scope gaps. Each is a specific inefficiency **measured on this
+hardware**, with a known fix, which would make the system faster or extend what it
+can handle. None changes what it currently scores.
+
+| improvement | measured | expected gain | result-neutral? |
+|---|---|---|---|
+| **concurrent model requests** | server log reads `Running: 1 reqs, KV cache 1.8%` on every line — every call is serial and the GPU idles between them, while the four per-subject calls at each timestep are independent | **2–3× wall-clock** — the largest saving available | **No.** Changing batching changes floating-point reduction order, which we have measured flipping a near-tie poll |
+| **`container.seek()` in `sample_frames`** | decode runs from the file start on every poll: 0.26 s at t=0, 3.69 s at t=118. Summed over a clip that is **quadratic** — 235 s per 120 s clip, **~13 h for a 30-minute one** | removes the quadratic term; 30-min decode drops to ~8 min | Yes, if frame timestamps are verified identical |
+| **coarse-to-fine polling** | uniform polling spends nearly its whole budget confirming stillness — 18 of 119 polls uninformative, the rest agreeing with their neighbours | **3.7–6.3× fewer model calls** at identical resolution | No — different resolution guarantee, needs its own scoring |
+| cache frame encodes; drop the redundant `probe()` | `sample_frames` re-opens the file to read a constant duration (2.64 s/clip); the four subjects re-encode identical frames to JPEG (4.70 s/clip) | ~7 s/clip | Yes |
+
+**`seek` and coarse-to-fine are complements, not alternatives.** Coarse-to-fine
+cuts model calls and barely touches decode, so at coarse 4 s a 30-minute clip
+still spends 3.3 hours decoding. Together they put it at roughly 2.2 hours,
+dominated by model calls — the regime the work budget was designed for. That is
+what would turn Approach 3's four-minute ceiling into a real long-video path.
+
+Detail and measurements: [DESIGN.md §6.7](DESIGN.md).
+
+## Not done, and why
+
+Traceability for everything planned or implied that does not exist. An unrun
+experiment quoted as a result is the worst kind of error, so these are named.
+
+| not done | why | consequence |
+|---|---|---|
+| **Approach 3 scored across a set** | the harness could not run it until recently; the run takes hours | the one hole in the results table |
+| ceiling test — activity name burned into the frame | not built out | cannot separate "cannot recognise events" from "cannot see at this resolution" |
+| Qwen3-VL-8B vs Cosmos-Reason2-8B | neither fits in the L4's 22 GiB with a 48-frame window | the comparison isolating NVIDIA's post-training stays open |
+| held-out set | needs more labelled clips, not a post-hoc split | every clip that produced a number also shaped a prompt or threshold |
+| deriving state pairs from the description | one cheap text call; unbuilt | a human is still in the loop, once per new description |
+| instant-vs-span metric in `metrics.py` | interval tIoU already works | transition scoring lives in a script rather than the harness |
+| captioning in the stub and replay backends | the recorder hooks `extract()` only | Approach 3 cannot be exercised without a GPU |
+| `make sweep`, `make viz` | marked planned in the Makefile | fps/window frontier and timeline rendering unavailable |
+| tests, CI, linters, scaling, security | the brief states these are not evaluated | deliberate — see [DESIGN.md §15](DESIGN.md) |
+
+## Where the detail lives
+
+Everything above is the summary. The evidence is in:
+
+| document | what it holds |
+|---|---|
+| **[EXPERIMENTS.md](EXPERIMENTS.md)** | every experiment run, why it was run, what it showed |
+| [DESIGN.md](DESIGN.md) | mechanisms, schema, the long argument for each choice |
+| [DECISIONS.md](DECISIONS.md) | choices made, alternatives rejected, decisions that reversed |
+| [DATASETS.md](DATASETS.md) | data sources, licences, how the eval set was chosen |
+| [RUNBOOK.md](RUNBOOK.md) | operating the GPU box, costs, failure recovery |
+| [PLAN.md](PLAN.md) | dated worklog |
 
 ## Repository
 
-| File | Contents |
-|---|---|
-| [`PLAN.md`](PLAN.md) | Requirements, verified facts with sources, experiment plan, open questions |
-| [`DESIGN.md`](DESIGN.md) | Architecture, diagrams, mechanisms, validation, the capability probe |
-| [`DATASETS.md`](DATASETS.md) | Evaluation sources, licences, failure axes, labelling protocol |
-| [`DECISIONS.md`](DECISIONS.md) | Every choice, rejected alternatives, and reversals |
-| [`RUNBOOK.md`](RUNBOOK.md) | Provisioning a GPU: instance sizing, what downloads when, cost, risks |
-| the assignment brief | Not included — it is the client's document, not ours to republish. Requirements are traced in `PLAN.md` |
+```
+src/video_reasoning/    the service
+  core.py               find_events — both strategies
+  states.py             caption → parse → derive (Approach 3)
+  motion.py             change signal, for triggered polling
+  evaluate.py           the scoring harness
+  metrics.py            temporal IoU, recall, precision, false-positive rate
+  backends/             model adapter: vllm, stub, replay, fake
+scripts/                data preparation, probes, one-off experiments
+make/                   every operation, tagged [any] / [local] / [gpu]
+data/eval/labels.json   the hand-labelled set — the only data in git
+states.json             description → state pair (hand-written)
+config.yaml             every tunable, with its reason
+```

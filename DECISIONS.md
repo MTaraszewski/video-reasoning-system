@@ -360,12 +360,21 @@ matching the description and to state a confidence in its JSON.
 do not contain the action; stage B localises only after a yes; confidence is
 P(present) from the yes/no token logprob.
 
-**What changed it:** the measured output. 28 of 81 predictions came back at
-confidence exactly 1.0 -- a stated confidence that ranks nothing -- and 7 carried
-evidence denying the very event they reported ("Empty hallway with a closed door
-and no visible people"). Separately, 13 predictions carried 0.485, which is our
-own 0.5 default passed through the merge's noisy-OR: a number we invented,
-formatted like a measurement.
+**What changed it:** the measured output. The merged confidences cluster on values the CODE
+produces, not on model signal: **0.97 x23** is `merge._agree`'s own ceiling,
+**0.485 x13** is that ceiling times the 0.5 default a `WindowEvent` gets when the
+model omits a confidence, and 0.9603 x12 is the ceiling times a stated 0.99. That
+is 48 of 81 predictions carrying a number we invented, formatted like a
+measurement. Separately, 7 carried evidence denying the very event they reported
+("Empty hallway with a closed door and no visible people").
+
+`UNVERIFIED`: an earlier revision of this entry said "28 of 81 predictions came
+back at confidence exactly 1.0". No prediction in the retained artifact has
+confidence 1.0 -- the merge's ceiling forbids it. The claim was probably about the
+model's *stated* confidence before merging, which is plausible and which the
+retained output does not preserve, since predictions keep only the merged value
+and no exchange recording was made for that run. Corrected to what the artifact
+actually shows.
 
 **What it did not change, which is the point.** On a 2-clip subsample the two-stage
 path produced **the same number of predictions** as the single-stage one. It
@@ -380,6 +389,40 @@ make a number look better. The model contradicting itself is a finding; filterin
 it out would hide the finding and leave the score unexplained.
 
 ---
+
+### 6.8 Confidence for a derived event: three factors, each earned
+
+**Was:** for the states strategy, the fraction of polls inside the interval
+agreeing on the target state. A real measurement over data we already held, and
+better than a number the model states about itself.
+
+**Now:** `agreement x sharpness x coverage`.
+
+**What changed it:** the same number reached 1.0 on three different kinds of
+non-answer, each found by running the thing rather than by reasoning about it.
+
+| what was reported | why it scored 1.0 | the factor added |
+|---|---|---|
+| a 3-second door as a **42-second event** | one informative poll inside the span, agreeing with itself | — fixed by refusing to interpolate across the gap |
+| the same transition bracketed to 1s and to 30s, both at 1.0 | agreement says nothing about how tightly a boundary is pinned | **sharpness** = `step_s` / widest interpolated bracket |
+| **"a vehicle door opens", 5.0-97.0s**, four polls holding 92 seconds | all four agreed, and both edges were truncated rather than interpolated, so sharpness was unpenalised too | **coverage** = observed seconds / interval length |
+| a single-poll blip at 71.5-72.5s | agreement 1/1, bracket one step wide | also **coverage** -- 0.5s observed of a 1.0s span |
+
+Coverage subsumes a corroboration factor (`min(1, n_polls/2)`) that was considered
+and rejected as a second concept doing half the same job. A one-poll event and a
+four-poll 92-second event fail for the **same** reason: almost none of the reported
+interval was looked at.
+
+**Why this and not the model's own number.** The same argument as 6.6, reached from
+the other side. There, a stated confidence was replaced by one derived from token
+logprobs. Here there is no yes/no token to take a logprob from, so confidence is
+derived from the *structure of the evidence* instead -- how consistent it is, how
+tightly it bounds the edges, and how much of the claim was actually observed. All
+three are computed from polls already in hand; none costs a model call.
+
+**What it does not change:** intervals. Confidence affects ranking and the greedy
+matching order in the eval, not tIoU. A verified good event keeps 0.9; the 92-second
+span drops to 0.065.
 
 ### 6.7 Model sweep: four planned -> two measured, and why we stopped
 

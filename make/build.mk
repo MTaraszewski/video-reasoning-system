@@ -36,7 +36,14 @@ _RUN_ENV = ALLOW_NO_GPU=$(ALLOW_NO_GPU)
 # becomes one query per word — valid JSON for entirely the wrong question.
 # The string is passed through whole and split on ";" in Python.
 
-run:  ## [any] find events in YOUR video (VIDEO=... QUERIES="a;b")
+# STRATEGY picks the engine: `windows` asks the model when the event happened
+# (Approach 1), `states` captions and derives the event from state transitions
+# (Approach 3). Both stay runnable so a comparison is one flag apart.
+STRATEGY   ?=
+STATES_MAP ?= /app/states.json
+TRIGGER    ?=
+
+run:  ## [any] find events in YOUR video (VIDEO=... QUERIES="a;b" STRATEGY=states)
 	@mkdir -p $(OUT_DIR)
 	$(COMPOSE) run --rm -e ALLOW_NO_GPU=$(ALLOW_NO_GPU) finder \
 	  video-reasoning run $(VIDEO_IN) --queries "$(QUERIES)" \
@@ -45,6 +52,11 @@ run:  ## [any] find events in YOUR video (VIDEO=... QUERIES="a;b")
 	  $(if $(WINDOW_S),--window-s $(WINDOW_S),) \
 	  $(if $(STRIDE_S),--stride-s $(STRIDE_S),) \
 	  $(if $(PROMPT),--prompt $(PROMPT),) \
+	  $(if $(STRATEGY),--strategy $(STRATEGY) --states-map $(STATES_MAP),) \
+	  $(if $(TRIGGER),--trigger,) \
+	  $(if $(SHARED),--shared-caption,) \
+	  $(if $(STEP_S),--step-s $(STEP_S),) \
+	  $(if $(SPAN_S),--span-s $(SPAN_S),) \
 	  $(if $(RECORD),--record /out/$(RECORD),)
 	@echo; echo "-> $(OUT_DIR)/events.json"
 
@@ -138,6 +150,70 @@ OFFSET_PROMPT ?= localize
 CONTROL_LABELS ?= /data/meva-examples/labels.json
 CONTROL_DATA   ?= /data/meva-examples
 
+# Where is a running eval right now? The eval prints one line per CLIP and
+# nothing in between, so a states run goes quiet for 30+ minutes at a time and
+# looks hung. This reconstructs the position from the model server's request log
+# without touching the running job -- see scripts/eval_progress.sh for why that
+# is sound.
+.PHONY: eval-progress eval-watch
+eval-progress:  ## [any] where is a running eval? one-shot
+	@SUBJECTS=$(SUBJECTS) POLLS=$(POLLS) CLIPS=$(CLIPS) STEP_S=$(STEP_S) \
+	  scripts/eval_progress.sh
+
+eval-watch:  ## [any] same, refreshing every WATCH_S seconds (default 30)
+	@SUBJECTS=$(SUBJECTS) POLLS=$(POLLS) CLIPS=$(CLIPS) STEP_S=$(STEP_S) \
+	  scripts/eval_progress.sh $(WATCH_S)
+
+# Defaults describe the run we measure most; override for a different shape.
+SUBJECTS ?= 4
+POLLS    ?= 119
+CLIPS    ?= 4
+STEP_S   ?= 1.0
+WATCH_S  ?= 30
+
+.PHONY: validate
+validate:  ## [any] check a results file against the contract (FILE=out/events.json)
+	$(COMPOSE) run --rm finder video-reasoning validate /out/$(notdir $(FILE))
+
+FILE ?= out/events.json
+
+.PHONY: schema
+schema:  ## [any] regenerate schema.json, the machine-readable output contract
+	@# Captured on the HOST, not written inside the container: the repo root is
+	@# not mounted, so -o /app/schema.json would write into a layer that is
+	@# discarded when the container exits.
+	@$(COMPOSE) run --rm --no-TTY finder video-reasoning schema > schema.json
+	@echo "-> schema.json  ($$(wc -l < schema.json) lines)"
+
+# Every check that needs no GPU, in one command. This is what answers "does the
+# repo work on my machine" before anyone rents an instance -- it exercises the
+# host, the image, the whole pipeline end to end, the data, the decoder, and the
+# real model adapter against a fake endpoint.
+#
+# It does NOT prove the model works. Nothing here touches a GPU or real weights,
+# and `demo` runs on the stub, whose results the eval harness refuses to score.
+SMOKE ?= preflight build demo verify-data frames fake-test
+
+.PHONY: smoke
+smoke:  ## [any] run every check that needs no GPU, and report which passed
+	@fail=0; \
+	for t in $(SMOKE); do \
+	  printf '  %-14s ' "$$t"; \
+	  if $(MAKE) --no-print-directory $$t >/tmp/smoke-$$t.log 2>&1; then \
+	    echo "PASS"; \
+	  else \
+	    echo "FAIL   -> /tmp/smoke-$$t.log"; fail=1; \
+	  fi; \
+	done; \
+	$(MAKE) --no-print-directory fake-down >/dev/null 2>&1 || true; \
+	echo; \
+	if [ $$fail -eq 0 ]; then \
+	  echo "all $(words $(SMOKE)) checks passed - no GPU was used"; \
+	  echo "next: make pull && make serve-bg && make serve-wait && make eval"; \
+	else \
+	  echo "SOME CHECKS FAILED - see the logs named above"; exit 1; \
+	fi
+
 eval:  ## [gpu] run the labelled set, print the metric table
 	@mkdir -p $(OUT_DIR)
 	@# The labelled clips are rebuilt from labels.json, which IS committed. Without
@@ -155,8 +231,13 @@ eval:  ## [gpu] run the labelled set, print the metric table
 	  $(if $(PROMPT),--prompt $(PROMPT),) \
 	  $(if $(SAMPLE_FPS),--fps $(SAMPLE_FPS),) \
 	  $(if $(GPU_HOURLY),--gpu-hourly $(GPU_HOURLY),) \
+	  $(if $(STRATEGY),--strategy $(STRATEGY) --states-map $(STATES_MAP),) \
+	  $(if $(SHARED),--shared-caption,) \
+	  $(if $(STEP_S),--step-s $(STEP_S),) \
+	  $(if $(SPAN_S),--span-s $(SPAN_S),) \
+	  $(if $(TRIGGER),--trigger,) \
 	  $(if $(REPLAY),--replay /out/$(REPLAY),)
-	@echo; echo "-> $(OUT_DIR)/eval.json"
+	@echo; echo "-> $(OUT_DIR)$(patsubst /out%,%,$(EVAL_OUT))"
 
 transitions:  ## [gpu] score caption-parse-derive across every labelled event
 	$(COMPOSE) run --rm finder python scripts/run_transitions.py \

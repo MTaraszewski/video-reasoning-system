@@ -64,6 +64,16 @@ class Backend(Protocol):
     def extract(self, req: ExtractRequest) -> ExtractResult: ...
     def describe(self) -> dict: ...
 
+    # Free-form captioning, used by the `states` strategy. Optional: a backend
+    # that cannot caption simply does not offer it, and core.py refuses the
+    # strategy rather than silently degrading to something else.
+    def caption(self, frames: list, subject: str) -> tuple[str, bool]: ...
+
+    # One caption covering several subjects, for `states.shared_caption`. Cuts
+    # cost by the number of distinct subjects at identical polling density.
+    def caption_many(self, frames: list,
+                     subjects: list[str]) -> tuple[dict[str, str], bool]: ...
+
 
 # --------------------------------------------------------------------------
 # Response parsing

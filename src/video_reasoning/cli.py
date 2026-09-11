@@ -23,6 +23,22 @@ console = Console()
 err_console = Console(stderr=True)
 
 
+def _load_states_map(path: str | None) -> dict:
+    """Load description -> (state_a, state_b). Keys starting with _ are comments.
+
+    A description with no entry is reported by the states strategy as not
+    expressible, never as "no events found". The distinction matters: "someone
+    hands an object to another person" is a relation between two actors, not a
+    binary property of one object, and reporting it as absent would blame the
+    model for the shape of the question.
+    """
+    if not path:
+        return {}
+    return {k: tuple(v) for k, v in
+            json.loads(Path(path).read_text()).items()
+            if not k.startswith("_")}
+
+
 def _fail(e: VideoReasoningError) -> None:
     """One place where errors become output, so every failure looks the same."""
     err_console.print(f"[red]{type(e).__name__}[/] {e.message}")
@@ -61,6 +77,30 @@ def run(
     record: str = typer.Option(None, help="Record every model exchange to this dir."),
     replay: str = typer.Option(None, help="Replay recorded exchanges from this dir."),
     quiet: bool = typer.Option(False, "--quiet", help="Suppress progress."),
+    strategy: str = typer.Option(
+        None, help="windows = ask when the event happened (Approach 1). "
+                   "states = caption, parse the state, derive from transitions "
+                   "(Approach 3). Both stay runnable for back-to-back comparison."),
+    states_map: str = typer.Option(
+        None, help="JSON mapping a description to its two states. Required by "
+                   "--strategy states; a description with no entry is reported "
+                   "as not expressible rather than as absent."),
+    trigger: bool = typer.Option(
+        None, "--trigger/--no-trigger",
+        help="states only: caption where the picture changed instead of on a "
+             "fixed grid."),
+    shared_caption: bool = typer.Option(
+        None, "--shared-caption/--no-shared-caption",
+        help="states only: one caption per timestep covering every subject, "
+             "instead of one sweep per subject. Same polling density, one call "
+             "where there were N."),
+    step_s: float = typer.Option(
+        None, help="states only: seconds between polls. This is the boundary "
+                   "resolution under uniform polling."),
+    span_s: float = typer.Option(
+        None, help="states only: seconds of frames shown per poll. Larger than "
+                   "--step-s means consecutive polls overlap, and a disagreement "
+                   "between them brackets the change only to their union."),
 ) -> None:
     """Find events in a video matching one or more descriptions."""
     from .backends import make_backend
@@ -90,6 +130,11 @@ def run(
                 "sampling.fps": fps,
                 "windowing.window_s": window_s,
                 "windowing.stride_s": stride_s,
+                "strategy": strategy,
+                "states.trigger": trigger,
+                "states.shared_caption": shared_caption,
+                "states.step_s": step_s,
+                "states.span_s": span_s,
             },
         )
         for w in cfg.warnings():
@@ -109,8 +154,19 @@ def run(
                 "as evidence; the eval harness will refuse to score them."
             )
 
-        result = find_events(video, wanted, cfg, be,
-                             prompt=prompt, progress=not quiet)
+        smap = _load_states_map(states_map)
+        # Same guard `evaluate` applies. Without a map every description routes to
+        # "not expressible", the run emits nothing, and the output is an empty
+        # events list -- which reads as "found nothing in the video" rather than
+        # "was never told what to look for".
+        if cfg.strategy == "states" and not smap:
+            raise InvalidInput(
+                "--strategy states needs --states-map; without it every "
+                "description is unanswerable and the run returns no events.",
+                fix="pass --states-map /app/states.json",
+            )
+        result = find_events(video, wanted, cfg, be, prompt=prompt,
+                             progress=not quiet, states_map=smap)
     except VideoReasoningError as e:
         _fail(e)
 
@@ -124,6 +180,88 @@ def run(
         )
     else:
         print(text)
+
+
+@app.command()
+def schema(
+    out: str = typer.Option(None, "-o", "--out", help="Write here (default stdout)."),
+) -> None:
+    """Print the JSON Schema for the output contract.
+
+    The brief asks for "a strict, documented JSON schema". The schema lives in
+    `schema.py` as a validated model, and this emits it in machine-readable form
+    so a client can check a response without reading our Python -- and so the
+    documentation cannot drift from the thing it documents, which it had.
+    """
+    from .schema import FindEventsResult
+    text = json.dumps(FindEventsResult.model_json_schema(), indent=2)
+    if out:
+        Path(out).parent.mkdir(parents=True, exist_ok=True)
+        Path(out).write_text(text + "\n")
+        console.print(f"-> {out}")
+    else:
+        print(text)
+
+
+@app.command()
+def validate(
+    path: str = typer.Argument(..., help="A results JSON file to check."),
+) -> None:
+    """Check a results file against the output contract.
+
+    A schema nobody can check is a promise, not a contract. This parses the file
+    with the same model the service validates its own responses with, so the check
+    is the contract itself rather than a second description of it that could drift.
+
+    It verifies more than field names and types. The model's invariants are
+    checked too: events ordered by start time, and no event reported outside the
+    video's real duration.
+    """
+    from pydantic import ValidationError
+
+    from .schema import FindEventsResult
+
+    f = Path(path)
+    if not f.exists():
+        err_console.print(f"[red]not found[/] {path}")
+        raise typer.Exit(2)
+    try:
+        data = json.loads(f.read_text())
+    except json.JSONDecodeError as e:
+        err_console.print(f"[red]not valid JSON[/] {path}: {e}")
+        raise typer.Exit(1)
+
+    # An eval report is a different document with a different shape. Told that
+    # `video`, `duration_s`, `queries` and `run` are all missing, a reader
+    # reasonably concludes the contract is broken. It is the wrong file.
+    if "predictions" in data and "overall" in data:
+        err_console.print(
+            f"[yellow]{f.name} is an evaluation report, not a results file.[/]")
+        err_console.print(
+            "  The contract covers what `find_events` returns; an eval report "
+            "holds metrics and per-prediction rows instead.")
+        err_console.print("  fix validate a run's output, e.g. out/events.json")
+        raise typer.Exit(2)
+
+    try:
+        res = FindEventsResult(**data)
+    except ValidationError as e:
+        err_console.print(f"[red]does not match the contract[/] {path}")
+        for err in e.errors():
+            where = ".".join(str(x) for x in err["loc"]) or "(root)"
+            err_console.print(f"  {where}: {err['msg']}")
+        raise typer.Exit(1)
+
+    n = len(res.events)
+    console.print(f"[green]valid[/] {f.name}")
+    console.print(f"  {res.video}  {res.duration_s:.1f}s  {n} event(s)  "
+                  f"{res.run.model_calls} model call(s)")
+    console.print(f"  ordered, in bounds, {len(res.queries)} description(s)")
+    if res.polls:
+        console.print(f"  {len(res.polls)} poll(s) of provenance")
+    if res.run.stub:
+        err_console.print("[yellow]note[/] produced by the stub backend — valid "
+                          "output, but never valid evidence")
 
 
 @app.command()
@@ -335,10 +473,25 @@ def evaluate(
     detect_threshold: float = typer.Option(
         None, help="P(present) required to localise. Higher trades recall for "
                    "precision."),
+    strategy: str = typer.Option(
+        None, help="windows (Approach 1) | states (Approach 3). Both score "
+                   "through this same harness, on the same labels."),
+    states_map: str = typer.Option(
+        None, help="JSON mapping a description to its two states. Required by "
+                   "--strategy states."),
+    shared_caption: bool = typer.Option(
+        None, "--shared-caption/--no-shared-caption",
+        help="states only: one caption per timestep covering every subject."),
+    step_s: float = typer.Option(None, help="states only: seconds between polls."),
+    span_s: float = typer.Option(None, help="states only: seconds of frames per poll."),
+    trigger: bool = typer.Option(
+        None, "--trigger/--no-trigger",
+        help="states only: poll where the picture changed, not on a fixed grid."),
 ) -> None:
     """Run the labelled set and report defensible temporal metrics."""
     from .backends import make_backend
     from .config import load_config
+    from .errors import InvalidInput
     from .evaluate import run_eval
 
     try:
@@ -347,21 +500,55 @@ def evaluate(
             "sampling.fps": fps,
             "windowing.window_s": window_s, "windowing.stride_s": stride_s,
             "detect.enabled": detect, "detect.threshold": detect_threshold,
+            "strategy": strategy,
+            "states.shared_caption": shared_caption,
+            "states.step_s": step_s, "states.span_s": span_s,
+            "states.trigger": trigger,
         })
+        smap = _load_states_map(states_map)
+        # Refuse rather than score zero. Without a map every description routes to
+        # "not expressible", the run emits nothing, and the output is a page of
+        # zeroes that reads exactly like a model that found nothing -- the most
+        # expensive kind of silent failure, since it costs a full GPU run first.
+        if cfg.strategy == "states" and not smap:
+            raise InvalidInput(
+                "--strategy states needs --states-map; without it every "
+                "description is unanswerable and the eval scores zero.",
+                fix="pass --states-map /app/states.json",
+            )
         be = make_backend(cfg, backend, replay_dir=replay)
         if hasattr(be, "check"):
             be.check()
         res = run_eval(labels, data_dir, cfg, be, prompt=prompt,
-                       progress=not quiet, gpu_hourly=gpu_hourly, limit=limit)
+                       progress=not quiet, gpu_hourly=gpu_hourly, limit=limit,
+                       states_map=smap)
     except VideoReasoningError as e:
         _fail(e)
 
     Path(out).parent.mkdir(parents=True, exist_ok=True)
+    # The state timelines go beside the metrics, not inside them. They are the
+    # evidence for every event the states strategy reports -- each state decision
+    # is made by reading that caption -- but inline they would bury the numbers.
+    polls = res.pop("polls", None)
     Path(out).write_text(json.dumps(res, indent=2))
+    if polls:
+        side = Path(out).with_suffix(".polls.json")
+        side.write_text(json.dumps(polls, indent=2))
+        n = sum(len(v) for v in polls.values())
+        console.print(f"  {n} caption(s) kept -> {side}")
 
     o = res["overall"]
     console.print(f"\n[bold]Overall[/]  {res['model']}  "
+                  f"strategy={res.get('strategy', 'windows')}  "
                   f"prompt={res['prompt']}  fps={res['sampling']['fps']}")
+    cov = res.get("coverage") or {}
+    if cov.get("declined") is not None:
+        console.print(
+            f"  coverage           {cov['descriptions_routed']}/"
+            f"{cov['descriptions_total']} descriptions, "
+            f"{cov['events_routed']}/{cov['events_total']} labelled events")
+        for d in cov["declined"]:
+            console.print(f"    declined: {d}")
     console.print(f"  predictions {o['n_predictions']:<5} truths {o['n_truths']}")
     for thr in (0.3, 0.5, 0.7):
         console.print(f"  R@1 tIoU>={thr}      {o[f'R@1_tIoU{thr}']:.3f}")

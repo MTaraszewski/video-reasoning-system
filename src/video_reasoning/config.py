@@ -49,6 +49,54 @@ class OverlayConfig(BaseModel):
     font_scale: float = Field(0.045, gt=0, le=0.5)
 
 
+class StatesConfig(BaseModel):
+    """The `states` strategy: caption, parse, derive.
+
+    Approach 1 asks the model when an event happened and cannot establish whether
+    it happened at all. This asks only what the scene is, repeatedly, and does the
+    temporal reasoning in code. Kept behind a switch so both remain runnable and
+    a back-to-back comparison is one flag apart.
+    """
+
+    # Seconds between polls. This IS the boundary resolution: a transition can be
+    # located no more precisely than the interval, which is why the eval scores
+    # with a tolerance of one step.
+    step_s: float = Field(1.0, gt=0)
+    # Seconds of frames shown per poll.
+    span_s: float = Field(2.0, gt=0)
+
+    # Spend calls where something changed rather than on a fixed grid. Measured on
+    # admin.G326: every poll agreed with its neighbours except at the transition,
+    # so the uniform grid spent most of its budget confirming stillness. The
+    # trigger's blind spots are real and documented in motion.py -- this is a
+    # measurable trade, not a free win.
+    trigger: bool = False
+    trigger_top_k: int = Field(12, gt=0)
+
+    # One caption per timestep covering every subject, instead of one sweep per
+    # subject. The frames are identical whichever subject is asked about, so the
+    # per-subject sweeps pay repeatedly for the same perception: on the labelled
+    # set, 9 expressible descriptions reduce to 4 subjects, and sharing collapses
+    # those to 1 -- 8,568 calls to 952 at identical polling density.
+    #
+    # OFF by default because it trades a measured risk for that saving: a single
+    # caption covering four subjects may mention none of them clearly, and
+    # `split_by_subject` reports a missing line as no answer rather than guessing.
+    # Whether parse rates hold is measurable, and until measured the cheaper path
+    # is not the default one.
+    shared_caption: bool = False
+
+    # How far a state may be carried across unobserved time, in steps. Uniform
+    # polling never exercises this -- consecutive polls are one step apart. The
+    # trigger leaves gaps of a minute or more between polls, and interpolating a
+    # transition into the middle of one produced a 42-second event for a
+    # 3-second door on admin.G326. Past this, `states.edge` reports observed
+    # evidence and marks the span partial instead of guessing.
+    carry_steps: float = Field(3.0, gt=0)
+    trigger_min_gap_s: float = Field(2.0, ge=0)
+    trigger_fps: float = Field(2.0, gt=0)
+
+
 class DetectConfig(BaseModel):
     """Two-stage extraction: ask IF, then ask WHEN.
 
@@ -88,15 +136,21 @@ class LimitsConfig(BaseModel):
     min_duration_s: float = 0.5
     max_queries: int = 20
     max_query_chars: int = 300
-    max_model_calls: int = 500
+    max_model_calls: int = 1000
 
 
 class Config(BaseModel):
+    # Which engine find_events runs. `windows` is Approach 1 -- ask the model when
+    # the event happened, merge across overlapping windows. `states` is Approach 3
+    # -- caption, parse the state, derive the event from transitions. Both stay
+    # available so a comparison is one flag apart rather than a branch apart.
+    strategy: str = Field("windows", pattern="^(windows|states)$")
     model: ModelConfig = Field(default_factory=ModelConfig)
     sampling: SamplingConfig = Field(default_factory=SamplingConfig)
     windowing: WindowingConfig = Field(default_factory=WindowingConfig)
     overlay: OverlayConfig = Field(default_factory=OverlayConfig)
     detect: DetectConfig = Field(default_factory=DetectConfig)
+    states: StatesConfig = Field(default_factory=StatesConfig)
     merge: MergeConfig = Field(default_factory=MergeConfig)
     limits: LimitsConfig = Field(default_factory=LimitsConfig)
 
@@ -126,6 +180,30 @@ class Config(BaseModel):
                 fix=f"raise window_s above {interval:.3f}s, or raise sampling.fps",
             )
 
+        # The states strategy has its own arithmetic and none of the checks above
+        # touch it. Left unchecked, a span shorter than one sampling interval
+        # yields zero frames on every poll, every poll is skipped, and the run
+        # reports no events -- which reads as "the model found nothing" and is
+        # actually "we never showed it anything".
+        if self.strategy == "states":
+            st = self.states
+            if st.span_s < interval:
+                raise Misconfigured(
+                    f"states.span_s ({st.span_s}s) is shorter than one sampling "
+                    f"interval ({interval:.3f}s at {self.sampling.fps} fps), so "
+                    "every poll would contain no frames and the run would report "
+                    "no events without ever looking at the video.",
+                    fix=f"raise states.span_s above {interval:.3f}s, or raise "
+                        "sampling.fps",
+                )
+            if st.step_s > st.span_s:
+                raise Misconfigured(
+                    f"states.step_s ({st.step_s}s) is greater than states.span_s "
+                    f"({st.span_s}s), which leaves {st.step_s - st.span_s:.1f}s "
+                    "between polls that no poll ever observes.",
+                    fix="set step_s <= span_s so consecutive polls at least meet",
+                )
+
         if self.merge.max_span_s < w.window_s:
             raise Misconfigured(
                 f"merge.max_span_s ({self.merge.max_span_s}s) is smaller than "
@@ -149,6 +227,26 @@ class Config(BaseModel):
                 f"sampling.fps is {self.sampling.fps}: boundary precision cannot "
                 f"beat {1.0 / self.sampling.fps:.2f}s before any model error."
             )
+        if self.strategy == "states":
+            st = self.states
+            # No warning for span_s > step_s, which is the DEFAULT. The overlap
+            # ambiguity it creates is real and documented in DESIGN.md, but a
+            # warning that fires on every single run of the shipped configuration
+            # teaches people to ignore warnings, which costs more than it saves.
+            if st.trigger:
+                out.append(
+                    "states.trigger is on. Measured on admin.G326 it used 12 calls "
+                    "against 119 and LOST the event (tIoU 0.000 against 0.406), "
+                    "because trigger_min_gap_s forbids two polls closer than "
+                    f"{st.trigger_min_gap_s}s even at the strongest peak."
+                )
+            if st.shared_caption:
+                out.append(
+                    "states.shared_caption is on. Measured on admin.G326 it cut "
+                    "the door parse rate from 85% to 29%, never parsed 'person' in "
+                    "119 calls, and ran 2.6x slower per call."
+                )
+
         if not self.overlay.enabled:
             out.append(
                 "overlay.enabled is false: frames carry no timestamp, so a model "

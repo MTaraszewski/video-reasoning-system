@@ -58,9 +58,13 @@ class Event(BaseModel):
         ge=0.0,
         le=1.0,
         description=(
-            "Heuristic ranking signal, NOT a calibrated probability. Combines the "
-            "model's self-report with agreement across independent windows. Good "
-            "for sorting and thresholding; not a probability."
+            "Heuristic ranking signal, NOT a calibrated probability. Good for "
+            "sorting and thresholding; not a probability. How it is computed "
+            "depends on the strategy that produced the event. `windows` combines "
+            "the model's self-report with agreement across overlapping windows. "
+            "`states` uses no self-report at all: it is agreement across polls, "
+            "times how tightly the boundaries are bracketed, times how much of "
+            "the interval was actually observed."
         ),
     )
     evidence: str = Field("", description="What the model claimed to see.")
@@ -73,7 +77,12 @@ class Event(BaseModel):
         ),
     )
     source_windows: list[int] = Field(
-        default_factory=list, description="Provenance: which windows produced it."
+        default_factory=list,
+        description=(
+            "Provenance: which windows produced it. Always empty for the `states` "
+            "strategy, which has no windows -- its provenance is the poll timeline "
+            "in `FindEventsResult.polls`."
+        ),
     )
 
     @property
@@ -110,6 +119,17 @@ class FindEventsResult(BaseModel):
     queries: list[str]
     events: list[Event] = Field(default_factory=list)
     run: RunInfo
+
+    # The state timeline behind the events, when the `states` strategy produced
+    # them. Every poll: the time, the subject asked about, the caption the model
+    # returned, and the state parsed from it.
+    #
+    # Kept because it IS the reasoning. Each state decision is made by reading
+    # that text, so without it an event is an assertion rather than a trace, and
+    # the run's most interesting output -- the model visibly working out whether a
+    # door is open -- was being generated, used, and then discarded. Only 200
+    # characters of one poll survived, as an event's `evidence`.
+    polls: list[dict] | None = None
 
     @model_validator(mode="after")
     def _invariants(self) -> "FindEventsResult":

@@ -126,7 +126,8 @@ DETECT = PromptVariant(
 # Stage B: the event is already established as present, so asking where it is no
 # longer presupposes anything. `confidence` is absent from this contract on
 # purpose -- the ranking signal comes from stage A's logprob, and asking the
-# model to state a number produced exactly 1.0 on 28 of 81 predictions.
+# model to state a number produced, after merging, 48 of 81 predictions
+# carrying a constant from our own code rather than any model signal.
 LOCALIZE = PromptVariant(
     name="localize",
     system=(

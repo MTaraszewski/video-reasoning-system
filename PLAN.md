@@ -82,15 +82,37 @@ exist yet.
 
 | # | Requirement | Status | Where / what is missing |
 |---|---|---|---|
-| R1 | Long-video handling: sampling, windowing, cross-boundary merge, partial events | **DONE** | `decode.py`, `windows.py`, `merge.py`; behaviour verified and evidenced in [`DESIGN.md §6`](DESIGN.md) |
-| R2 | Document those decisions | **DONE** | `DESIGN.md`, `DECISIONS.md`, `DATASETS.md`, `RUNBOOK.md` |
-| R3 | Open weights, video input, temporal localisation, a context limit worked around | **PART** | model verified open/ungated/video-capable; **temporal localisation is the thing under test**; frames-per-call limit not yet measured |
-| R4 | No hosted commercial API as primary | **DONE** | self-hosted vLLM only; no hosted path exists |
-| R5 | **Runs on their machine in minutes, first try, without reading the code** | **PART** | **Clean-clone verified**: `preflight`, `build`, `data`, `demo`, `verify-data`, `probe`, `plan`, `frames` all pass from a fresh clone — **79 s to first events JSON**. Caveat: the 73 s build had a warm Docker layer cache, so a cold host is realistically 3-5 min. `fake-test` and `run` on a custom video not yet exercised from clean |
-| R6 | 5-10 clips, 1-3 min, hand-labelled, rights-clean, defensible temporal metric | **PART** | **Metric done** — tIoU R@1 at 0.3/0.5/0.7, mean tIoU, precision/recall, NVIDIA's mean relative error, false-positive rate, per-axis breakdown, per-video isolation enforced. Six synthetic clips verified against their own labels. **Real clips still to fetch (`MEVA_MODE=annotated`), trim and hand-label** |
-| R7 | Report where the model's limits are | **TODO** | The instruments exist — per-axis metrics, the probe's precision floor, hallucination-rejection counts, the positive-control ceiling test. **Nothing measured**, because no model has been run |
-| R8 | GitHub repository | **DONE** | pushed to `origin/dev` |
-| R9 | Deliver within about a week | **ON TRACK** | started 2026-09-09 |
+| R1 | Long-video handling: sampling, windowing, cross-boundary merge, partial events | **PART** | All four met by `windows` — `decode.py`, `windows.py`, `merge.py`, [`DESIGN.md §6`](DESIGN.md). `states` meets sampling and partial-event reporting, and does not window or merge **because it cannot fragment an event**. But it does not chunk either, so cost is linear in duration and the work budget refuses past ~4.2 min at 4 subjects -- and the binding constraint is actually decode, not model calls: `sample_frames` has no seek, so decode is **quadratic** in clip length (~13 h for a 30-minute video). **Approach 1 handles long video and scores 0.000; Approach 3 works and caps at four minutes.** Both halves stated in [`DESIGN.md §6.7`](DESIGN.md), with the coarse-to-fine fix designed and unbuilt |
+| R2 | Document those decisions | **DONE** | `DESIGN.md §6.2-6.7`, `DECISIONS.md`, `EXPERIMENTS.md`, `DATASETS.md`, `RUNBOOK.md`. §6.7 added late — the two engines' differing answers to R1 were undocumented until then |
+| R3 | Open weights, video input, temporal localisation, a context limit worked around | **DONE** | Cosmos3-Edge verified open, ungated, video-capable, served on stock vLLM v0.29.0. **Temporal localisation measured**: 3.11s median error on synthetic, and near-zero on real footage — the claim was tested and mostly fails, which is the finding. Context limit worked around twice: 12s windows for `windows`, 2s polls for `states` |
+| R4 | No hosted commercial API as primary | **DONE** | Self-hosted vLLM only; no hosted path exists in the code |
+| R5 | Runs on their machine in minutes, first try, without reading the code | **DONE** | **Verified on a fresh `git clone` of the pushed branch, not on the working tree**: `make preflight && make build && make demo` succeeded first try in **11.6s** and produced a valid events JSON. Docker layers were warm, so a cold host is a few minutes. Also: `make smoke` runs 6 no-GPU checks and all pass; `make data-eval` rebuilds all 8 clips from MEVA's public bucket over plain HTTPS with no AWS account or CLI |
+| R6 | 5-10 clips, 1-3 min, hand-labelled, rights-clean, defensible temporal metric | **DONE** | **8 clips, 120s each, 15 events**, MEVA CC BY 4.0, each `confirmed_by_hand` with adjudication notes — two of which record a hand verdict being overturned by zooming. Metric: tIoU R@1 at 0.3/0.5/0.7, mean tIoU, precision/recall, NVIDIA's mean relative error, false-positive rate, per-axis breakdown, per-(video, description) isolation enforced in code |
+| R7 | Report where the model's limits are | **DONE** | Measured, not asserted: a 3.11s precision floor before any windowing; mean tIoU 0.0021 and a 0.80 false-positive rate on real footage; presence reported at 47% when present against 39% when absent; a second architecture failing the same way; and a shape table saying which descriptions the method **cannot** express — motion, relations, compound events — covering two of the brief's own three worked examples |
+| R8 | GitHub repository | **DONE** | `MTaraszewski/video-reasoning-system` |
+| R9 | Deliver within about a week | **ON TRACK** | Started 2026-09-09 |
+
+**Scored, on 2026-09-11.** Four of the eight labelled clips, eight events, same
+harness and same metrics that scored Approach 1:
+
+| | Approach 1 | Approach 3 |
+|---|---|---|
+| mean tIoU | **0.000** | **0.292** |
+| R@1 tIoU>=0.3 | 0.000 | 0.375 |
+| recall@0.5 | 0.000 | 0.250 |
+| predictions / truths | 14 / 8 | 153 / 8 |
+
+Approach 1 has no overlap with any label. Approach 3 localises three of eight
+events at tIoU>=0.3. At `confidence >= 0.8`, 77% of its predictions can be dropped
+with **no** loss of recall or localisation, which is the ranking signal doing the
+job the brief asks of it.
+
+The ceiling test ran the same day and is what makes Approach 1's zero
+interpretable: on clips with the activity name printed in a box around the actor
+it still scores mean tIoU 0.018. The failure is the approach, not the footage.
+
+**Still open:** the other four clips, which would cover the `person` subject the
+subset never exercises. 2.5 hours per four clips, and the GPU window closed.
 
 ### The risk this exposes
 
@@ -1200,3 +1222,82 @@ aws service-quotas list-requested-service-quota-change-history \
   Instance stopped. All results copied off, including 133 captions per run -- any
   future question about why an event missed can be answered by reading rather than
   by renting a GPU.
+
+- **2026-09-11 (the comparison, measured)** — Approach 3 scored across four
+  labelled clips by the harness that scored Approach 1: **mean tIoU 0.000 ->
+  0.292**, R@1>=0.3 0.000 -> 0.375, recall@0.5 0.000 -> 0.250. On the descriptions
+  it accepts, 0.334 and 0.429. 1,904 calls, 2h28m, $0.377 per video-minute.
+
+  R@1>=0.7 is 0.000 for both, which is the ~3s precision floor from the capability
+  probe showing through — a 2.7-second event cannot reach 70% overlap when
+  boundaries carry seconds of error.
+
+  **The weakness is precision: 153 predictions for 8 truths.** But sweeping a
+  threshold over the confidence we added that morning, at no GPU cost: at 0.8,
+  **35 predictions survive and recall, R@1 and mean tIoU are unchanged**. 77%
+  discarded for nothing. At 0.9 it breaks. Approach 1's confidence could not do
+  this at all — 48 of its 81 values were constants from our own merge code. This
+  is the first evidence `agreement x sharpness x coverage` ranks anything.
+
+  **The ceiling test, finally run.** On MEVA's curated clips, where the activity
+  name is burned into the picture in a box around the actor, Approach 1 scores
+  **mean tIoU 0.018, recall 0.000**. Given the answer written on the frame it
+  still cannot localise. That makes the 0.000 on real footage a property of the
+  approach rather than of the data, and retrospectively justifies building a
+  second engine instead of tuning the first. It does not separate vision from
+  prompting — both are still implicated — and saying so is the honest limit of
+  what one cheap experiment buys.
+
+- **2026-09-11 (first full-clip run; triggered polling; a ground-truth finding)** —
+  Ran `admin.G326` end to end for the first time instead of in windows around a
+  label. Uniform 1s polling: 119 calls, 453s. Driven from the change signal:
+  **12 calls, 63s**, both events kept — 9.9x fewer calls, 7.2x faster, with 9 of
+  the 12 calls landing inside the two events.
+
+  The saving exposed a bug it had been hiding. The derivation placed each
+  transition at the midpoint of its bracket, which is right on a uniform grid and
+  nonsense across an 82-second gap: a 3-second door was reported as a
+  **42-second event at confidence 1.0**. Two fixes, both in derivation, not
+  polling — a state is no longer carried across an unobserved gap (`states.edge`,
+  `carry_steps`), and boundary sharpness now multiplies into confidence. The
+  interval became 6.25–8.50 at confidence 0.4, marked partial. Uniform polling on
+  the same clip is unaffected at 1.0, which is the separation the number should
+  always have made.
+
+  Neither fix improves accuracy: tIoU against the label is 0.036 uniform, 0
+  triggered. The residual is the state-vs-event offset, not the polling.
+
+  **MEVA's annotation is not exhaustive, confirmed.** The run found a door opening
+  at 94–96s; MT checked it and it is real. The annotation file for the whole
+  five-minute source contains exactly two instances, both already in our labels.
+  The metric this reaches is `precision@0.5` alone — `tp / n_preds`, so a correct
+  detection of an unannotated event is charged as an error. `false_positive_rate`
+  keys on (video, description) and is untouched; `mean_tIoU` and relative error
+  iterate over truths and cannot see surplus predictions. Windowed evaluation
+  could never have surfaced any of this.
+
+- **2026-09-11 (decomposition and routing, documented)** — Named the shape of
+  Approach 1's failure rather than just its score. It issued ONE call per (window,
+  description) asked to do three jobs: decide presence, locate the boundaries,
+  report them as JSON. It can do the third (28 of 30 parsed after the repair) and
+  the second when told the event is present (3.5s median). It cannot do the first
+  (47% vs 39%). One capability of three, mixed into a single answer, so a wrong
+  output never said which stage had failed.
+
+  Every diagnostic that eventually worked came from splitting the job -- the probe
+  separated localisation from detection, the caption stage separated perception
+  from scoring. Neither was visible while one call did everything. Approach 3 is
+  that decomposition made explicit: caption (model) -> parse (code) -> derive
+  (code).
+
+  **Routing added as a design decision.** Ten of fifteen descriptions decompose
+  into a persistent binary state; five do not, and no prompting changes it. The
+  engine is therefore chosen from the sentence before any GPU spend. A description
+  with no state pair is reported as NOT EXPRESSIBLE rather than falling back to
+  Approach 1 -- which would answer, with output measured as uninformative.
+  Returning a known-bad answer where a client expects a real one is worse than
+  returning nothing and saying why.
+
+  Implemented: states_map presence is the router. Not implemented: deriving the
+  state pair from the sentence, which would make the router's decision function
+  fall out of the derivation step.
