@@ -1696,7 +1696,8 @@ boundary was invented inside unobserved time.
 The confidence was worse than the interval. It is the fraction of polls inside the
 span agreeing on the target state, and exactly one informative poll fell inside —
 1/1 = 1.0. That is structurally the same failure as Approach 1's stated
-confidence, which returned exactly 1.0 on 28 of 81 predictions: a number that
+confidence, whose merged values clustered on constants the code produces --
+0.97 x23 is the merge ceiling itself: a number that
 ranks nothing, arrived at by a different route.
 
 Two changes, both in the derivation rather than the polling:

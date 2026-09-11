@@ -360,12 +360,21 @@ matching the description and to state a confidence in its JSON.
 do not contain the action; stage B localises only after a yes; confidence is
 P(present) from the yes/no token logprob.
 
-**What changed it:** the measured output. 28 of 81 predictions came back at
-confidence exactly 1.0 -- a stated confidence that ranks nothing -- and 7 carried
-evidence denying the very event they reported ("Empty hallway with a closed door
-and no visible people"). Separately, 13 predictions carried 0.485, which is our
-own 0.5 default passed through the merge's noisy-OR: a number we invented,
-formatted like a measurement.
+**What changed it:** the measured output. The merged confidences cluster on values the CODE
+produces, not on model signal: **0.97 x23** is `merge._agree`'s own ceiling,
+**0.485 x13** is that ceiling times the 0.5 default a `WindowEvent` gets when the
+model omits a confidence, and 0.9603 x12 is the ceiling times a stated 0.99. That
+is 48 of 81 predictions carrying a number we invented, formatted like a
+measurement. Separately, 7 carried evidence denying the very event they reported
+("Empty hallway with a closed door and no visible people").
+
+`UNVERIFIED`: an earlier revision of this entry said "28 of 81 predictions came
+back at confidence exactly 1.0". No prediction in the retained artifact has
+confidence 1.0 -- the merge's ceiling forbids it. The claim was probably about the
+model's *stated* confidence before merging, which is plausible and which the
+retained output does not preserve, since predictions keep only the merged value
+and no exchange recording was made for that run. Corrected to what the artifact
+actually shows.
 
 **What it did not change, which is the point.** On a 2-clip subsample the two-stage
 path produced **the same number of predictions** as the single-stage one. It

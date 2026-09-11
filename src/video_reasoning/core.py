@@ -219,8 +219,9 @@ def _events_from_states(
 
     Confidence is `agreement x sharpness x coverage`. Each factor catches a
     failure that was actually observed, and none is a number the model asserts
-    about itself -- Approach 1's stated confidence came back as exactly 1.0 on 28
-    of 81 predictions and ranked nothing.
+    about itself -- Approach 1's merged confidence clustered on constants from its
+    own merge code, 48 of 81 predictions carrying the ceiling or the ceiling times
+    a default, and ranked nothing.
 
     - **agreement** -- the fraction of informative polls inside the interval that
       call it the target state.

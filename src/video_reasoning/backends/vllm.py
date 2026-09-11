@@ -104,7 +104,8 @@ class VLLMBackend:
         model cannot rationalise its way to a positive, and `logprobs` gives the
         probability behind that single token. That probability is a real signal,
         unlike a confidence the model states about itself -- which came back as
-        exactly 1.0 on 28 of 81 predictions in the measured run.
+        values the merge code produces rather than model signal -- 48 of 81
+        predictions carried the ceiling, or the ceiling times our own default.
 
         A refusal to answer, or an endpoint that cannot do guided decoding, is
         treated as "not present": the alternative is inventing a positive, and

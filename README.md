@@ -251,6 +251,27 @@ transfer automatically is `states.json`: the description → state-pair mapping 
 hand-written, so a new domain needs that written too. Deriving it from the
 description is one cheap text call and is not built.
 
+## Improvements — measured, not built
+
+These are not scope gaps. Each is a specific inefficiency **measured on this
+hardware**, with a known fix, which would make the system faster or extend what it
+can handle. None changes what it currently scores.
+
+| improvement | measured | expected gain | result-neutral? |
+|---|---|---|---|
+| **concurrent model requests** | server log reads `Running: 1 reqs, KV cache 1.8%` on every line — every call is serial and the GPU idles between them, while the four per-subject calls at each timestep are independent | **2–3× wall-clock** — the largest saving available | **No.** Changing batching changes floating-point reduction order, which we have measured flipping a near-tie poll |
+| **`container.seek()` in `sample_frames`** | decode runs from the file start on every poll: 0.26 s at t=0, 3.69 s at t=118. Summed over a clip that is **quadratic** — 235 s per 120 s clip, **~13 h for a 30-minute one** | removes the quadratic term; 30-min decode drops to ~8 min | Yes, if frame timestamps are verified identical |
+| **coarse-to-fine polling** | uniform polling spends nearly its whole budget confirming stillness — 18 of 119 polls uninformative, the rest agreeing with their neighbours | **3.7–6.3× fewer model calls** at identical resolution | No — different resolution guarantee, needs its own scoring |
+| cache frame encodes; drop the redundant `probe()` | `sample_frames` re-opens the file to read a constant duration (2.64 s/clip); the four subjects re-encode identical frames to JPEG (4.70 s/clip) | ~7 s/clip | Yes |
+
+**`seek` and coarse-to-fine are complements, not alternatives.** Coarse-to-fine
+cuts model calls and barely touches decode, so at coarse 4 s a 30-minute clip
+still spends 3.3 hours decoding. Together they put it at roughly 2.2 hours,
+dominated by model calls — the regime the work budget was designed for. That is
+what would turn Approach 3's four-minute ceiling into a real long-video path.
+
+Detail and measurements: [DESIGN.md §6.7](DESIGN.md).
+
 ## Not done, and why
 
 Traceability for everything planned or implied that does not exist. An unrun
@@ -263,9 +284,6 @@ experiment quoted as a result is the worst kind of error, so these are named.
 | Qwen3-VL-8B vs Cosmos-Reason2-8B | neither fits in the L4's 22 GiB with a 48-frame window | the comparison isolating NVIDIA's post-training stays open |
 | held-out set | needs more labelled clips, not a post-hoc split | every clip that produced a number also shaped a prompt or threshold |
 | deriving state pairs from the description | one cheap text call; unbuilt | a human is still in the loop, once per new description |
-| two-stage trigger — locate brackets, then sweep inside them | designed from the triggered-polling result, not built | triggered polling is 10× cheaper and loses the event, so it stays off |
-| concurrent model requests | measured, not built | the server log shows `Running: 1 reqs, KV cache 1.8%` — every call is serial and the GPU is idle between them. The four per-subject calls at each timestep are independent. Expected **2–3× wall-clock**, the largest saving available. Not result-neutral: changing batching changes numerics |
-| `container.seek()` in `sample_frames` | measured, not built | decode runs from the file start on every poll, so decode cost is **quadratic** in clip length: 235 s per 120 s clip, ~13 h for a 30-minute one. It is what actually caps Approach 3's video length, and a prerequisite for the coarse-to-fine design rather than an alternative |
 | instant-vs-span metric in `metrics.py` | interval tIoU already works | transition scoring lives in a script rather than the harness |
 | captioning in the stub and replay backends | the recorder hooks `extract()` only | Approach 3 cannot be exercised without a GPU |
 | `make sweep`, `make viz` | marked planned in the Makefile | fps/window frontier and timeline rendering unavailable |
