@@ -20,7 +20,7 @@ Library form of what `scripts/reason_timeline.py` and `run_transitions.py` probe
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 # Conversational opener the model prefixes to almost every answer. It is not a
 # description, it consumes the token budget before the content arrives, and it was

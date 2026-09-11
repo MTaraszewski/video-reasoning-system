@@ -435,6 +435,21 @@ def _find_events_states(
     # Every description was unanswerable: there is nothing to look for, so do not
     # decode a single frame. Without this the grid is still walked, sampling
     # frames for no subject at all.
+    # The work budget, which the windows path checks in `check_budget` and this
+    # path did not check at all. It cannot be checked in `find_events` alongside
+    # the other one: the cost here is subjects x polls, and how many subjects
+    # there are is only known after routing has collapsed descriptions onto state
+    # pairs. So it is checked here, at the first moment the number exists.
+    planned = len(groups) * len(_poll_times(meta.duration_s, path, config.states))
+    if planned > config.limits.max_model_calls:
+        raise BudgetExceeded(
+            f"this request needs {planned} model calls "
+            f"({len(groups)} subject(s) x {planned // max(len(groups), 1)} polls), "
+            f"over the limit of {config.limits.max_model_calls}.",
+            fix="raise states.step_s to poll less often, ask fewer descriptions, "
+                "shorten the video, or raise limits.max_model_calls if you mean it",
+        )
+
     timelines, calls = ({}, 0) if not groups else _poll_states(
         path, meta.duration_s, groups, config, backend, progress)
     polls_out = [

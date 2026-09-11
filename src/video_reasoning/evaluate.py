@@ -58,6 +58,13 @@ def queries_for(path: str | Path) -> dict[str, list[str]]:
     was labelled on. Otherwise the system is only ever asked questions whose
     answer is yes, and false positives go unmeasured.
     """
+    # Descriptions are collected from the WHOLE labels file, before any --limit
+    # narrows the clips. That is deliberate and looks like a bug: on a 4-clip
+    # subsample the system is still asked all 13 descriptions, including ones
+    # labelled only on clips 5-8. Those extra questions have no true answer on
+    # this subset, which is exactly what makes them useful -- they are the
+    # negatives. Collecting descriptions after the narrowing would delete most of
+    # them and flatter every precision figure on a subsample.
     data = json.loads(Path(path).read_text())
     all_desc = sorted({e["description"] for item in data
                        for e in item.get("events", [])})

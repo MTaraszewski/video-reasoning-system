@@ -155,6 +155,16 @@ def run(
             )
 
         smap = _load_states_map(states_map)
+        # Same guard `evaluate` applies. Without a map every description routes to
+        # "not expressible", the run emits nothing, and the output is an empty
+        # events list -- which reads as "found nothing in the video" rather than
+        # "was never told what to look for".
+        if cfg.strategy == "states" and not smap:
+            raise InvalidInput(
+                "--strategy states needs --states-map; without it every "
+                "description is unanswerable and the run returns no events.",
+                fix="pass --states-map /app/states.json",
+            )
         result = find_events(video, wanted, cfg, be, prompt=prompt,
                              progress=not quiet, states_map=smap)
     except VideoReasoningError as e:

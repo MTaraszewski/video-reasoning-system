@@ -104,5 +104,17 @@ limits:
   min_duration_s: 0.5
   max_queries: 20
   max_query_chars: 300
-  max_model_calls: 500          # work budget: refuse rather than silently run for
-                                # hours. windows x queries is known before any call.
+  max_model_calls: 1000         # work budget for ONE request: refuse rather than
+                                # silently run for hours. The cost is known before
+                                # any call is made -- windows x descriptions for the
+                                # `windows` strategy, subjects x polls for `states`.
+                                #
+                                # 1000, not 500. 500 was set from the windows
+                                # arithmetic, where a 120s clip costs 169 calls and
+                                # the limit is never near. The states strategy costs
+                                # 4 subjects x 119 polls = 476 on the same clip, so
+                                # 500 left no headroom at all: one more subject
+                                # (595), a 3-minute clip (712) or a half-second step
+                                # (952) would each have been refused. At ~4s/call
+                                # 1000 still refuses anything over about an hour for
+                                # a single video, which is what the guard is for.

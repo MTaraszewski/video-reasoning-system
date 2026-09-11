@@ -13,8 +13,23 @@ samples — and exposes it as a trigger.
 them: a slow 27s traverse scored 1.07%, a 0.15s event scored 0.07% at 2fps, and a
 negative clip scored 3.42%. Small distant actors move a fraction of a percent. So
 this narrows where to look; it does not decide what happened, and a trigger that
-misses an event costs a detection the uniform grid would have found. That trade is
-the thing to measure, not to assume.
+misses an event costs a detection the uniform grid would have found.
+
+**That trade was measured, and the trigger lost.** On the full 120s of admin.G326,
+in one server session, against the uniform grid:
+
+    uniform    119 calls  467s  3.50-8.50 @1.0            tIoU 0.406
+    triggered   12 calls   68s  6.25-9.50 @0.4, partial   tIoU 0.000
+
+Nine of the twelve calls landed inside the two real events, so the signal found
+the right places. It could not resolve the moment: the uniform grid first reads
+*open* at t=4.0s and the trigger never polls there, because `min_gap_s` forbids
+two polls closer than 2s -- including at the strongest peak, which it had
+correctly identified.
+
+So `states.trigger` is OFF by default, and the result argues for triggering to
+locate brackets and then sweeping densely INSIDE them, which is not built. A 9.9x
+cost saving that loses the event is not a saving.
 """
 from __future__ import annotations
 

@@ -136,7 +136,7 @@ class LimitsConfig(BaseModel):
     min_duration_s: float = 0.5
     max_queries: int = 20
     max_query_chars: int = 300
-    max_model_calls: int = 500
+    max_model_calls: int = 1000
 
 
 class Config(BaseModel):
@@ -180,6 +180,30 @@ class Config(BaseModel):
                 fix=f"raise window_s above {interval:.3f}s, or raise sampling.fps",
             )
 
+        # The states strategy has its own arithmetic and none of the checks above
+        # touch it. Left unchecked, a span shorter than one sampling interval
+        # yields zero frames on every poll, every poll is skipped, and the run
+        # reports no events -- which reads as "the model found nothing" and is
+        # actually "we never showed it anything".
+        if self.strategy == "states":
+            st = self.states
+            if st.span_s < interval:
+                raise Misconfigured(
+                    f"states.span_s ({st.span_s}s) is shorter than one sampling "
+                    f"interval ({interval:.3f}s at {self.sampling.fps} fps), so "
+                    "every poll would contain no frames and the run would report "
+                    "no events without ever looking at the video.",
+                    fix=f"raise states.span_s above {interval:.3f}s, or raise "
+                        "sampling.fps",
+                )
+            if st.step_s > st.span_s:
+                raise Misconfigured(
+                    f"states.step_s ({st.step_s}s) is greater than states.span_s "
+                    f"({st.span_s}s), which leaves {st.step_s - st.span_s:.1f}s "
+                    "between polls that no poll ever observes.",
+                    fix="set step_s <= span_s so consecutive polls at least meet",
+                )
+
         if self.merge.max_span_s < w.window_s:
             raise Misconfigured(
                 f"merge.max_span_s ({self.merge.max_span_s}s) is smaller than "
@@ -203,6 +227,26 @@ class Config(BaseModel):
                 f"sampling.fps is {self.sampling.fps}: boundary precision cannot "
                 f"beat {1.0 / self.sampling.fps:.2f}s before any model error."
             )
+        if self.strategy == "states":
+            st = self.states
+            # No warning for span_s > step_s, which is the DEFAULT. The overlap
+            # ambiguity it creates is real and documented in DESIGN.md, but a
+            # warning that fires on every single run of the shipped configuration
+            # teaches people to ignore warnings, which costs more than it saves.
+            if st.trigger:
+                out.append(
+                    "states.trigger is on. Measured on admin.G326 it used 12 calls "
+                    "against 119 and LOST the event (tIoU 0.000 against 0.406), "
+                    "because trigger_min_gap_s forbids two polls closer than "
+                    f"{st.trigger_min_gap_s}s even at the strongest peak."
+                )
+            if st.shared_caption:
+                out.append(
+                    "states.shared_caption is on. Measured on admin.G326 it cut "
+                    "the door parse rate from 85% to 29%, never parsed 'person' in "
+                    "119 calls, and ran 2.6x slower per call."
+                )
+
         if not self.overlay.enabled:
             out.append(
                 "overlay.enabled is false: frames carry no timestamp, so a model "
