@@ -120,6 +120,10 @@ def run_eval(
 
     preds: list[dict] = []
     per_video: dict[str, dict] = {}
+    # The captions behind every state decision. Written to a sidecar rather than
+    # inline: it is the evidence for each event, and it is also ~1.5 MB of prose
+    # that would make the metric file unreadable.
+    polls_by_video: dict[str, list[dict]] = {}
     t0 = time.time()
     total_video_s = 0.0
     total_calls = 0
@@ -132,6 +136,8 @@ def run_eval(
                              progress=False, states_map=states_map)
         total_video_s += result.duration_s
         total_calls += result.run.model_calls
+        if result.polls:
+            polls_by_video[video] = result.polls
         for e in result.events:
             d = e.model_dump()
             d["video"] = video          # required by the isolation rule
@@ -209,6 +215,8 @@ def run_eval(
         "cost": _cost(wall, total_video_s, total_calls, gpu_hourly),
         "predictions": preds,
     }
+    if polls_by_video:
+        out["polls"] = polls_by_video
     return out
 
 

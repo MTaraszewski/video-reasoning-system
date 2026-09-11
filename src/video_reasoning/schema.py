@@ -111,6 +111,17 @@ class FindEventsResult(BaseModel):
     events: list[Event] = Field(default_factory=list)
     run: RunInfo
 
+    # The state timeline behind the events, when the `states` strategy produced
+    # them. Every poll: the time, the subject asked about, the caption the model
+    # returned, and the state parsed from it.
+    #
+    # Kept because it IS the reasoning. Each state decision is made by reading
+    # that text, so without it an event is an assertion rather than a trace, and
+    # the run's most interesting output -- the model visibly working out whether a
+    # door is open -- was being generated, used, and then discarded. Only 200
+    # characters of one poll survived, as an event's `evidence`.
+    polls: list[dict] | None = None
+
     @model_validator(mode="after")
     def _invariants(self) -> "FindEventsResult":
         # Ordered by start time — a documented guarantee.

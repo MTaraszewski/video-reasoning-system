@@ -434,7 +434,16 @@ def evaluate(
         _fail(e)
 
     Path(out).parent.mkdir(parents=True, exist_ok=True)
+    # The state timelines go beside the metrics, not inside them. They are the
+    # evidence for every event the states strategy reports -- each state decision
+    # is made by reading that caption -- but inline they would bury the numbers.
+    polls = res.pop("polls", None)
     Path(out).write_text(json.dumps(res, indent=2))
+    if polls:
+        side = Path(out).with_suffix(".polls.json")
+        side.write_text(json.dumps(polls, indent=2))
+        n = sum(len(v) for v in polls.values())
+        console.print(f"  {n} caption(s) kept -> {side}")
 
     o = res["overall"]
     console.print(f"\n[bold]Overall[/]  {res['model']}  "

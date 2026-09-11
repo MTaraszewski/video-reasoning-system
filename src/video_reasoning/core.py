@@ -437,6 +437,11 @@ def _find_events_states(
     # frames for no subject at all.
     timelines, calls = ({}, 0) if not groups else _poll_states(
         path, meta.duration_s, groups, config, backend, progress)
+    polls_out = [
+        {"t": p.t, "subject": _subject(g), "state": p.state,
+         "truncated": p.truncated, "text": p.text}
+        for g in groups for p in timelines[g]
+    ]
     for g, qs in zip(groups, by_states.values()):
         for q in qs:
             # Per description, because the TARGET state differs within a group:
@@ -448,7 +453,7 @@ def _find_events_states(
 
     return FindEventsResult(
         video=path.name, duration_s=meta.duration_s, queries=queries,
-        events=events,
+        events=events, polls=polls_out,
         run=RunInfo(
             model=config.model.name if not backend.is_stub else "stub",
             backend="stub" if backend.is_stub else "vllm",
