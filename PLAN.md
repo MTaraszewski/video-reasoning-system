@@ -92,11 +92,27 @@ exist yet.
 | R8 | GitHub repository | **DONE** | `MTaraszewski/video-reasoning-system` |
 | R9 | Deliver within about a week | **ON TRACK** | Started 2026-09-09 |
 
-**The one thing still open:** Approach 3 has never been scored across the labelled
-set. Every number for it comes from single clips. The harness could not run it
-until 2026-09-11 and the run takes hours; it is in flight as this is written. Until
-it lands, the comparison between the two approaches rests on one clip, and that is
-an anecdote rather than a result.
+**Scored, on 2026-09-11.** Four of the eight labelled clips, eight events, same
+harness and same metrics that scored Approach 1:
+
+| | Approach 1 | Approach 3 |
+|---|---|---|
+| mean tIoU | **0.000** | **0.292** |
+| R@1 tIoU>=0.3 | 0.000 | 0.375 |
+| recall@0.5 | 0.000 | 0.250 |
+| predictions / truths | 14 / 8 | 153 / 8 |
+
+Approach 1 has no overlap with any label. Approach 3 localises three of eight
+events at tIoU>=0.3. At `confidence >= 0.8`, 77% of its predictions can be dropped
+with **no** loss of recall or localisation, which is the ranking signal doing the
+job the brief asks of it.
+
+The ceiling test ran the same day and is what makes Approach 1's zero
+interpretable: on clips with the activity name printed in a box around the actor
+it still scores mean tIoU 0.018. The failure is the approach, not the footage.
+
+**Still open:** the other four clips, which would cover the `person` subject the
+subset never exercises. 2.5 hours per four clips, and the GPU window closed.
 
 ### The risk this exposes
 
@@ -1206,6 +1222,31 @@ aws service-quotas list-requested-service-quota-change-history \
   Instance stopped. All results copied off, including 133 captions per run -- any
   future question about why an event missed can be answered by reading rather than
   by renting a GPU.
+
+- **2026-09-11 (the comparison, measured)** — Approach 3 scored across four
+  labelled clips by the harness that scored Approach 1: **mean tIoU 0.000 ->
+  0.292**, R@1>=0.3 0.000 -> 0.375, recall@0.5 0.000 -> 0.250. On the descriptions
+  it accepts, 0.334 and 0.429. 1,904 calls, 2h28m, $0.377 per video-minute.
+
+  R@1>=0.7 is 0.000 for both, which is the ~3s precision floor from the capability
+  probe showing through — a 2.7-second event cannot reach 70% overlap when
+  boundaries carry seconds of error.
+
+  **The weakness is precision: 153 predictions for 8 truths.** But sweeping a
+  threshold over the confidence we added that morning, at no GPU cost: at 0.8,
+  **35 predictions survive and recall, R@1 and mean tIoU are unchanged**. 77%
+  discarded for nothing. At 0.9 it breaks. Approach 1's confidence could not do
+  this at all — 48 of its 81 values were constants from our own merge code. This
+  is the first evidence `agreement x sharpness x coverage` ranks anything.
+
+  **The ceiling test, finally run.** On MEVA's curated clips, where the activity
+  name is burned into the picture in a box around the actor, Approach 1 scores
+  **mean tIoU 0.018, recall 0.000**. Given the answer written on the frame it
+  still cannot localise. That makes the 0.000 on real footage a property of the
+  approach rather than of the data, and retrospectively justifies building a
+  second engine instead of tuning the first. It does not separate vision from
+  prompting — both are still implicated — and saying so is the honest limit of
+  what one cheap experiment buys.
 
 - **2026-09-11 (first full-clip run; triggered polling; a ground-truth finding)** —
   Ran `admin.G326` end to end for the first time instead of in windows around a

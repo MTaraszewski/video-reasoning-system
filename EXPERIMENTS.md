@@ -406,6 +406,110 @@ the **coverage** factor into the confidence score: four polls held a span that w
 
 ---
 
+## 15 — Approach 3, scored across a set
+
+**Why.** Every number for Approach 3 so far came from one clip. That is an
+anecdote. This is the one result the second engine exists to produce.
+
+**Method.** Four clips, eight hand-labelled events, all thirteen descriptions
+asked of every clip so false positives are measurable. Same harness, same labels,
+same metrics that scored Approach 1. `make eval STRATEGY=states EVAL_LIMIT=4`.
+1,904 calls, 2 hours 28 minutes.
+
+**Result.**
+
+| | Approach 1 | Approach 3 | Approach 3, routed only |
+|---|---|---|---|
+| mean tIoU | **0.000** | **0.292** | **0.334** |
+| R@1 tIoU≥0.3 | 0.000 | 0.375 | 0.429 |
+| R@1 tIoU≥0.5 | 0.000 | 0.250 | 0.286 |
+| recall@0.5 | 0.000 | 0.250 | 0.286 |
+| precision@0.5 | 0.000 | 0.013 | 0.013 |
+| false-positive rate | 0.857 | 0.869 | 0.869 |
+| predictions / truths | 14 / 8 | 153 / 8 | 153 / 7 |
+| model calls | 676 | 1,904 | |
+
+Three of eight events localised at tIoU≥0.3, two at ≥0.5, against **no overlap at
+all** from the windowed approach. `R@1 tIoU≥0.7` is 0.000 for both, which is the
+~3s precision floor from experiment 1 showing through: a 2.7-second event cannot
+be localised to 70% overlap when boundaries carry seconds of error.
+
+`mean_relative_error` is 2.657 against NVIDIA's <0.30 target — boundary error is
+~2.7x the event's own duration.
+
+**The weakness is precision.** 153 predictions for 8 truths, about 19 emitted
+events per real one. The state timeline flips often and every flip becomes an
+interval.
+
+### The ranking signal works
+
+Sweeping a confidence threshold over those same predictions — no new GPU time,
+the numbers are in the eval file:
+
+| threshold | predictions | mean tIoU | R@1≥0.3 | R@1≥0.5 | precision@0.5 | recall@0.5 |
+|---|---|---|---|---|---|---|
+| none | 153 | 0.292 | 0.375 | 0.250 | 0.013 | 0.250 |
+| ≥ 0.6 | 49 | 0.292 | 0.375 | 0.250 | 0.041 | 0.250 |
+| **≥ 0.8** | **35** | **0.288** | **0.375** | **0.250** | **0.057** | **0.250** |
+| ≥ 0.9 | 11 | 0.130 | 0.250 | 0.125 | 0.091 | 0.125 |
+
+**77% of predictions can be discarded with no loss of recall, R@1 or mean tIoU.**
+Precision improves 4.4x. At 0.9 it breaks — recall halves — so 0.8 is a knee, not
+a cliff we happen to be standing on.
+
+This is the first direct evidence that `agreement x sharpness x coverage` ranks
+anything. Approach 1's confidence could not do this: 48 of its 81 values were
+constants produced by our own merge code, so no threshold could separate right
+from wrong. This one sorts 153 predictions and the correct ones survive into the
+top quarter.
+
+It does not *solve* precision — 35 for 8 truths is still 4.4 per truth — but it
+changes the character of the problem. The system over-emits **and knows which of
+its own answers are weak.**
+
+---
+
+## 16 — The ceiling test: is it the footage, or the approach?
+
+**Why.** Approach 1 scores 0.000 on real footage. Two explanations fit: the
+footage is too hard at 640x360 with 26-pixel actors, or the formulation cannot do
+the task. Nothing measured so far separates them, and they imply completely
+different next steps.
+
+**Method.** MEVA publishes curated example clips with **the activity name burned
+into the picture**, in a red box around the actor. Useless as ground truth — the
+answer is on the frame — and for exactly that reason a ceiling. `make
+eval-control`, 8 clips, 77 seconds of video, 80 calls, about two minutes.
+
+**Result.**
+
+```
+positive_control   R@1_0.5 = 0.000   mean tIoU = 0.018   recall = 0.000   FP = 0.750
+```
+
+**It fails with the answer written on the frame.** mean tIoU 0.018 is
+indistinguishable from zero, and it still emitted events on three quarters of the
+description-clip pairs that contained none.
+
+**What changed.** This is what makes Approach 1's 0.000 interpretable rather than
+merely bad. Given maximally easy input, the windowed formulation still cannot
+localise, so **the failure belongs to the approach and not to the data.** No
+amount of prompt tuning on clean footage would have rescued it, and the decision
+to build a second engine rather than tune the first was correct for a reason that
+can now be pointed at.
+
+**What it does not show.** It ran Approach 1, so a failure implicates *"cannot
+read the frame"* and *"cannot follow the task"* together. It rules out "the
+footage is too hard"; it does not separate vision from prompting. Doing that needs
+Approach 3 on these clips, and most control descriptions -- *"someone leaves a bag
+or package behind"* -- have no state pair, so it is not a free experiment.
+
+The result is reported on the `positive_control` axis and **excluded from headline
+metrics in code** (`CONTROL_AXES` in `metrics.py`), so it cannot leak into a
+comparison by accident.
+
+---
+
 ## Not run
 
 Stated plainly, because an unrun experiment quoted as a result is the worst kind of
@@ -413,8 +517,7 @@ error.
 
 | experiment | why it matters | why not run |
 |---|---|---|
-| **Approach 3 scored across all 8 clips** | the one result that would make the comparison defensible | the harness could not run it until recently; the run is 1.5–4 h |
-| `eval-control` — activity name burned into the frame | separates "cannot recognise events" from "cannot see at this resolution" | not built out |
+| **Approach 3 on the other four clips** | four were scored (experiment 15); eight would make the comparison stronger and would cover the `person` subject, which the four-clip subset never exercises | 2.5 h per four clips, and the GPU window closed |
 | Qwen3-VL-8B vs Cosmos-Reason2-8B | isolates NVIDIA's post-training, same architecture and size | neither fits in 22 GiB with a 48-frame window |
 | held-out set | every clip that produced a number also shaped a prompt or threshold | needs more labelled clips, not a post-hoc split |
 | deriving state pairs from the description | the last human step in the pipeline | one cheap text call; unbuilt |

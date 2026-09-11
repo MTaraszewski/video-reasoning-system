@@ -172,23 +172,44 @@ comparison is one argument apart rather than one branch apart.
 
 ## Results
 
+Both approaches, scored by the same harness on the same four clips, eight
+hand-labelled events:
+
 | | Approach 1 (windows) | Approach 3 (states) |
 |---|---|---|
-| mean tIoU — 8 clips, 15 events | **0.0021** | *not yet scored* |
-| mean tIoU — 4 clips, 8 events | **0.000** | *not yet scored* |
-| R@1 tIoU≥0.3 | 0.000 | — |
-| recall@0.5 | 0.000 | — |
-| false-positive rate | 0.80 | — |
-| model calls | 1,352 | 1,904 (4 clips, grouped) |
-| single clip `admin.G326` | event at 90–102 s | **3.50–8.50 s, tIoU 0.406** |
+| **mean tIoU** | **0.000** | **0.292** |
+| R@1 tIoU≥0.3 | 0.000 | **0.375** |
+| R@1 tIoU≥0.5 | 0.000 | **0.250** |
+| recall@0.5 | 0.000 | 0.250 |
+| precision@0.5 | 0.000 | 0.013 |
+| false-positive rate | 0.857 | 0.869 |
+| predictions / truths | 14 / 8 | 153 / 8 |
+| model calls | 676 | 1,904 |
 
-Approach 1 has **zero overlap with any label** on real footage — not a low score, no
-overlap at all. On the same clip where it placed the door opening at 90–102 s
-against a 3.0–5.7 s label, Approach 3 returns 3.50–8.50 s.
+Approach 1 has **no overlap with any label** — not a low score, none at all. Approach
+3 localises three of eight events at tIoU≥0.3 and two at ≥0.5. Restricted to the
+descriptions it accepts, mean tIoU is **0.334** and R@1≥0.3 is **0.429**.
 
-**But Approach 3 has not been scored across a set.** The harness could not run it
-until recently and the run takes hours. One clip is an anecdote; that gap is stated
-rather than papered over, and it is the only number missing from this document.
+**Its weakness is precision: 153 predictions for 8 truths.** But the ranking signal
+works, which is what it was built for:
+
+| threshold | predictions | mean tIoU | R@1≥0.3 | recall@0.5 |
+|---|---|---|---|---|
+| none | 153 | 0.292 | 0.375 | 0.250 |
+| **confidence ≥ 0.8** | **35** | 0.288 | 0.375 | 0.250 |
+| confidence ≥ 0.9 | 11 | 0.130 | 0.250 | 0.125 |
+
+**77% of predictions can be dropped with no loss of recall or localisation.** At 0.9
+it breaks, so 0.8 is a knee rather than a cliff edge.
+
+**The ceiling test explains why Approach 1 scores zero.** On MEVA's curated clips —
+where the activity name is printed in a box around the person doing it — Approach 1
+still scores **mean tIoU 0.018 and recall 0.000**. Given the answer written on the
+frame, the windowed formulation cannot localise. So its failure is the approach,
+not the footage, and no amount of prompt work on clean video would have rescued it.
+
+Cost: **1,109 s per video-minute, $0.377 per video-minute** at a verified
+$1.22249/hr on `g6.2xlarge`.
 
 The capability probe, on synthetic clips with exact constructed ground truth:
 

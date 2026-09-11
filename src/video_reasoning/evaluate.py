@@ -37,8 +37,19 @@ def load_labels(path: str | Path) -> tuple[list[dict], dict[str, str]]:
     """
     path = Path(path)
     if not path.exists():
-        raise InvalidInput(f"labels file not found: {path}",
-                           fix="run `make data` to generate the synthetic set")
+        # Name the command that builds THIS set. A single generic hint sent a
+        # missing control set to `make data`, which does not build it, and the
+        # reader then has to find that out by running the wrong thing.
+        p = str(path)
+        if "meva-examples" in p or "positive_control" in p:
+            hint = ("the ceiling-test set is not here. Fetch MEVA's example "
+                    "clips (scripts/fetch_meva.sh examples) or copy "
+                    "data/meva-examples from a machine that has them")
+        elif "eval" in p:
+            hint = "run `make data-eval` to rebuild the labelled set from labels.json"
+        else:
+            hint = "run `make data-synthetic` to generate the synthetic set"
+        raise InvalidInput(f"labels file not found: {path}", fix=hint)
     data = json.loads(path.read_text())
     truths: list[dict] = []
     axes: dict[str, str] = {}
