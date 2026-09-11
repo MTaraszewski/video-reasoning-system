@@ -137,6 +137,35 @@ def transitions(polls: list[StatePoll]) -> list[Transition]:
     return out
 
 
+def split_by_subject(text: str, subjects: list[str]) -> dict[str, str]:
+    """Split one multi-subject caption into the line belonging to each subject.
+
+    Asking about every subject in one call is what makes shared captioning cheap,
+    and it introduces a failure that single-subject captioning cannot have: the
+    parser reading one subject's words as another's. "The car door is open and the
+    building door is closed" contains both answers, and `parse_state` takes the
+    last mention, so whichever came second wins for BOTH subjects.
+
+    So the model is asked for one line per subject, and each line is parsed alone.
+    A subject with no line gets "" -- which parses to no state, and is reported as
+    an uninformative poll. That is deliberate: attributing another subject's line
+    is the error that produces confident wrong answers, and an honest gap is
+    cheaper to live with than a plausible mistake.
+    """
+    out = {s: "" for s in subjects}
+    for line in text.splitlines():
+        low = line.strip().lower()
+        if not low:
+            continue
+        # Longest first, so "car door" wins over "door" on the same line.
+        for subj in sorted(subjects, key=len, reverse=True):
+            head = low.split(":", 1)[0] if ":" in low else low[:len(subj) + 2]
+            if subj.lower() in head and not out[subj]:
+                out[subj] = line.strip()
+                break
+    return out
+
+
 def edge(tr: Transition, *, max_bracket_s: float, span_s: float,
          opening: bool) -> tuple[float, bool]:
     """Place a transition, refusing to interpolate across an unobserved gap.

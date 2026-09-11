@@ -73,6 +73,11 @@ def run(
         None, "--trigger/--no-trigger",
         help="states only: caption where the picture changed instead of on a "
              "fixed grid."),
+    shared_caption: bool = typer.Option(
+        None, "--shared-caption/--no-shared-caption",
+        help="states only: one caption per timestep covering every subject, "
+             "instead of one sweep per subject. Same polling density, one call "
+             "where there were N."),
     step_s: float = typer.Option(
         None, help="states only: seconds between polls. This is the boundary "
                    "resolution under uniform polling."),
@@ -111,6 +116,7 @@ def run(
                 "windowing.stride_s": stride_s,
                 "strategy": strategy,
                 "states.trigger": trigger,
+                "states.shared_caption": shared_caption,
                 "states.step_s": step_s,
                 "states.span_s": span_s,
             },

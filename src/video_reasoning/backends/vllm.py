@@ -20,7 +20,7 @@ from pathlib import Path
 
 from ..decode import frame_to_data_url
 from ..errors import BackendUnavailable
-from ..states import clean
+from ..states import clean, split_by_subject
 from .base import (ExtractRequest, ExtractResult, parse_events,
                    reconcile_times, split_reasoning)
 
@@ -183,6 +183,44 @@ class VLLMBackend:
         # The server concatenates the reasoning block with the answer, so without
         # this the parser reads the model thinking aloud rather than concluding.
         return clean(text), r.choices[0].finish_reason == "length"
+
+    def caption_many(self, frames: list, subjects: list[str],
+                     max_tokens: int | None = None) -> tuple[dict[str, str], bool]:
+        """One call, several subjects, one line each.
+
+        The frames are identical whichever subject is asked about, so polling per
+        description pays repeatedly for the same perception. On the labelled set
+        the nine expressible descriptions reduce to four subjects, and a shared
+        caption collapses those four sweeps into one.
+
+        The format is load-bearing, not cosmetic: `split_by_subject` parses each
+        line in isolation, so a run-on paragraph mentioning two doors would make
+        both answers unreliable. Asking for labelled lines is what keeps the
+        attribution honest, and a missing line is reported as no answer rather
+        than guessed from a neighbour's.
+        """
+        items = "\n".join(f"- {s}" for s in subjects)
+        content: list[dict] = [{"type": "text", "text":
+                                f"Look at these frames.\n\n"
+                                f"For each item below, say what state it is in and "
+                                f"whether that state changes across the frames. "
+                                f"Write ONE line per item, beginning with the "
+                                f"item's name and a colon. If an item is not "
+                                f"visible, say so on its line.\n\n{items}"}]
+        for fr in frames:
+            content.append({"type": "image_url",
+                            "image_url": {"url": frame_to_data_url(fr.image)}})
+        r = self.client.chat.completions.create(
+            model=self.model, temperature=0.0,
+            max_tokens=max_tokens or (120 * len(subjects) + 200),
+            messages=[{"role": "system", "content":
+                       "You describe what is visible in video frames, briefly and "
+                       "literally."},
+                      {"role": "user", "content": content}],
+        )
+        text = clean(r.choices[0].message.content or "")
+        return (split_by_subject(text, subjects),
+                r.choices[0].finish_reason == "length")
 
     def extract(self, req: ExtractRequest) -> ExtractResult:
         if not req.window.frames:

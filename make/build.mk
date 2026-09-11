@@ -54,6 +54,7 @@ run:  ## [any] find events in YOUR video (VIDEO=... QUERIES="a;b" STRATEGY=state
 	  $(if $(PROMPT),--prompt $(PROMPT),) \
 	  $(if $(STRATEGY),--strategy $(STRATEGY) --states-map $(STATES_MAP),) \
 	  $(if $(TRIGGER),--trigger,) \
+	  $(if $(SHARED),--shared-caption,) \
 	  $(if $(STEP_S),--step-s $(STEP_S),) \
 	  $(if $(SPAN_S),--span-s $(SPAN_S),) \
 	  $(if $(RECORD),--record /out/$(RECORD),)

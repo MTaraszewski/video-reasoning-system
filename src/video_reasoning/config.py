@@ -73,6 +73,19 @@ class StatesConfig(BaseModel):
     trigger: bool = False
     trigger_top_k: int = Field(12, gt=0)
 
+    # One caption per timestep covering every subject, instead of one sweep per
+    # subject. The frames are identical whichever subject is asked about, so the
+    # per-subject sweeps pay repeatedly for the same perception: on the labelled
+    # set, 9 expressible descriptions reduce to 4 subjects, and sharing collapses
+    # those to 1 -- 8,568 calls to 952 at identical polling density.
+    #
+    # OFF by default because it trades a measured risk for that saving: a single
+    # caption covering four subjects may mention none of them clearly, and
+    # `split_by_subject` reports a missing line as no answer rather than guessing.
+    # Whether parse rates hold is measurable, and until measured the cheaper path
+    # is not the default one.
+    shared_caption: bool = False
+
     # How far a state may be carried across unobserved time, in steps. Uniform
     # polling never exercises this -- consecutive polls are one step apart. The
     # trigger leaves gaps of a minute or more between polls, and interpolating a

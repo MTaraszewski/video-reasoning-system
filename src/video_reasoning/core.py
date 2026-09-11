@@ -109,23 +109,42 @@ def check_budget(duration_s: float, n_queries: int, cfg: Config) -> dict:
     return cost
 
 
-def _poll_states(
-    video: Path, duration: float, states: tuple[str, str], config: Config,
-    backend: Backend, progress: bool,
-) -> list[StatePoll]:
-    """Caption the clip on a grid, or only where something changed."""
-    cfg = config.states
+def _poll_times(duration: float, video: Path, cfg) -> list[float]:
+    """Where to poll: a fixed grid, or the peaks of the change signal."""
     if cfg.trigger:
         # Spend calls where the picture moved. The signal is cheap and its blind
         # spots are documented in motion.py -- a missed spike is a missed event
         # the uniform grid would have caught, which is why this is off by default.
-        times = peaks(change_signal(str(video), fps=cfg.trigger_fps),
-                      top_k=cfg.trigger_top_k, min_gap_s=cfg.trigger_min_gap_s)
-    else:
-        times = [t for t in _frange(0.0, duration - cfg.span_s, cfg.step_s)]
+        return peaks(change_signal(str(video), fps=cfg.trigger_fps),
+                     top_k=cfg.trigger_top_k, min_gap_s=cfg.trigger_min_gap_s)
+    return [t for t in _frange(0.0, duration - cfg.span_s, cfg.step_s)]
 
-    polls: list[StatePoll] = []
-    subject = states[0].replace("the ", "").split(" is ")[0]
+
+def _subject(states: tuple[str, str]) -> str:
+    return states[0].replace("the ", "").split(" is ")[0]
+
+
+def _poll_states(
+    video: Path, duration: float, groups: list[tuple[str, str]], config: Config,
+    backend: Backend, progress: bool,
+) -> tuple[dict[tuple[str, str], list[StatePoll]], int]:
+    """Caption the clip and parse a state timeline for every group.
+
+    Two modes, same timestamps and therefore the same resolution:
+
+    - one call per subject per timestep (default), each asking about that subject
+    - one call per timestep covering all subjects (`shared_caption`)
+
+    Returns the timelines and the number of model calls made -- which is no longer
+    `len(polls)` once one call answers several groups.
+    """
+    cfg = config.states
+    times = _poll_times(duration, video, cfg)
+    subjects = [_subject(g) for g in groups]
+    shared = cfg.shared_caption and len(groups) > 1
+
+    out: dict[tuple[str, str], list[StatePoll]] = {g: [] for g in groups}
+    calls = 0
     for i, t in enumerate(times):
         _, frames = sample_frames(
             video, fps=config.sampling.fps, max_side=config.sampling.frame_max_side,
@@ -133,13 +152,25 @@ def _poll_states(
         )
         if not frames:
             continue
-        text, truncated = backend.caption(frames, subject)
-        polls.append(StatePoll(t=round(t, 3), text=text,
-                               state=parse_state(text, states),
-                               truncated=truncated))
+        if shared:
+            texts, truncated = backend.caption_many(frames, subjects)
+            calls += 1
+            per_group = [(g, texts.get(s, ""), truncated)
+                         for g, s in zip(groups, subjects)]
+        else:
+            per_group = []
+            for g, s in zip(groups, subjects):
+                text, truncated = backend.caption(frames, s)
+                calls += 1
+                per_group.append((g, text, truncated))
+        for g, text, truncated in per_group:
+            out[g].append(StatePoll(t=round(t, 3), text=text,
+                                    state=parse_state(text, g),
+                                    truncated=truncated))
         if progress:
-            print(f"  [{i + 1}/{len(times)}] t={t:.1f}s  {polls[-1].state}")
-    return polls
+            shown = "  ".join(f"{_subject(g)}={out[g][-1].state}" for g in groups)
+            print(f"  [{i + 1}/{len(times)}] t={t:.1f}s  {shown}")
+    return out, calls
 
 
 def _frange(lo: float, hi: float, step: float) -> list[float]:
@@ -321,10 +352,30 @@ def _find_events_states(
             f"which the 'states' strategy requires.",
             fix="use --backend vllm, or set strategy=windows",
         )
+    if config.states.shared_caption and not hasattr(backend, "caption_many"):
+        raise InvalidInput(
+            f"backend {backend.describe().get('backend', '?')} cannot caption "
+            f"several subjects at once, which states.shared_caption requires.",
+            fix="use --backend vllm, or set states.shared_caption=false",
+        )
 
     events: list[Event] = []
     calls = 0
     unanswerable: list[str] = []
+
+    # Poll once per distinct STATE SET, not once per description. Several
+    # descriptions share a subject -- "opens a building door", "enters through the
+    # door" and "comes out through the door" all reduce to closed/open on the same
+    # door -- and polling each one separately sends identical frames with an
+    # identical question and pays for the identical answer. On the labelled set
+    # that is 9 descriptions over 4 subjects: a 2.3x saving with no change to
+    # polling density, resolution, or any reported number.
+    #
+    # Keyed on the SET, so "sits down" (standing -> sitting) and "stands up"
+    # (sitting -> standing) share one sweep: the poll asks what state the person
+    # is in, and which direction counts as the event is decided afterwards, in
+    # `_events_from_states`.
+    by_states: dict[frozenset[str], list[str]] = {}
     for q in queries:
         states = states_map.get(q)
         if not states:
@@ -333,15 +384,31 @@ def _find_events_states(
                 print(f"  {q!r}: no state pair — not expressible as a state "
                       f"transition, skipped rather than reported as absent")
             continue
-        if progress:
-            print(f"  {q!r} -> {states[0]} / {states[1]}")
-        polls = _poll_states(path, meta.duration_s, tuple(states), config,
-                             backend, progress)
-        calls += len(polls)
-        events.extend(_events_from_states(
-            q, polls, tuple(states), meta.duration_s,
-            max_bracket_s=config.states.carry_steps * config.states.step_s,
-            span_s=config.states.span_s, step_s=config.states.step_s))
+        by_states.setdefault(frozenset(states), []).append(q)
+
+    groups = [tuple(states_map[qs[0]]) for qs in by_states.values()]
+    if progress:
+        for g, qs in zip(groups, by_states.values()):
+            print(f"  {g[0]} / {g[1]}")
+            for q in qs:
+                print(f"    <- {q!r}")
+        if config.states.shared_caption and len(groups) > 1:
+            print(f"  shared caption: {len(groups)} subjects in one call per "
+                  f"timestep")
+
+    # Every description was unanswerable: there is nothing to look for, so do not
+    # decode a single frame. Without this the grid is still walked, sampling
+    # frames for no subject at all.
+    timelines, calls = ({}, 0) if not groups else _poll_states(
+        path, meta.duration_s, groups, config, backend, progress)
+    for g, qs in zip(groups, by_states.values()):
+        for q in qs:
+            # Per description, because the TARGET state differs within a group:
+            # for "sits down" it is sitting, for "stands up" it is standing.
+            events.extend(_events_from_states(
+                q, timelines[g], tuple(states_map[q]), meta.duration_s,
+                max_bracket_s=config.states.carry_steps * config.states.step_s,
+                span_s=config.states.span_s, step_s=config.states.step_s))
 
     return FindEventsResult(
         video=path.name, duration_s=meta.duration_s, queries=queries,

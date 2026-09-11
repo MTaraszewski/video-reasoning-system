@@ -1494,9 +1494,33 @@ errors point in opposite directions and partly cancel, and the 0.406 above banks
 that cancellation.
 
 `span_s == step_s` removes the ambiguity at **no extra cost** — the call count is
-set by `step_s` alone. It is exposed as `--span-s` / `SPAN_S=` for exactly this
-experiment. UNRESOLVED: not yet run, and the honest expectation is that it makes
-the headline number worse.
+set by `step_s` alone — and it was run, in the same server session as the table
+above. The prediction was that the headline number would get worse. It did not
+move at all:
+
+| | event 1 | tIoU | event 2 | extra events | calls | time | `None` polls |
+|---|---|---|---|---|---|---|---|
+| `span_s=2.0` | 3.50–8.50 @1.0 | 0.406 | 93.50–96.50 | — | 119 | 467s | 18 |
+| `span_s=1.0` | 3.50–8.50 @1.0 | 0.406 | 93.50–97.50 | **71.50–72.50 @1.0** | 120 | 433s | 5 |
+
+The model reads t=3.0 as *closed* and t=4.0 as *open* under both settings, so the
+bracket never changes and neither does the interval. The overlap ambiguity is real
+in principle and does not bite on this clip; the experiment **does not separate the
+two cancelling errors**, and the question stays open rather than resolved in either
+direction.
+
+Two side effects are worth keeping. Shorter windows made the model far more
+decisive — `None` fell from 18 polls to 5 — and 7% faster, four frames per call
+instead of eight. They also produced a **spurious event from a single poll**:
+t=72.0 read *open* between *closed* neighbours, and the derivation emitted
+71.50–72.50 **at confidence 1.0**.
+
+That is the third appearance of one failure. Agreement is 1/1 and the bracket is
+one step wide, so both existing factors are maximal, and a one-poll blip scores
+exactly like a five-poll event. Confidence measures how *consistent* and how
+*sharp* an interval is, and nothing about how much evidence stands behind it.
+`span_s` stays at 2.0 — it gains nothing on the real event and costs a false
+positive — and the missing third factor is corroboration.
 
 #### The ground truth is not exhaustive, and now we can prove it
 
@@ -1529,6 +1553,57 @@ everything that happens on camera. Two things follow:
 
 This does not rescue the tIoU numbers — those measure boundary placement on events
 that *are* labelled, and they remain poor. It bears on precision only.
+
+### Making the full eval affordable
+
+Scoring Approach 3 across the labelled set is the one thing standing between the
+measured work and a shippable claim, and until now it was priced out of reach.
+Every description ran its own sweep of every clip: 8 clips x 9 expressible
+descriptions x 119 polls = **8,568 calls, 9.3 hours** at the measured 3.92 s/call.
+
+Two things reduce that, and neither touches polling density — the timestamps, the
+boundaries and every reported interval stay exactly as they are.
+
+**Descriptions are not subjects.** The nine expressible descriptions reduce to
+four subjects:
+
+| subject | states | descriptions served |
+|---|---|---|
+| door | closed / open | opens a building door, enters through the door, comes out through the door |
+| car door | closed / open | a vehicle door opens, gets into a vehicle, gets out of a vehicle |
+| person | standing / sitting | sits down, stands up |
+| vehicle | moving / stationary | a vehicle stops moving |
+
+Polling each description separately sends identical frames with an identical
+question and pays for the identical answer. Grouping is keyed on the state **set**,
+so *sits down* (standing → sitting) and *stands up* (sitting → standing) share one
+sweep — the poll asks what state the person is in, and which direction counts as
+the event is decided afterwards, in `_events_from_states`. That is a 2.3x saving
+with no quality risk of any kind.
+
+**Subjects need not be separate calls either.** `shared_caption` asks about every
+subject in one call per timestep, one labelled line each, and parses each line
+alone. That collapses the remaining four sweeps into one.
+
+| | calls | wall-clock | resolution | risk |
+|---|---|---|---|---|
+| one sweep per description | 8,568 | 9.3 h | full | — |
+| grouped by state set | 3,808 | 4.1 h | full | none |
+| + shared caption | **952** | **~1.0–1.5 h** | full | attribution |
+
+The risk in the last row is specific and is why it is **off by default**. A single
+caption covering four subjects may mention none of them clearly, and — worse — "the
+car door is open and the building door is closed" contains both answers, so a
+last-mention parse over the whole text would assign the same state to both. The
+mitigation is structural rather than hopeful: the model is asked for one labelled
+line per subject, `split_by_subject` matches longest-subject-first so *car door*
+wins over *door*, and **a subject with no line is reported as no answer rather than
+inheriting a neighbour's.** An honest gap is cheaper to live with than a plausible
+mistake.
+
+Whether the parse rate survives the shared prompt is measurable and **not yet
+measured**. Until it is, the default stays one call per subject, which is still
+2.3x cheaper than what was there before.
 
 ### The boundary of the approach
 
