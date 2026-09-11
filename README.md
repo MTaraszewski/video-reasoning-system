@@ -17,6 +17,59 @@ Everything runs in Docker. Nothing runs on the host.
 
 ---
 
+## Executive summary
+
+**The obvious design does not work, and we can prove the failure is the design
+rather than the data.** Sliding a window and asking the model *when* an event
+happened scores **mean tIoU 0.000** across four hand-labelled clips — no overlap
+with any label at all. Asking it only *what the scene is*, repeatedly, and deriving
+the event from state changes in code scores **0.292**.
+
+| | Approach 1 — ask *when* | Approach 3 — caption, parse, derive |
+|---|---|---|
+| **mean tIoU** | **0.000** | **0.292** |
+| R@1 tIoU≥0.3 | 0.000 | **0.375** |
+| recall@0.5 | 0.000 | 0.250 |
+| predictions / truths | 14 / 8 | 153 / 8 |
+
+Four things make that more than a number:
+
+**1. The failure is the formulation, not the footage.** On MEVA's curated clips —
+where the activity name is printed in a box around the person doing it — Approach 1
+*still* scores mean tIoU **0.018**. Given the answer written on the frame it cannot
+localise. Tuning prompts on clean video was never going to help.
+
+**2. The diagnosis came before the fix.** One call was being asked to decide
+presence, locate boundaries, and format JSON. Probes showed it can format (28 of 30
+parsed) and can localise when told the event is present (3.1 s median error), and
+cannot decide presence — it reported an event on 47% of pairs where one existed and
+39% where none did. Approach 3 is that decomposition made explicit: the model
+perceives, code does the temporal reasoning.
+
+**3. The ranking signal earns its place.** Confidence is `agreement × sharpness ×
+coverage`, each factor forced by a specific observed failure. At threshold 0.8,
+**77% of predictions can be dropped with no loss of recall, R@1 or mean tIoU.**
+Approach 1's confidence could not do this — 48 of its 81 values were constants
+produced by our own merge code.
+
+**4. It declines questions it cannot answer.** Four of thirteen descriptions do not
+decompose into a state — *"someone hands an object to another person"* is a
+relation, *"a forklift reverses"* is a direction. They are reported as **not
+expressible**, never as "no events found", because returning a known-bad answer
+where a client expects a real one is worse than returning nothing and saying why.
+
+**What it costs:** 1,109 s and $0.377 per video-minute on a single L4.
+
+**What it cannot do yet:** precision is poor (153 predictions for 8 truths, 35
+after thresholding); neither approach reaches tIoU≥0.7, which is the ~3 s
+localisation floor measured before any windowing; the evaluation covers four clips,
+not eight; state pairs are hand-written; and long video is capped at ~4 minutes by
+a decode cost that is quadratic and a fix that is measured but unbuilt. All of that
+is in [Improvements](#improvements--measured-not-built) and
+[Not done](#not-done-and-why).
+
+---
+
 ## Quickstart — no GPU, two minutes
 
 ```bash
