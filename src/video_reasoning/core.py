@@ -19,7 +19,9 @@ from .config import Config
 from .decode import probe, sample_frames
 from .errors import BudgetExceeded, InvalidInput, UnprocessableMedia
 from .merge import merge_all
+from .motion import change_signal, peaks
 from .schema import Event, FindEventsResult, RunInfo
+from .states import (StatePoll, boundaries, parse_state, transitions)
 from .windows import assign_frames, plan_cost, plan_windows
 
 
@@ -107,6 +109,89 @@ def check_budget(duration_s: float, n_queries: int, cfg: Config) -> dict:
     return cost
 
 
+def _poll_states(
+    video: Path, duration: float, states: tuple[str, str], config: Config,
+    backend: Backend, progress: bool,
+) -> list[StatePoll]:
+    """Caption the clip on a grid, or only where something changed."""
+    cfg = config.states
+    if cfg.trigger:
+        # Spend calls where the picture moved. The signal is cheap and its blind
+        # spots are documented in motion.py -- a missed spike is a missed event
+        # the uniform grid would have caught, which is why this is off by default.
+        times = peaks(change_signal(str(video), fps=cfg.trigger_fps),
+                      top_k=cfg.trigger_top_k, min_gap_s=cfg.trigger_min_gap_s)
+    else:
+        times = [t for t in _frange(0.0, duration - cfg.span_s, cfg.step_s)]
+
+    polls: list[StatePoll] = []
+    subject = states[0].replace("the ", "").split(" is ")[0]
+    for i, t in enumerate(times):
+        _, frames = sample_frames(
+            video, fps=config.sampling.fps, max_side=config.sampling.frame_max_side,
+            overlay=False, start_s=t, end_s=t + cfg.span_s,
+        )
+        if not frames:
+            continue
+        text, truncated = backend.caption(frames, subject)
+        polls.append(StatePoll(t=round(t, 3), text=text,
+                               state=parse_state(text, states),
+                               truncated=truncated))
+        if progress:
+            print(f"  [{i + 1}/{len(times)}] t={t:.1f}s  {polls[-1].state}")
+    return polls
+
+
+def _frange(lo: float, hi: float, step: float) -> list[float]:
+    out, t = [], lo
+    while t <= hi + 1e-9:
+        out.append(round(t, 3))
+        t += step
+    return out
+
+
+def _events_from_states(
+    query: str, polls: list[StatePoll], states: tuple[str, str], duration: float,
+) -> list[Event]:
+    """Turn a state timeline into client-facing events.
+
+    The event is the interval spent in the target state: entered at a transition
+    into it, left at the transition out, or open-ended if the span ends first.
+
+    Confidence is the fraction of polls inside the interval that agree on the
+    target state. That is a real measurement over data we already have, unlike
+    the model's own stated confidence -- which came back as exactly 1.0 on 28 of
+    81 predictions in Approach 1 and ranked nothing.
+    """
+    target = states[1]
+    trs = transitions(polls)
+    bnd = boundaries(polls, states)
+    spans: list[tuple[float, float, bool]] = []   # start, end, partial
+
+    open_at = 0.0 if bnd.partial_before else None
+    for tr in trs:
+        if tr.to_state == target and open_at is None:
+            open_at = tr.at
+        elif tr.from_state == target and open_at is not None:
+            spans.append((open_at, tr.at, open_at == 0.0 and bnd.partial_before))
+            open_at = None
+    if open_at is not None:
+        spans.append((open_at, duration, True))
+
+    events: list[Event] = []
+    for start, end, partial in spans:
+        inside = [p for p in polls if start <= p.t <= end and p.state is not None]
+        agree = (sum(p.state == target for p in inside) / len(inside)) if inside else 0.0
+        events.append(Event(
+            description=query, start_s=round(start, 3), end_s=round(min(end, duration), 3),
+            confidence=round(agree, 4),
+            evidence=next((p.text[:200] for p in inside if p.state == target), ""),
+            partial=partial or end >= duration - 1e-6,
+            source_windows=[],
+        ))
+    return events
+
+
 def find_events(
     video: str | Path,
     queries: list[str] | str,
@@ -115,6 +200,7 @@ def find_events(
     *,
     prompt: PromptVariant | str | None = None,
     progress: bool = False,
+    states_map: dict[str, tuple[str, str]] | None = None,
 ) -> FindEventsResult:
     """Find events matching plain-language descriptions in a video."""
     t0 = time.time()
@@ -123,6 +209,11 @@ def find_events(
 
     path, queries = validate_request(video, queries, config)
     meta = probe(path)
+
+    if config.strategy == "states":
+        return _find_events_states(path, queries, config, backend, meta,
+                                   states_map or {}, progress, t0)
+
     check_budget(meta.duration_s, len(queries), config)
 
     variant = prompt if isinstance(prompt, PromptVariant) else get_prompt(prompt)
@@ -190,5 +281,58 @@ def find_events(
             model_calls=calls,
             elapsed_s=round(time.time() - t0, 3),
             stub=backend.is_stub,
+        ),
+    )
+
+
+def _find_events_states(
+    path: Path, queries: list[str], config: Config, backend: Backend, meta,
+    states_map: dict[str, tuple[str, str]], progress: bool, t0: float,
+) -> FindEventsResult:
+    """Approach 3: caption, parse the state, derive events from transitions.
+
+    A description with no state pair is NOT scored as "no events found". It is
+    reported as unanswerable by this strategy, because the failure is a property
+    of the request -- "someone hands an object to another person" is a relation
+    between two actors, not a binary property of one object, and no prompt turns
+    it into one. Five of fifteen hand-labelled descriptions are like that.
+    """
+    if not hasattr(backend, "caption"):
+        raise InvalidInput(
+            f"backend {backend.describe().get('backend', '?')} cannot caption, "
+            f"which the 'states' strategy requires.",
+            fix="use --backend vllm, or set strategy=windows",
+        )
+
+    events: list[Event] = []
+    calls = 0
+    unanswerable: list[str] = []
+    for q in queries:
+        states = states_map.get(q)
+        if not states:
+            unanswerable.append(q)
+            if progress:
+                print(f"  {q!r}: no state pair — not expressible as a state "
+                      f"transition, skipped rather than reported as absent")
+            continue
+        if progress:
+            print(f"  {q!r} -> {states[0]} / {states[1]}")
+        polls = _poll_states(path, meta.duration_s, tuple(states), config,
+                             backend, progress)
+        calls += len(polls)
+        events.extend(_events_from_states(q, polls, tuple(states),
+                                          meta.duration_s))
+
+    return FindEventsResult(
+        video=path.name, duration_s=meta.duration_s, queries=queries,
+        events=events,
+        run=RunInfo(
+            model=config.model.name if not backend.is_stub else "stub",
+            backend="stub" if backend.is_stub else "vllm",
+            sample_fps=config.sampling.fps,
+            window_s=config.states.span_s,
+            stride_s=config.states.step_s,
+            windows=calls, model_calls=calls,
+            elapsed_s=round(time.time() - t0, 3), stub=backend.is_stub,
         ),
     )

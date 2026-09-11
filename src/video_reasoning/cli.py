@@ -61,6 +61,18 @@ def run(
     record: str = typer.Option(None, help="Record every model exchange to this dir."),
     replay: str = typer.Option(None, help="Replay recorded exchanges from this dir."),
     quiet: bool = typer.Option(False, "--quiet", help="Suppress progress."),
+    strategy: str = typer.Option(
+        None, help="windows = ask when the event happened (Approach 1). "
+                   "states = caption, parse the state, derive from transitions "
+                   "(Approach 3). Both stay runnable for back-to-back comparison."),
+    states_map: str = typer.Option(
+        None, help="JSON mapping a description to its two states. Required by "
+                   "--strategy states; a description with no entry is reported "
+                   "as not expressible rather than as absent."),
+    trigger: bool = typer.Option(
+        None, "--trigger/--no-trigger",
+        help="states only: caption where the picture changed instead of on a "
+             "fixed grid."),
 ) -> None:
     """Find events in a video matching one or more descriptions."""
     from .backends import make_backend
@@ -90,6 +102,8 @@ def run(
                 "sampling.fps": fps,
                 "windowing.window_s": window_s,
                 "windowing.stride_s": stride_s,
+                "strategy": strategy,
+                "states.trigger": trigger,
             },
         )
         for w in cfg.warnings():
@@ -109,8 +123,17 @@ def run(
                 "as evidence; the eval harness will refuse to score them."
             )
 
-        result = find_events(video, wanted, cfg, be,
-                             prompt=prompt, progress=not quiet)
+        # A description with no entry here is reported by the states strategy as
+        # not expressible, never as "no events found". The distinction matters:
+        # "someone hands an object to another person" is a relation between two
+        # actors, not a binary property of one object.
+        smap: dict = {}
+        if states_map:
+            smap = {k: tuple(v) for k, v in
+                    json.loads(Path(states_map).read_text()).items()
+                    if not k.startswith("_")}
+        result = find_events(video, wanted, cfg, be, prompt=prompt,
+                             progress=not quiet, states_map=smap)
     except VideoReasoningError as e:
         _fail(e)
 

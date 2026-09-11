@@ -49,6 +49,33 @@ class OverlayConfig(BaseModel):
     font_scale: float = Field(0.045, gt=0, le=0.5)
 
 
+class StatesConfig(BaseModel):
+    """The `states` strategy: caption, parse, derive.
+
+    Approach 1 asks the model when an event happened and cannot establish whether
+    it happened at all. This asks only what the scene is, repeatedly, and does the
+    temporal reasoning in code. Kept behind a switch so both remain runnable and
+    a back-to-back comparison is one flag apart.
+    """
+
+    # Seconds between polls. This IS the boundary resolution: a transition can be
+    # located no more precisely than the interval, which is why the eval scores
+    # with a tolerance of one step.
+    step_s: float = Field(1.0, gt=0)
+    # Seconds of frames shown per poll.
+    span_s: float = Field(2.0, gt=0)
+
+    # Spend calls where something changed rather than on a fixed grid. Measured on
+    # admin.G326: every poll agreed with its neighbours except at the transition,
+    # so the uniform grid spent most of its budget confirming stillness. The
+    # trigger's blind spots are real and documented in motion.py -- this is a
+    # measurable trade, not a free win.
+    trigger: bool = False
+    trigger_top_k: int = Field(12, gt=0)
+    trigger_min_gap_s: float = Field(2.0, ge=0)
+    trigger_fps: float = Field(2.0, gt=0)
+
+
 class DetectConfig(BaseModel):
     """Two-stage extraction: ask IF, then ask WHEN.
 
@@ -92,11 +119,17 @@ class LimitsConfig(BaseModel):
 
 
 class Config(BaseModel):
+    # Which engine find_events runs. `windows` is Approach 1 -- ask the model when
+    # the event happened, merge across overlapping windows. `states` is Approach 3
+    # -- caption, parse the state, derive the event from transitions. Both stay
+    # available so a comparison is one flag apart rather than a branch apart.
+    strategy: str = Field("windows", pattern="^(windows|states)$")
     model: ModelConfig = Field(default_factory=ModelConfig)
     sampling: SamplingConfig = Field(default_factory=SamplingConfig)
     windowing: WindowingConfig = Field(default_factory=WindowingConfig)
     overlay: OverlayConfig = Field(default_factory=OverlayConfig)
     detect: DetectConfig = Field(default_factory=DetectConfig)
+    states: StatesConfig = Field(default_factory=StatesConfig)
     merge: MergeConfig = Field(default_factory=MergeConfig)
     limits: LimitsConfig = Field(default_factory=LimitsConfig)
 

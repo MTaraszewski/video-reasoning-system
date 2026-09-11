@@ -36,7 +36,14 @@ _RUN_ENV = ALLOW_NO_GPU=$(ALLOW_NO_GPU)
 # becomes one query per word — valid JSON for entirely the wrong question.
 # The string is passed through whole and split on ";" in Python.
 
-run:  ## [any] find events in YOUR video (VIDEO=... QUERIES="a;b")
+# STRATEGY picks the engine: `windows` asks the model when the event happened
+# (Approach 1), `states` captions and derives the event from state transitions
+# (Approach 3). Both stay runnable so a comparison is one flag apart.
+STRATEGY   ?=
+STATES_MAP ?= /app/states.json
+TRIGGER    ?=
+
+run:  ## [any] find events in YOUR video (VIDEO=... QUERIES="a;b" STRATEGY=states)
 	@mkdir -p $(OUT_DIR)
 	$(COMPOSE) run --rm -e ALLOW_NO_GPU=$(ALLOW_NO_GPU) finder \
 	  video-reasoning run $(VIDEO_IN) --queries "$(QUERIES)" \
@@ -45,6 +52,8 @@ run:  ## [any] find events in YOUR video (VIDEO=... QUERIES="a;b")
 	  $(if $(WINDOW_S),--window-s $(WINDOW_S),) \
 	  $(if $(STRIDE_S),--stride-s $(STRIDE_S),) \
 	  $(if $(PROMPT),--prompt $(PROMPT),) \
+	  $(if $(STRATEGY),--strategy $(STRATEGY) --states-map $(STATES_MAP),) \
+	  $(if $(TRIGGER),--trigger,) \
 	  $(if $(RECORD),--record /out/$(RECORD),)
 	@echo; echo "-> $(OUT_DIR)/events.json"
 
