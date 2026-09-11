@@ -21,7 +21,7 @@ from .errors import BudgetExceeded, InvalidInput, UnprocessableMedia
 from .merge import merge_all
 from .motion import change_signal, peaks
 from .schema import Event, FindEventsResult, RunInfo
-from .states import (StatePoll, boundaries, parse_state, transitions)
+from .states import (StatePoll, boundaries, edge, parse_state, transitions)
 from .windows import assign_frames, plan_cost, plan_windows
 
 
@@ -152,39 +152,57 @@ def _frange(lo: float, hi: float, step: float) -> list[float]:
 
 def _events_from_states(
     query: str, polls: list[StatePoll], states: tuple[str, str], duration: float,
+    *, max_bracket_s: float, span_s: float, step_s: float,
 ) -> list[Event]:
     """Turn a state timeline into client-facing events.
 
     The event is the interval spent in the target state: entered at a transition
     into it, left at the transition out, or open-ended if the span ends first.
+    Each boundary is placed by `states.edge`, which interpolates inside a narrow
+    bracket and refuses to inside a wide one.
 
-    Confidence is the fraction of polls inside the interval that agree on the
-    target state. That is a real measurement over data we already have, unlike
-    the model's own stated confidence -- which came back as exactly 1.0 on 28 of
-    81 predictions in Approach 1 and ranked nothing.
+    Confidence is agreement times sharpness. Agreement is the fraction of polls
+    inside the interval that call it the target state. Sharpness is how tightly
+    the boundaries are pinned -- a transition bracketed to one step is worth more
+    than the same transition bracketed to thirty, and reporting both at 1.0 is
+    how Approach 1's stated confidence failed. Both halves are measured over data
+    we already hold; neither is a number the model asserts about itself.
     """
     target = states[1]
     trs = transitions(polls)
     bnd = boundaries(polls, states)
-    spans: list[tuple[float, float, bool]] = []   # start, end, partial
 
-    open_at = 0.0 if bnd.partial_before else None
+    # start, end, partial, widest bracket actually interpolated across
+    spans: list[tuple[float, float, bool, float]] = []
+    start: float | None = 0.0 if bnd.partial_before else None
+    partial = bnd.partial_before
+    widest = 0.0
+
     for tr in trs:
-        if tr.to_state == target and open_at is None:
-            open_at = tr.at
-        elif tr.from_state == target and open_at is not None:
-            spans.append((open_at, tr.at, open_at == 0.0 and bnd.partial_before))
-            open_at = None
-    if open_at is not None:
-        spans.append((open_at, duration, True))
+        if tr.to_state == target and start is None:
+            start, guessed = edge(tr, max_bracket_s=max_bracket_s,
+                                  span_s=span_s, opening=True)
+            partial, widest = guessed, (0.0 if guessed else tr.width)
+        elif tr.from_state == target and start is not None:
+            end, guessed = edge(tr, max_bracket_s=max_bracket_s,
+                                span_s=span_s, opening=False)
+            spans.append((start, end, partial or guessed,
+                          max(widest, 0.0 if guessed else tr.width)))
+            start, partial, widest = None, False, 0.0
+    if start is not None:
+        spans.append((start, duration, True, widest))
 
     events: list[Event] = []
-    for start, end, partial in spans:
+    for start, end, partial, widest in spans:
         inside = [p for p in polls if start <= p.t <= end and p.state is not None]
         agree = (sum(p.state == target for p in inside) / len(inside)) if inside else 0.0
+        # A truncated edge contributes no width here: the reported interval is
+        # exactly the observed evidence, and what is unknown beyond it is carried
+        # by `partial` rather than discounted twice.
+        sharp = step_s / max(step_s, widest) if widest else 1.0
         events.append(Event(
             description=query, start_s=round(start, 3), end_s=round(min(end, duration), 3),
-            confidence=round(agree, 4),
+            confidence=round(agree * sharp, 4),
             evidence=next((p.text[:200] for p in inside if p.state == target), ""),
             partial=partial or end >= duration - 1e-6,
             source_windows=[],
@@ -320,8 +338,10 @@ def _find_events_states(
         polls = _poll_states(path, meta.duration_s, tuple(states), config,
                              backend, progress)
         calls += len(polls)
-        events.extend(_events_from_states(q, polls, tuple(states),
-                                          meta.duration_s))
+        events.extend(_events_from_states(
+            q, polls, tuple(states), meta.duration_s,
+            max_bracket_s=config.states.carry_steps * config.states.step_s,
+            span_s=config.states.span_s, step_s=config.states.step_s))
 
     return FindEventsResult(
         video=path.name, duration_s=meta.duration_s, queries=queries,

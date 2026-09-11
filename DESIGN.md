@@ -984,6 +984,67 @@ phrasing — *"a plain-language description of what to look for"* — and it doe
 work. Approach 2 exists because Approach 1's failure was specific enough to point
 at a different design.
 
+### Why one call was the wrong shape
+
+Approach 1 issued **a single model call per (window, description)** and asked it to
+do three jobs at once:
+
+1. decide whether the described event is present in these frames
+2. locate its start and end
+3. report those times in valid JSON with a confidence
+
+The measured failure separates cleanly along those lines. It could do (3) after the
+parser repair — 28 of 30 responses parsed. It could do (2) when told the event was
+present — 3.5 s median boundary error on synthetic clips. It could not do (1) at
+all: an event was reported on 47% of pairs where one existed and 39% where none
+did. One capability out of three, and the call returned a single answer that mixed
+them, so a wrong output never said which stage had failed.
+
+That is the general failure of a complex single call: **the output cannot be
+attributed to a stage, so it cannot be debugged.** Every diagnostic that eventually
+worked came from splitting the job — the probe separated localisation from
+detection, and the caption stage separated perception from scoring. Neither was
+visible while one call did everything.
+
+Approach 3 is the decomposition:
+
+```
+caption (model)  ->  parse state (code)  ->  derive transition (code)
+```
+
+One model call does one thing it is good at — describing what is visible. The two
+stages that were silently wrong in Approach 1, deciding presence and reporting
+time, are now deterministic code whose behaviour can be tested without a GPU.
+
+### Routing: choose the engine from the sentence
+
+Not every description decomposes into a state. Ten of our fifteen labelled events
+do; five do not, and no prompt engineering changes that — *"someone hands an object
+to another person"* is a relation between two actors, not a binary property of one
+object.
+
+So the strategy is a **routing decision made from the client's sentence, before any
+GPU time is spent**:
+
+| the description… | engine |
+|---|---|
+| names a persistent thing with two states | `states` — caption, parse, derive |
+| does not | reported as **not expressible**, not answered |
+
+**Why "not expressible" rather than falling back to `windows`.** Approach 1 is
+available and would produce an answer for those five. It would also be an answer we
+have measured as uninformative — R@1 0.000, and presence reported at nearly the
+same rate whether or not the event occurs. Returning a known-bad answer where a
+client expects a real one is worse than returning nothing and saying why. The
+brief asks for a system a client can call; part of that is refusing questions the
+system cannot answer.
+
+**What is implemented:** `states_map` presence acts as the router — a description
+with no entry is skipped and reported. **What is not:** deriving the state pair
+from the sentence automatically, so a human still writes the mapping. That is one
+cheap text call, and it would correctly fail to produce a pair for the five, which
+is the router's decision function falling out of the derivation step.
+
 ### Approach 1 — ask when the event happened
 
 Sample frames, burn absolute timestamps onto them, split into overlapping windows,
@@ -1296,6 +1357,109 @@ fix is more labelled clips, held back and scored once. That is stated here rathe
 than presented as a limitation of scope, because it is the difference between "6
 of 10" and "6 of 10, measured on the data it was tuned against".
 
+### Triggered polling, and the first full-clip run
+
+Every number above came from short windows placed around a known label. The first
+run over a **whole 120-second clip** (`admin.G326`, *"a person opens a building
+door"*) is the honest test of the method, and it changed three things.
+
+Uniform polling at 1s: **119 calls, 453s**. The timeline is almost entirely
+constant — closed for 0–5, open for 6–8, closed for 9–93, open for 94–96, closed
+after — so the grid spent the overwhelming majority of its budget confirming that
+nothing had happened. 18 of 119 polls (15%) returned no state at all: the
+description asserted neither open nor closed, and the parser declined rather than
+guessing.
+
+Driving the same polls from the change signal (`motion.py`, top-12 peaks):
+**12 calls, 63s** — 9.9x fewer calls, 7.2x faster — with both events still found.
+Nine of the twelve calls landed inside the two events, which is the change signal
+doing exactly what it was added to do.
+
+| | calls | time | event 1 | event 2 |
+|---|---|---|---|---|
+| uniform, 1s grid | 119 | 453s | 5.50–8.50 (conf 1.0) | 93.50–96.50 (conf 1.0) |
+| triggered, top-12 | 12 | 63s | 6.25–8.50 (conf 0.4, partial) | 93.50–95.75 (conf 0.4, partial) |
+
+**Cost matters here, not as an optimisation but as a feasibility bound.** At 3.8s
+per call, uniform polling of the 13 descriptions across the 8 eval clips is about
+13 hours. The grid is not merely wasteful; it puts the full eval out of reach on
+one GPU.
+
+#### What the full-clip run broke
+
+The first triggered run reported event 1 as **6.25–48.75s** — a 42-second interval
+for a 3-second event — with **confidence 1.0**, on evidence that read *"the door is
+open in all frames."*
+
+Nothing was wrong with the polls. The derivation assumed a uniform grid and kept
+that assumption after the grid was removed. A transition was placed at the
+**midpoint of its bracket**, which is a fair estimate when consecutive polls are
+one step apart and meaningless when they are 82 seconds apart: the door was seen
+open at 7.5s and closed at 90.0s, and the midpoint of that gap is 48.75s. The
+boundary was invented inside unobserved time.
+
+The confidence was worse than the interval. It is the fraction of polls inside the
+span agreeing on the target state, and exactly one informative poll fell inside —
+1/1 = 1.0. That is structurally the same failure as Approach 1's stated
+confidence, which returned exactly 1.0 on 28 of 81 predictions: a number that
+ranks nothing, arrived at by a different route.
+
+Two changes, both in the derivation rather than the polling:
+
+1. **A state is not carried across an unobserved gap.** Past `carry_steps x
+   step_s`, `states.edge` stops interpolating and reports what was observed: a
+   poll at `t` saw frames spanning `t ± span_s/2`, so evidence ends there and the
+   span is marked **partial**. Unknown is not the same as unchanged. This turns
+   6.25–48.75 into 6.25–8.50.
+2. **Boundary sharpness reaches confidence.** `confidence = agreement x
+   sharpness`, where sharpness is `step_s / widest interpolated bracket`. The same
+   two events now score 1.0 from the uniform grid and 0.4 from the trigger — same
+   events, same states, different evidential strength.
+
+#### What it did not fix
+
+Accuracy. Against the hand label (3.0–5.733s), uniform scores tIoU **0.036** and
+the triggered run scores **0** — its interval starts at 6.25, after the label
+ends. The fix made the output honest, not correct.
+
+The residual is the state-vs-event mismatch already described below: MEVA labels
+the person reaching for and working the knob from 3.0s; the model reports the door
+**visibly open** from ~6s. Both readings were confirmed by hand on this clip. That
+offset is definitional and it caps achievable tIoU on short events no matter how
+dense the polling gets.
+
+#### The ground truth is not exhaustive, and now we can prove it
+
+The run also found a door event at **94–96s that our labels do not contain**. It
+was checked by hand and **it is real**.
+
+It is absent because MEVA never annotated it. The annotation file for the entire
+five-minute source holds exactly two activity instances — `Open_Facility_Door` at
+source 85.2–87.9s and `Enter_Facility` at 87.4–89.7s, both of which are in our
+clip and both of which we labelled. Our labels reproduce that file completely.
+There is no third entry.
+
+So MEVA is an annotation of **selected activity instances**, not an index of
+everything that happens on camera. Two things follow:
+
+- **`precision@0.5` is a lower bound, not a measurement.** It is `tp / n_preds`,
+  so a correct detection of an unannotated event sits in the denominator and can
+  never be a true positive. On this clip one of the two detections was charged as
+  an error while being right.
+
+  The other metrics are not affected, and it is worth being exact about why.
+  `false_positive_rate` keys on (video, description) pairs, and this clip does
+  carry that description as a truth, so the extra detection is not counted
+  spurious. `mean_tIoU` and `mean_relative_error` iterate over truths and take the
+  best matching prediction, so surplus predictions cannot reach them. Precision is
+  the only channel through which an incomplete reference reaches the score.
+- **Full-clip running makes this visible in a way windowed evaluation cannot.**
+  Windows placed around known labels can only ever find labelled events; they
+  structurally cannot surface this class of miss.
+
+This does not rescue the tIoU numbers — those measure boundary placement on events
+that *are* labelled, and they remain poor. It bears on precision only.
+
 ### The boundary of the approach
 
 The method's primitive is **a persistent binary property of one object**. Every
@@ -1336,8 +1500,10 @@ door"* into `closed / open` before anything runs. That is one cheap text call an
 is not built — though it would hit the same wall, since no phrasing turns a
 relation into a binary state.
 
-**Resolution is the step size.** A transition can be located no more precisely than
-the polling interval, which is why scoring uses a tolerance of one step.
+**Resolution is the bracket width, not the step size.** Under uniform polling those
+are the same thing, which is why scoring uses a tolerance of one step. Under
+triggered polling they are not: resolution is set by wherever the motion peaks
+happened to fall, and the reported confidence now carries that difference.
 
 **No held-out set.** Every clip that produced a number also shaped a prompt, a
 threshold or a state pair. The fix is more labelled clips, not a post-hoc split.

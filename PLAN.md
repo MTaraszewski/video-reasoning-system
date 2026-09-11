@@ -1200,3 +1200,57 @@ aws service-quotas list-requested-service-quota-change-history \
   Instance stopped. All results copied off, including 133 captions per run -- any
   future question about why an event missed can be answered by reading rather than
   by renting a GPU.
+
+- **2026-09-11 (first full-clip run; triggered polling; a ground-truth finding)** —
+  Ran `admin.G326` end to end for the first time instead of in windows around a
+  label. Uniform 1s polling: 119 calls, 453s. Driven from the change signal:
+  **12 calls, 63s**, both events kept — 9.9x fewer calls, 7.2x faster, with 9 of
+  the 12 calls landing inside the two events.
+
+  The saving exposed a bug it had been hiding. The derivation placed each
+  transition at the midpoint of its bracket, which is right on a uniform grid and
+  nonsense across an 82-second gap: a 3-second door was reported as a
+  **42-second event at confidence 1.0**. Two fixes, both in derivation, not
+  polling — a state is no longer carried across an unobserved gap (`states.edge`,
+  `carry_steps`), and boundary sharpness now multiplies into confidence. The
+  interval became 6.25–8.50 at confidence 0.4, marked partial. Uniform polling on
+  the same clip is unaffected at 1.0, which is the separation the number should
+  always have made.
+
+  Neither fix improves accuracy: tIoU against the label is 0.036 uniform, 0
+  triggered. The residual is the state-vs-event offset, not the polling.
+
+  **MEVA's annotation is not exhaustive, confirmed.** The run found a door opening
+  at 94–96s; MT checked it and it is real. The annotation file for the whole
+  five-minute source contains exactly two instances, both already in our labels.
+  The metric this reaches is `precision@0.5` alone — `tp / n_preds`, so a correct
+  detection of an unannotated event is charged as an error. `false_positive_rate`
+  keys on (video, description) and is untouched; `mean_tIoU` and relative error
+  iterate over truths and cannot see surplus predictions. Windowed evaluation
+  could never have surfaced any of this.
+
+- **2026-09-11 (decomposition and routing, documented)** — Named the shape of
+  Approach 1's failure rather than just its score. It issued ONE call per (window,
+  description) asked to do three jobs: decide presence, locate the boundaries,
+  report them as JSON. It can do the third (28 of 30 parsed after the repair) and
+  the second when told the event is present (3.5s median). It cannot do the first
+  (47% vs 39%). One capability of three, mixed into a single answer, so a wrong
+  output never said which stage had failed.
+
+  Every diagnostic that eventually worked came from splitting the job -- the probe
+  separated localisation from detection, the caption stage separated perception
+  from scoring. Neither was visible while one call did everything. Approach 3 is
+  that decomposition made explicit: caption (model) -> parse (code) -> derive
+  (code).
+
+  **Routing added as a design decision.** Ten of fifteen descriptions decompose
+  into a persistent binary state; five do not, and no prompting changes it. The
+  engine is therefore chosen from the sentence before any GPU spend. A description
+  with no state pair is reported as NOT EXPRESSIBLE rather than falling back to
+  Approach 1 -- which would answer, with output measured as uninformative.
+  Returning a known-bad answer where a client expects a real one is worse than
+  returning nothing and saying why.
+
+  Implemented: states_map presence is the router. Not implemented: deriving the
+  state pair from the sentence, which would make the router's decision function
+  fall out of the derivation step.

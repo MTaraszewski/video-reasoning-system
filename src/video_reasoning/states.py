@@ -49,10 +49,16 @@ class StatePoll:
 class Transition:
     """A change between consecutive known states."""
 
-    at: float              # midpoint of the bracket — resolution is the step size
+    at: float              # midpoint of the bracket — see `edge` before trusting it
     from_state: str
     to_state: str
     bracket: tuple[float, float]
+
+    @property
+    def width(self) -> float:
+        """How much time the change could have happened in. The honest error bar."""
+        lo, hi = self.bracket
+        return hi - lo
 
 
 @dataclass
@@ -129,6 +135,33 @@ def transitions(polls: list[StatePoll]) -> list[Transition]:
                                   bracket=(prev.t, p.t)))
         prev = p
     return out
+
+
+def edge(tr: Transition, *, max_bracket_s: float, span_s: float,
+         opening: bool) -> tuple[float, bool]:
+    """Place a transition, refusing to interpolate across an unobserved gap.
+
+    A bracket's midpoint is a fair estimate when the bracket is one step wide:
+    the change happened somewhere in there and the middle is as good a guess as
+    any. It is not fair when the bracket is 82 seconds wide, which is what
+    triggered polling produces. Measured on admin.G326: a door seen open at
+    7.5s and closed at 90.0s was reported open until 48.75s -- an interval forty
+    times longer than the event, carrying confidence 1.0. Nothing was wrong with
+    the polls. The derivation assumed a uniform grid and kept that assumption
+    after the grid was removed.
+
+    Past `max_bracket_s` we stop interpolating and report what was observed
+    instead. A poll at t saw frames spanning t +/- span_s/2, so evidence for its
+    state ends there; after that the state is unknown, which is not the same as
+    unchanged. The caller marks such a span partial.
+
+    Returns the time and whether the bracket was too wide to interpolate.
+    """
+    lo, hi = tr.bracket
+    if tr.width <= max_bracket_s:
+        return tr.at, False
+    half = span_s / 2
+    return (round(hi - half, 3), True) if opening else (round(lo + half, 3), True)
 
 
 def boundaries(polls: list[StatePoll], states: tuple[str, str]) -> Boundaries:

@@ -72,6 +72,14 @@ class StatesConfig(BaseModel):
     # measurable trade, not a free win.
     trigger: bool = False
     trigger_top_k: int = Field(12, gt=0)
+
+    # How far a state may be carried across unobserved time, in steps. Uniform
+    # polling never exercises this -- consecutive polls are one step apart. The
+    # trigger leaves gaps of a minute or more between polls, and interpolating a
+    # transition into the middle of one produced a 42-second event for a
+    # 3-second door on admin.G326. Past this, `states.edge` reports observed
+    # evidence and marks the span partial instead of guessing.
+    carry_steps: float = Field(3.0, gt=0)
     trigger_min_gap_s: float = Field(2.0, ge=0)
     trigger_fps: float = Field(2.0, gt=0)
 

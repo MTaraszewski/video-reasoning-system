@@ -192,6 +192,39 @@ to 0.07. The hypothesis behind it, that subject size in frame is the limit, was
 then disproved directly: a car door succeeds at 322 px where a person in a doorway
 fails at 295 px.
 
+### Why one call was the wrong shape
+
+The first approach asked a single model call to do three jobs at once: decide
+whether the event is present, locate its start and end, and report them as JSON
+with a confidence.
+
+It can do the third — 28 of 30 responses parsed after the repair. It can do the
+second when told the event is there — 3.5 s median boundary error. It cannot do the
+first at all. One capability of three, mixed into one answer, so **a wrong output
+never said which stage failed**.
+
+Every diagnostic that eventually worked came from splitting the job. That is the
+decomposition the second approach makes explicit:
+
+```
+caption (model)  ->  parse state (code)  ->  derive transition (code)
+```
+
+One model call does the one thing it's good at. The two stages that were silently
+wrong — deciding presence, reporting time — become deterministic code that can be
+tested without a GPU.
+
+### Routing: the engine is chosen from the sentence
+
+Ten of our fifteen labelled descriptions decompose into a persistent binary state.
+Five don't, and no prompting changes that. So the engine is a routing decision made
+**before any GPU time is spent**: a description that names a thing with two states
+goes to `states`; one that doesn't is reported as **not expressible**.
+
+Approach 1 would happily answer those five — with output we've measured as
+uninformative. Returning a known-bad answer where a client expects a real one is
+worse than returning nothing and saying why.
+
 ### A second approach: poll the state, derive the event
 
 The first approach failed specifically — the model can *time* an event it is told
