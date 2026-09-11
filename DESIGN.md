@@ -582,6 +582,43 @@ chunk, refinement inside it, emit, carry only the last state forward. Bounded
 memory, bounded latency, and partial events at chunk edges already have a
 representation.
 
+#### Every request is serial, and the GPU is mostly idle
+
+The largest available saving, found last and by accident. From the model server's
+own log during the labelled run, on every line:
+
+```
+Running: 1 reqs, Waiting: 0 reqs, GPU KV cache usage: 1.8%
+```
+
+**One request in flight, ever.** vLLM exists to batch concurrent requests; this
+uses it as a single-request server, with the KV cache at ~2% and the GPU idle
+between generations.
+
+The unit to parallelise is already there. At each timestep the poller issues one
+call per subject -- four independent calls over identical frames, in a serial
+`for` loop. Firing them together is a thread pool around that loop and nothing
+else. Prompt throughput is already ~400 tok/s; generation is where the ~4s goes,
+and four generations at 2% cache occupancy should overlap almost entirely.
+Expected order: **2-3x on wall-clock**, larger than the decode fix and larger than
+coarse-to-fine.
+
+**Unlike the decode fix, this one is not result-neutral.** Concurrency changes
+request interleaving, which changes vLLM's batching, which changes floating-point
+reduction order -- precisely the mechanism recorded above under *"The same input
+does not always give the same answer"*, where one poll read `closed` and then
+`open` under different request histories in the same server. So it needs the same
+treatment as any other change here: run both ways inside one server session,
+compare timelines, and expect near-tie polls to move.
+
+**Why this was found last.** Every cost analysis in this document optimises the
+*number* of calls -- grouping by subject, triggered polling, shared captioning --
+and none of them questioned the cost *of* a call or whether calls could overlap.
+3.92 s/call was treated as a property of the model rather than of how it was being
+driven. The evidence was in the server log the whole time and was read as a
+progress counter. Optimising the algorithm before profiling the implementation is
+the wrong order, and it cost the largest win on the list.
+
 #### The decode cost is worse than the model cost, and it is quadratic
 
 Stated above as if model calls were the binding constraint. **They are not.**
