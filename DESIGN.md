@@ -977,6 +977,393 @@ something impossible" need different responses from the caller.
 
 ---
 
+## 14a. Two approaches, and why there is a second
+
+Everything above §14 describes **Approach 1**. It was built to the brief's own
+phrasing — *"a plain-language description of what to look for"* — and it does not
+work. Approach 2 exists because Approach 1's failure was specific enough to point
+at a different design.
+
+### Approach 1 — ask when the event happened
+
+Sample frames, burn absolute timestamps onto them, split into overlapping windows,
+ask the model to report start and end times for a description, merge across window
+boundaries.
+
+**Measured:** 8 clips x 13 descriptions x 13 windows = 1,352 calls.
+
+| | |
+|---|---|
+| R@1 at tIoU 0.3 / 0.5 / 0.7 | 0.000 / 0.000 / 0.000 |
+| mean tIoU | 0.002 |
+| false-positive rate | 0.802 |
+| mean relative error | 3.151 (NVIDIA target <0.30) |
+
+**Why it failed, precisely.** Across 104 (clip, description) pairs the model
+reported an event on **47%** of the 15 where one existed and **39%** of the 89
+where none did. Its output is close to uncorrelated with whether the event is
+there. A follow-up probe separated the two abilities: given a clip where the event
+is guaranteed present, it localises to 3.5 s median error on synthetic footage —
+but on real footage under the same conditions it declined 13 of 15 times.
+
+So the model can place an event it is *told* is present, and cannot establish the
+"told". Every temporal metric is downstream of that.
+
+**It is not the model's fault alone.** `Cosmos-Reason2-2B` — whose model card
+documents the burned-in timestamp mechanism that Cosmos3-Edge's does not mention —
+did *worse* on the same probe: 20% answered against 100%. Two architectures, same
+failure. That rules out the comfortable explanation that the brief simply named
+the wrong model.
+
+### Why Approach 2
+
+Three measurements pointed the same way:
+
+1. **The model cannot decide presence** — but its yes/no logprobs vary
+   meaningfully, so the *signal* exists even when the *decision* is wrong.
+2. **We have no evidence it reads the burned-in timestamps reliably.** Every
+   number in Approach 1 sits downstream of an unverified mechanism.
+3. **Roboflow's published Cosmos 3 evaluation reports the same weaknesses**
+   independently — fast motion and small objects. That corroborates the Approach 1
+   result on different footage with a different harness, which is worth more than
+   another run of our own.
+
+The conclusion drawn from (1) and (2): stop asking the model to report a time, and
+stop asking it to decide anything. Use it as a noisy sensor, sampled repeatedly,
+and do the temporal reasoning in code.
+
+**One published remedy was tested and did not work.** Roboflow report that
+isolating a region of interest and running inference per region beat one combined
+call. We implemented it — a fixed fractional crop, applied at native resolution
+and resized back up — and measured it on the clip Approach 2 was failing:
+`admin.G329`'s score range went from 0.12 uncropped to 0.07 cropped. The
+underlying hypothesis, that subject size in frame is what limits the signal, was
+then disproved outright: a **car door succeeds at 322 px** while a **person in a
+doorway fails at 295 px**. Whatever separates them is not size.
+
+So the design below is not that recipe. Its mechanisms — polling a closed state
+set, cancelling option-order bias by asking in both orders, differencing the
+logprobs, and detecting a sustained departure from the clip's own baseline — come
+from what Approach 1 measured, not from prior art.
+
+### Approach 2 — poll the state, derive the event
+
+For a description like *"a person opens a building door"*, the persistent thing is
+a door and it is `closed` or `open`. The event is a named transition between them.
+
+1. **Poll**, per timestep: *"which describes what you see: (a) the door is closed
+   (b) the door is open"* — a closed set, constrained with vLLM's structured
+   outputs, one token, logprobs returned.
+2. **Cancel option-order bias** by asking in both orders and averaging. This is
+   not optional: with `(a) closed (b) open` the model answered "b" at every
+   timestep, and with the labels swapped it answered "b" again. It was picking the
+   last option, and the probability curve rose at the same moment in both runs, so
+   the apparent detection was positional.
+3. **Score** = P(second state) − P(first state), one signed number per timestep.
+4. **Detect** as a sustained departure from the clip's own baseline (median),
+   held for a minimum dwell. Not a zero crossing: order-averaging removes the
+   positional bias but leaves a residual preference, so the resting level sits
+   away from zero and a real excursion never crosses it.
+
+**The timestamp is ours**, from the sampling grid. The model is never asked what
+time it is.
+
+### Approach 2 — results, and two rules that did not survive
+
+| clip | question | outcome |
+|---|---|---|
+| `admin.G326` 03-07 | building door closed / open | detected 3.0–9.0 s, **tIoU 0.46** |
+| `admin.G326` 03-12 | building door closed / open | detected 4.0–8.0 s, **tIoU 0.26** |
+| `school.G300` 03-11 | car door closed / open | detected 10.0–14.0 s, **tIoU 0.54** and **0.55** — one interval matching two labelled events |
+| `school.G300` 03-13 | door question, **no door in scene** | no detection — true negative |
+| `admin.G329` | doorway empty / person present | miss |
+| `admin.G329` | corridor door closed / open, wide and tight crops | miss |
+| `school.G423` | person standing / sitting | miss |
+| `bus.G340` | car door closed / open | miss |
+| `school.G300` 03-11 | vehicle moving / stationary | miss |
+
+**Three distinct detections, both on the same two clips.** Mean tIoU where it
+fires: 0.42, against 0.002 for Approach 1 across its entire eval.
+
+**Two scope rules were proposed and both falsified**, recorded because the
+temptation is to report only the surviving one:
+
+- *"Works on binary configurations of an object; fails on presence and motion."*
+  Falsified by `G423` — standing versus sitting is a binary configuration of a
+  clearly visible person, and produced nothing.
+- *"Works on doors."* Falsified by `G340` — a car door that does not work, on a
+  camera where the car sits further away.
+
+Every candidate explanation — actor size, object size, object class, configuration
+versus presence — was contradicted by a later test. Six questions is not enough to
+establish a rule, and inventing one from three successes would repeat the error of
+quoting a precision floor measured only on synthetic clips.
+
+### Two further framings, both measured
+
+**Pairwise change comparison.** Ask which of two frame sequences contains the
+change rather than what state the scene is in; a comparison needs no calibrated
+notion of what "open" looks like. Measured on a known hit and a known miss: **flat
+at exactly 0.50, range 0.05 and 0.01.** Chance.
+
+The diagnosis matters more than the number. Both sequences go in one call with text
+markers, and the model does not bind images to those markers — **it cannot reason
+over grouped image sequences within a single prompt.** That closes off the
+comparison family, not just this phrasing.
+
+**Reason, then classify.** Every probe until here capped generation at 1–4 tokens
+and read a logprob — a reasoning model used as a one-token classifier. Letting it
+describe the scene first, then scoring that description, produced the most
+important result of the exercise:
+
+> t=2 — *"The door is **closed** in all frames"*
+> t=4 — *"Sixth frame: **a person is opening the door**"*
+> t=6 — *"The door is **open** in some frames, showing a person inside"*
+> t=8 — *"the door seems to be **closed**"*
+
+Against a hand label of 3.0–5.7 s that is correct at every timestep. **The
+perception was there all along**, and four framings had been discarding it.
+
+Two defects sat between that perception and the score, both ours:
+
+1. **The question asked for the wrong thing.** *"Describe the door"* returns
+   appearance — red, glass panel, metal handle, brick wall. Accurate, useless for
+   deciding open versus closed. Where the answer happened to mention state the
+   classifier was right (−0.72 closed, +0.96 opening, +0.84 open); where it
+   described appearance the classifier had nothing to read and returned noise,
+   scoring **+0.91 for "open" on text that said "closed in most frames"**.
+2. **The reasoning block was being scored.** The server concatenates thinking with
+   answer, so the classifier read the model reasoning aloud rather than its
+   conclusion — visible as a stray `</think>` inside several descriptions.
+
+Both are fixed: the prompt asks what state the subject is in and whether it
+changes, and only text after the reasoning block is scored. **Whether that recovers
+the signal end to end is not yet measured**, and is not claimed here.
+
+The same output explains `G423` without a new hypothesis: the description reads
+*"a person standing near a table in the hallway"* in a scene containing several
+people. The subject was ambiguous, so the state question was never well posed — a
+prompt failure, not a perception one.
+
+### Approach 3 — caption, parse, derive
+
+Following the reason-then-classify finding to its conclusion produced a design
+with no forced choice, no logprobs and no threshold in it — the three things every
+failure above traced back to.
+
+1. **Caption.** Per timestep, ask the model what state the subject is in and
+   whether it changes. Free-form, a few hundred tokens, no constrained decoding.
+2. **Parse.** Read the state out of the text deterministically, by matching the
+   words that distinguish the two state strings. Last mention wins, because these
+   descriptions reason before concluding. An enumeration ("open/closed") asserts
+   nothing and is ignored. A description with no state word yields `?`, never a
+   guess.
+3. **Derive.** The event is the transition between consecutive states. Its instant
+   is bracketed by the step size.
+
+The model does the one thing it has demonstrably done well throughout — describing
+what it sees. Everything after that is code.
+
+**Why the parse is not a model call.** It was, at first. Order-averaging that
+classifier drove every score to exactly 0.00 — the signature of a choice made
+purely on position, since always answering "(b)" averages to 0.5/0.5 under
+reversal. It never read the text. The image task retained a weak signal under the
+same treatment, so the blindness is specific to text classification. String
+matching cannot invent a preference for whichever option came last.
+
+### Approach 3 — result
+
+`admin.G326` 03-07, label 3.0–5.7 s, 1 s steps and 2 s spans:
+
+```
+t=0–4    closed
+t=5      closed   (description reverses the direction — see below)
+t=6–8    open
+t=9      closed
+t=11–17  closed
+```
+
+Last `closed` at t=5, first `open` at t=6, so the **transition is at t≈5.5 s —
+inside the label**. The door returns to closed at t=9, which matches the contact
+sheet independently. Agreement is roughly **0.3 s** against the label's end, from
+a model whose best synthetic boundary error was 3.5 s and which under Approach 1
+could not answer on real footage at all.
+
+**A failure mode worth recording:** at t=5 the description reads *"The door starts
+in an open state and closes across the frames"* — the change is detected at exactly
+the right moment and its **direction is reversed**. Seeing a change and getting its
+sign wrong is a different, more tractable error than not seeing it.
+
+### How this must be scored
+
+Interval tIoU is the wrong measure here and understates the method. A state
+timeline answers *"when was the door open"* (6–9 s); the hand labels answer *"when
+did the opening happen"* (3.0–5.7 s). Overlapping those compares two different
+questions — which is why the state-polling runs scored 0.26–0.55 while being far
+closer than that suggests.
+
+The right measure is the **transition instant against the label's span**: did the
+state change inside the window a human marked? That is a hit/miss per event with
+resolution equal to the step size, and it is what a fair comparison against
+Approach 1 requires.
+
+**Not yet done:** this has been run on one clip and one question. Running it across
+all 15 labelled events and scoring transitions properly is the number that belongs
+in the README, and it does not exist yet.
+
+### Approach 3 — scored across the labelled set
+
+`scripts/run_transitions.py` runs the caption-parse-derive timeline around every
+labelled event and scores the **transition instant against the label's span**.
+1 s steps, 2 s spans, 6 s padding either side. The tolerance is one step, fixed at
+the polling resolution and chosen before the run: polling every N seconds cannot
+locate a transition more precisely than N, and both counts are reported so the
+convention cannot inflate the headline.
+
+| | event | label | transition |
+|---|---|---|---|
+| HIT | `G329` enters through door | 3.0–4.8 | 3.5 s `[partial-after]` |
+| HIT | `G326` opens building door | 3.0–5.7 | 5.5 s |
+| hit~ | `G326` enters through door | 5.2–7.5 | 8.5 s |
+| HIT | `G340` gets into a vehicle | 3.0–6.8 | 5.5 s |
+| HIT | `G300` vehicle door opens | 9.0–12.7 | 10.5 s |
+| miss | `G300` vehicle stops moving | 9.1–10.7 | none `[partial-before] [partial-after]` |
+| hit~ | `G300` gets out of a vehicle | 11.5–13.7 | 11.0 s |
+| miss | `G423` sits down | 3.0–5.0 | 2.0 s away |
+| miss | `G423` stands up | 37.6–39.0 | none `[partial-before] [partial-after]` |
+| HIT | `G326` comes out through door | 3.0–5.3 | 2.5 s |
+
+**7 of 10 within the polling resolution, 5 of 10 strictly inside the label.** Two
+of the hits — `G329` and `G340` — are clips no state-polling framing could touch.
+
+Reproducible: three runs of the same command produced identical output, and a
+poll-by-poll diff of two of them was 133/133 identical in both caption and parsed
+state.
+
+**Five of the fifteen labelled events are not scoreable**, because no binary state
+pair expresses them: *"a vehicle reverses"*, *"a person buys something"* (×2),
+*"someone hands an object to another person"*, *"a vehicle drops someone off"*.
+That includes the brief's own forklift analogue, so a denominator of 10 is not full
+coverage.
+
+### Partial events, and a diagnostic that came free
+
+The brief asks how an event seen only partially is reported. Approach 1 inferred it
+from a merged span touching a window edge; Approach 3 reads it off the boundary
+state, with no extra model call. On this run: **2 events were already in the target
+state when polling began, and 3 were still in it when it ended** — the transition
+lies outside the observed span and is reported as partial rather than missed.
+
+The flags also produced a diagnostic we did not design for. Two failures that both
+printed "no transition" are now distinguishable:
+
+- **both flags and no transition** → the model reported *one state for the whole
+  span*. It saw something consistently; the question is whether it was the right
+  subject.
+- **no transition and no flags** → the target state never occurred at all.
+
+All three motion and posture misses fall in the first bucket, and **all three are
+multi-actor scenes**. `vehicle stops moving` reported "stationary" throughout — in a
+car park full of parked cars, which is defensible. `stands up` reported "standing"
+throughout, and the captions name *"a person standing near a table in the hallway"*
+in a room with several people.
+
+**That softens the claim that motion is unreadable.** These are consistent with
+subject ambiguity rather than with an inability to perceive movement. Separating
+the two needs a motion event with an unambiguous subject, which the labelled set
+does not contain — `G300 03-13`'s reversing vehicle is the closest and has no state
+pair.
+
+**A known display bug:** `comes out through the door` prints `HIT … 2.5 s` against a
+3.0–5.3 label. The count is right — some transition was strictly inside — but the
+instant shown is the earliest within tolerance, so the mark and the number can
+disagree.
+
+### There is no held-out set, and that matters
+
+Every reported number in Approach 2 and 3 is measured on clips that shaped the
+method. `G326`, `G329`, `G423`, `G300` and `G340` were each used to develop a
+prompt, a threshold or a state pair before being scored. `G421` is the only clip
+that never influenced a decision, and it has no state pair, so it contributes
+nothing.
+
+The `states.json` mappings are hand-written, by someone who had seen which
+framings worked. The 1 s step, the 2 s span and the earlier 0.10 margin were all
+chosen by looking at `G326`'s output.
+
+A post-hoc split would not fix this — the knowledge is already in the design. The
+fix is more labelled clips, held back and scored once. That is stated here rather
+than presented as a limitation of scope, because it is the difference between "6
+of 10" and "6 of 10, measured on the data it was tuned against".
+
+### The boundary of the approach
+
+The method's primitive is **a persistent binary property of one object**. Every
+limitation below follows from that, and they are properties of the design rather
+than defects in it.
+
+Sorting the fifteen labelled events by the *shape* of what is being asked:
+
+| shape | example | works? |
+|---|---|---|
+| configuration of one object | door open / closed | **yes** — 6 of 6 door events hit |
+| posture of one actor | sitting / standing | expressible, but fails when several people are present |
+| **motion** | *"a vehicle reverses"*, *"the machine stops moving"* | **no** — not readable from a single window |
+| **relation between actors** | *"someone hands an object to another person"* | **no** — not a state of any one object |
+| **compound or abstract** | *"a person buys something"*, *"a vehicle drops someone off"* | **no** — a sequence, not a state |
+
+Two of the brief's three worked examples — *"a forklift reverses"* and *"the
+machine stops moving"* — are motion, and fall outside.
+
+**Motion is not a state.** It has failed under every framing tried: event queries,
+state polling, pairwise comparison, and captions. A single 2-second window shows
+position, not velocity. Expressing it needs a different primitive — comparing
+consecutive captions for movement language rather than classifying one.
+
+**Relations are not states.** *"Someone hands an object to another person"* is a
+relation between two actors evolving over time. There is no object whose binary
+property changes. No amount of prompt work makes it fit; the primitive is wrong.
+
+**Multi-actor scenes need disambiguation the client's sentence does not contain.**
+*"A person sits down"* is ambiguous when several people are present, and the
+caption picks whichever it finds salient — on `G423` it described "a person
+standing near a table in the hallway" throughout, likely not the person who sat.
+Fixing it needs a spatial reference or a crop, supplied per scene and per query by
+a human.
+
+**The state pairs are hand-written.** Someone must turn *"a person opens a building
+door"* into `closed / open` before anything runs. That is one cheap text call and
+is not built — though it would hit the same wall, since no phrasing turns a
+relation into a binary state.
+
+**Resolution is the step size.** A transition can be located no more precisely than
+the polling interval, which is why scoring uses a tolerance of one step.
+
+**No held-out set.** Every clip that produced a number also shaped a prompt, a
+threshold or a state pair. The fix is more labelled clips, not a post-hoc split.
+
+Taken together: the approach converts a class of event-detection problems into
+classification problems the model can actually do, and **that class is narrower
+than the brief's own examples**. Saying which is which in advance, from the
+client's sentence alone, is the useful part.
+
+### Status and honest limits
+
+Approach 2 is a **probe script** (`scripts/state_timeline.py`), not pipeline code.
+It has not been integrated behind `find_events`, run across the full eval set, or
+scored by the same harness. Six questions on four clips is not an evaluation.
+
+The state decomposition — description to state pair — was written by hand for each
+test. Deriving it automatically from the client's sentence is the obvious next
+step and is unbuilt.
+
+A state interval answers *"when was the door open"*; the hand labels answer *"when
+did the opening happen"*. The late ends in the table above are that difference,
+not error. Scoring one against the other understates the method, and a fair
+comparison would need labels of the state kind.
+
+---
+
 ## 14. Risks
 
 | Risk | Impact | Mitigation |

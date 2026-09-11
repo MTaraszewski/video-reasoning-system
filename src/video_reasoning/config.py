@@ -69,9 +69,11 @@ class DetectConfig(BaseModel):
     # 81 predictions came back at exactly 1.0 -- a stated confidence carries no
     # information, so it cannot rank anything.
     threshold: float = Field(0.5, ge=0.0, le=1.0)
-    # One token is all a yes/no needs, and it forecloses the runaway generations
-    # that cost 80s per call in the eval.
-    max_tokens: int = Field(1, gt=0)
+    # A constrained yes/no needs very few tokens, and the cap forecloses the
+    # runaway generations that cost 80s per call in the eval. Not 1: the model
+    # may emit a leading token before the answer, which at max_tokens=1 truncates
+    # to a preamble ("Got") and parses as nothing.
+    max_tokens: int = Field(4, gt=0)
 
 
 class MergeConfig(BaseModel):

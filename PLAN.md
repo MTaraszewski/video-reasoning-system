@@ -997,3 +997,206 @@ aws service-quotas list-requested-service-quota-change-history \
   not going through make would pull 10 GB and then fail.
 
   Cost: ~$14 of GPU across the day, at a verified $1.22249/hr.
+
+- **2026-09-10 (Approach 2)** — Approach 1 is a measured dead end, and its failure
+  was specific enough to point somewhere: the model can time an event it is told
+  is present and cannot establish presence. So Approach 2 stops asking it to
+  report a time or decide anything, and uses it as a noisy sensor sampled over
+  time.
+
+  Poll a closed-set state question per timestep, ask in **both option orders and
+  average**, take confidence from the token logprobs, and detect the event as a
+  sustained departure from the clip's own baseline.
+
+  **Results: three hits at tIoU 0.46, 0.26 and 0.54 (mean 0.42), one clean true
+  negative, two misses.** Approach 1's mean tIoU across its entire eval was 0.002.
+
+  **The scope rule:** works when the state is a binary configuration of an object
+  that visibly changes shape; fails on presence and on motion. Decidable from the
+  description before any GPU time is spent. Two of the brief's three worked
+  examples are motion states and fall outside it.
+
+  **Four errors of mine, each caught by a control rather than by reasoning:**
+  - The first state result was pure option-order bias. It answered "(b)" whichever
+    label sat second, and the probability curve rose at the same moment in both
+    orderings — so the apparent detection was positional. The swap test caught it;
+    nothing about the first run looked wrong.
+  - Cropping "did not help" because the crop ran after the frame had already been
+    downscaled to 640px, so the subject occupied the same pixels in a smaller
+    image with its context removed. An operation in the wrong order produced a
+    clean, plausible negative.
+  - `guided_choice` had been removed from vLLM in v0.12.0 and we are on 0.29. An
+    unrecognised `extra_body` key is silently ignored, so the output was never
+    constrained — in the probe *and* in the two-stage detector shipped earlier.
+  - "Large object" was the wrong explanation for why doors work. A car door
+    succeeds at 322 px where a person in a doorway fails at 295 px.
+
+  **Not done:** Approach 2 is a probe script, not integrated behind `find_events`,
+  not run across the full eval set, and its state pairs are hand-written rather
+  than derived from the description.
+
+- **2026-09-10 (four framings, and the one that mattered)** — Kept pushing
+  Approach 2 and ended up somewhere more useful than another score.
+
+  **Two scope rules proposed and falsified.** "Binary configurations work,
+  presence and motion fail" died on `G423` — standing versus sitting is a binary
+  configuration of a visible person and produced nothing. "Doors work" died on
+  `G340` — a car door that did not. Actor size, object size and object class were
+  each contradicted by a later test. Three detections is not a rule.
+
+  **Pairwise comparison: chance.** Asking which of two frame sequences contains
+  the change came back flat at 0.50, range 0.05 and 0.01, on a known hit and a
+  known miss. The diagnosis is the finding: both sequences go in one call with
+  text markers, and the model does not bind images to them. It cannot reason over
+  grouped image sequences within a single prompt.
+
+  **Reason-then-classify: the perception is there.** Every probe until this one
+  capped generation at 1-4 tokens and read a logprob — a reasoning model used as a
+  one-token classifier. Asked to describe first, it returned "the door is closed in
+  all frames" at t=2, "a person is opening the door" at t=4, "the door is open in
+  some frames, showing a person inside" at t=6, and "closed" at t=8. Against a
+  label of 3.0-5.7s that is correct at every timestep.
+
+  Four framings had been discarding that. Two defects sat between the perception
+  and the score, both ours: "describe the door" asks for appearance and got colour,
+  handle and frame, so the classifier scored +0.91 for "open" on text saying
+  "closed in most frames"; and the reasoning block was concatenated with the
+  answer, so the classifier read the model thinking aloud. Both fixed. Whether the
+  fix recovers the signal end to end is NOT yet measured.
+
+  The same output explains the `G423` miss without a new hypothesis: it describes
+  "a person standing near a table in the hallway" in a scene with several people.
+  Ambiguous subject, so the question was never well posed.
+
+  The lesson worth carrying: four negative results were reported before anyone
+  looked at what the model actually said. The moment we printed its own words, the
+  diagnosis took one reading.
+
+- **2026-09-10 (Approach 3 — caption, parse, derive)** — Followed the
+  reason-then-classify finding to its conclusion and arrived at a design with no
+  forced choice, no logprobs and no threshold in it. Every failure of the day
+  traced back to one of those three.
+
+  Caption each timestep free-form, read the state out of the model's own words with
+  string matching, and take the event to be the transition between consecutive
+  states.
+
+  **Result on `admin.G326`** (label 3.0-5.7s, 1s steps): closed through t=4, open
+  t=6-8, closed from t=9. Last closed at t=5, first open at t=6, so the transition
+  sits at t~5.5s -- **inside the label** -- and the door returning to closed at t=9
+  matches the contact sheet independently. Agreement of about 0.3s, from a model
+  whose best synthetic boundary error was 3.5s and which under Approach 1 could not
+  answer on real footage at all.
+
+  **Why the parse is not a model call.** It was. Order-averaging that text
+  classifier drove every score to exactly 0.00 -- the signature of choosing purely
+  by position, since always answering "(b)" averages to 0.5/0.5 under reversal. It
+  never read the text at all. The image task kept a weak signal under the same
+  treatment, so the blindness is specific to text classification.
+
+  **Failure mode recorded:** at t=5 the description reads "The door starts in an
+  open state and closes across the frames" -- the change is detected at exactly the
+  right moment with its direction reversed. Seeing a change and getting the sign
+  wrong is more tractable than not seeing it.
+
+  **Scoring must change with the method.** Interval tIoU compares a state interval
+  ("when was it open", 6-9s) against an act label ("when did it open", 3.0-5.7s)
+  and understates the result -- which is why state polling scored 0.26-0.55 while
+  being far closer than that suggests. The right measure is the transition instant
+  against the label's span.
+
+  **Not done:** one clip, one question. Running across all 15 labelled events with
+  transition scoring is the number that belongs in the README and does not exist.
+
+- **2026-09-11 (Approach 3 scored)** — `run_transitions.py` runs the
+  caption-parse-derive timeline around every labelled event and scores the
+  transition instant against the label's span. 1s steps, 2s spans, 6s padding.
+
+  **6 of 10 scoreable events hit.** Two of those — `G329` and `G340` — are clips no
+  state-polling framing could touch, so this is a different method rather than the
+  same one with a better score.
+
+  Misses, each with a different cause: `G300` "gets out of a vehicle" landed 0.3s
+  outside the label, which is below the 1s step resolution and is a scoring
+  convention rather than a failure; `G423` sit and stand failed on an **ambiguous
+  subject** -- the caption reads "a person standing near a table in the hallway" in
+  a scene with several people; `G300` "vehicle stops moving" produced no transition
+  at all, consistent with every framing tried today failing on motion.
+
+  **Five of fifteen labelled events are not scoreable**, because no binary state
+  pair expresses them -- including "a vehicle reverses", the brief's own forklift
+  analogue. The denominator of 10 already encodes that.
+
+  **There is no held-out set, and the write-up now says so.** `G326`, `G329`,
+  `G423`, `G300` and `G340` were each used to develop a prompt, a threshold or a
+  state pair before being scored. `G421` is the only clip that never influenced a
+  decision and it has no state pair. The states.json mappings are hand-written by
+  someone who had seen which framings worked; the 1s step, 2s span and the earlier
+  0.10 margin were all chosen by looking at `G326`. A post-hoc split does not fix
+  that -- the knowledge is already in the design. More labelled clips, held back
+  and scored once, is the only fix.
+
+  Also: the system still needs a human to turn a client's sentence into a state
+  pair. That is one cheap text call and is not built.
+
+- **2026-09-11 (the boundary, stated)** — Consolidated Approach 3's limitations
+  into one statement rather than leaving them scattered, because they all follow
+  from a single fact: the primitive is a persistent binary property of one object.
+
+  Sorting the labelled events by the SHAPE of the request rather than by outcome:
+  object configuration works (6 of 6 door events); actor posture is expressible but
+  fails when several people are present; motion, relations between actors and
+  compound events do not fit the primitive at all.
+
+  Motion has failed under every framing tried -- event queries, state polling,
+  pairwise comparison, captions. A 2-second window shows position, not velocity.
+  Relations are worse: "someone hands an object to another person" has no object
+  whose binary property changes, so no prompt work rescues it.
+
+  Two of the brief's three worked examples -- "a forklift reverses" and "the machine
+  stops moving" -- are motion, and fall outside.
+
+  Also recorded as boundaries rather than bugs: multi-actor scenes need spatial
+  disambiguation the client's sentence does not contain; the state pairs are
+  hand-written and auto-derivation would hit the same wall; resolution equals the
+  step size; there is no held-out set.
+
+  The honest headline: the method converts a class of event-detection problems into
+  classification the model can do, and that class is narrower than what a client
+  would naturally ask. Being able to say which is which from the sentence alone,
+  before spending anything, is the part worth having.
+
+- **2026-09-11 (final transition run, and partial events)** — 7 of 10 events show a
+  transition within the polling resolution, 5 of 10 strictly inside the label.
+  Three runs of the same command gave identical output and a poll-by-poll diff of
+  two was 133/133 identical in both caption and parsed state, so the pipeline is
+  reproducible given the same call sequence.
+
+  **Partial-event reporting works and is read off the boundary state**, which is
+  the one place Approach 3 is architecturally stronger than Approach 1: the latter
+  could only infer partiality from a merged span touching a window edge. Two events
+  began already in the target state, three ended still in it.
+
+  **A diagnostic arrived that we did not design for.** Two failures that both
+  printed "no transition" are now distinguishable: both boundary flags plus no
+  transition means the model reported ONE state across the whole span, whereas no
+  flags means the target state never occurred. All three motion and posture misses
+  are in the first bucket and all three are multi-actor scenes -- "vehicle stops
+  moving" reported stationary throughout a car park of parked cars, "stands up"
+  reported standing while describing "a person near a table" in a room with several
+  people.
+
+  **That softens the earlier claim that motion is unreadable.** Those results are
+  equally consistent with subject ambiguity. Separating the two needs a motion event
+  with an unambiguous subject, which the labelled set does not contain. The docs
+  previously stated the motion conclusion more strongly than the evidence supports
+  and have been corrected.
+
+  Known display bug: an event can print HIT with an instant outside the label,
+  because the mark is computed over all transitions while the printed instant is
+  the earliest within tolerance. The count is right, the number beside it can
+  mislead.
+
+  Instance stopped. All results copied off, including 133 captions per run -- any
+  future question about why an event missed can be answered by reading rather than
+  by renting a GPU.

@@ -115,10 +115,15 @@ class VLLMBackend:
                 model=self.model,
                 messages=self._messages(req),
                 temperature=0.0,
-                max_tokens=self.detect_max_tokens,
+                max_tokens=max(4, self.detect_max_tokens),
                 logprobs=True,
                 top_logprobs=8,
-                extra_body={"guided_choice": ["yes", "no"]},
+                # vLLM removed the guided_* parameters in v0.12.0. On 0.29 an
+                # extra_body key it does not recognise is silently ignored, so
+                # this stage was never actually constrained -- the model
+                # free-generated and we read logprobs off whatever it produced.
+                # https://docs.vllm.ai/en/latest/features/structured_outputs.html
+                extra_body={"structured_outputs": {"choice": ["yes", "no"]}},
             )
         except Exception as e:
             return 0.0, round(time.time() - t0, 3), f"detect failed: {e}"
