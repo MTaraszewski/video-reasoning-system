@@ -171,6 +171,12 @@ CLIPS    ?= 4
 STEP_S   ?= 1.0
 WATCH_S  ?= 30
 
+.PHONY: validate
+validate:  ## [any] check a results file against the contract (FILE=out/events.json)
+	$(COMPOSE) run --rm finder video-reasoning validate /out/$(notdir $(FILE))
+
+FILE ?= out/events.json
+
 .PHONY: schema
 schema:  ## [any] regenerate schema.json, the machine-readable output contract
 	@# Captured on the HOST, not written inside the container: the repo root is

@@ -204,6 +204,55 @@ def schema(
 
 
 @app.command()
+def validate(
+    path: str = typer.Argument(..., help="A results JSON file to check."),
+) -> None:
+    """Check a results file against the output contract.
+
+    A schema nobody can check is a promise, not a contract. This parses the file
+    with the same model the service validates its own responses with, so the check
+    is the contract itself rather than a second description of it that could drift.
+
+    It verifies more than field names and types. The model's invariants are
+    checked too: events ordered by start time, and no event reported outside the
+    video's real duration.
+    """
+    from pydantic import ValidationError
+
+    from .schema import FindEventsResult
+
+    f = Path(path)
+    if not f.exists():
+        err_console.print(f"[red]not found[/] {path}")
+        raise typer.Exit(2)
+    try:
+        data = json.loads(f.read_text())
+    except json.JSONDecodeError as e:
+        err_console.print(f"[red]not valid JSON[/] {path}: {e}")
+        raise typer.Exit(1)
+
+    try:
+        res = FindEventsResult(**data)
+    except ValidationError as e:
+        err_console.print(f"[red]does not match the contract[/] {path}")
+        for err in e.errors():
+            where = ".".join(str(x) for x in err["loc"]) or "(root)"
+            err_console.print(f"  {where}: {err['msg']}")
+        raise typer.Exit(1)
+
+    n = len(res.events)
+    console.print(f"[green]valid[/] {f.name}")
+    console.print(f"  {res.video}  {res.duration_s:.1f}s  {n} event(s)  "
+                  f"{res.run.model_calls} model call(s)")
+    console.print(f"  ordered, in bounds, {len(res.queries)} description(s)")
+    if res.polls:
+        console.print(f"  {len(res.polls)} poll(s) of provenance")
+    if res.run.stub:
+        err_console.print("[yellow]note[/] produced by the stub backend — valid "
+                          "output, but never valid evidence")
+
+
+@app.command()
 def frames(
     video: str = typer.Argument(..., help="Video to sample."),
     out: str = typer.Option("/out/frames", "-o", "--out", help="Directory for PNGs."),
