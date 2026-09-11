@@ -1,0 +1,1303 @@
+# Plan & working log — video event-finding service
+
+Living document. Tracks decisions, verified facts, open questions and step status.
+Rule for this file: **nothing enters as fact without a primary source.** Anything
+unverified is marked `UNVERIFIED` and must not leak into README/DESIGN.
+
+---
+
+## 0. The assignment, distilled
+
+Source: the assignment brief, held locally and deliberately not committed — it is the client's document. Every requirement below quotes the sentence it comes from, so the traceability survives without republishing it.
+
+Build a service: *(video file, one or more plain-language event descriptions)* →
+list of events with **start time, end time, matched description, confidence /
+ranking signal**, in a **strict, documented JSON schema**.
+
+### Hard requirements
+
+| # | Requirement |
+|---|---|
+| R1 | Long-video handling: frame sampling, windowing, cross-boundary merge/dedup, reporting partially-seen events |
+| R2 | **Document those decisions** — explicitly stated to be part of the task |
+| R3 | Model: NVIDIA **Cosmos 3 Edge** recommended. Alternative allowed if justified, and still: open weights, video input, temporal localisation, a context limit worked around |
+| R4 | Hosted commercial API = explicit fallback only, never the primary engine |
+| R5 | **Runs on the reviewer's machine in a few minutes, first try, without reading the code** — "the part we are strict about" |
+| R6 | Own eval set: **5–10 clips, 1–3 min each, hand-labelled start/end**, rights-clean. Report **a temporal metric you can defend** |
+| R7 | Report where the model's limits are |
+| R8 | Deliverable = GitHub repo |
+| R9 | ~1 week |
+
+### Explicitly NOT evaluated
+Tests, CI, linters, production-grade deployment, service scaling, advanced
+security. Focus = *solution, value for customers, ease of use*.
+
+### How the assignment was framed (from the covering email)
+
+> "we generally use one of two strategies: *build with Roboflow* (an open-ended
+> project) or **"build around capability"** (where we ask candidates to build a
+> solution centered on a specific model or group of models that **currently pose a
+> challenge for tool builders**). Given the recent trend toward multi-modality and
+> video understanding, I've decided to go with the latter. It's a real-world
+> challenge with **a few tricky edges**"
+
+This is the most useful context we have, and it sets the priorities:
+
+- **The model is expected to be difficult.** "Poses a challenge for tool builders"
+  is not a warning to work around — it is the subject of the exercise. Roboflow
+  builds tools; they are asking whether we can productise something that resists
+  productisation, and what we learn doing it.
+- **"A few tricky edges" implies the edges are findable and known to them.** They
+  will recognise which ones we hit and which we missed. Handling an edge visibly and
+  documenting it beats a clean happy path.
+- **Reinforces §"claim under test".** Difficulty is the premise. A submission
+  reporting that everything worked smoothly has probably not looked hard enough.
+- **"a specific model or group of models"** — comparing against a second model is
+  within the spirit, and is the cheapest way to make "where are the limits"
+  interpretable. Kept as optional and secondary to characterising the primary.
+- The offer to answer questions is repeated here, having also appeared in the brief.
+  Owner decision stands: none asked.
+
+**Tricky edges identified so far.** Tracked deliberately — each is either handled
+visibly or documented as a known limit:
+
+| Edge | Where it bites |
+|---|---|
+| Video exceeds the model's effective view | Windowing, overlap, merge. Named in the brief |
+| Localisation mechanism undocumented for Edge | The capability probe |
+| Reasoning model output is not bare JSON | Response parsing in the adapter |
+| Two towers, and "omni" is not what we need | Serving. Easy to waste days on vLLM-Omni |
+| Repo id is `Cosmos3-Edge`, not `Cosmos-3-Edge` | Nothing runs if guessed |
+| No published VRAM figure, no Edge serving recipe | Instance sizing, first-run reliability |
+| 4B at robot-control resolution 640x360 | Small burned text may not survive downscaling |
+| Confidence from a zero-shot VLM is uncalibrated | The ranking signal must not be oversold |
+| Sampling rate sets a hard floor on boundary precision | Interpreting tIoU at 0.7 |
+| Fixed-camera domain weaknesses Roboflow already published | Fast motion, small similar objects |
+
+### Requirements traceability
+
+Checked against the brief, not against how much has been built. Status is honest:
+`DONE` means it works and was run; `PART` means partially; `TODO` means it does not
+exist yet.
+
+| # | Requirement | Status | Where / what is missing |
+|---|---|---|---|
+| R1 | Long-video handling: sampling, windowing, cross-boundary merge, partial events | **PART** | All four met by `windows` — `decode.py`, `windows.py`, `merge.py`, [`DESIGN.md §6`](DESIGN.md). `states` meets sampling and partial-event reporting, and does not window or merge **because it cannot fragment an event**. But it does not chunk either, so cost is linear in duration and the work budget refuses past ~4.2 min at 4 subjects -- and the binding constraint is actually decode, not model calls: `sample_frames` has no seek, so decode is **quadratic** in clip length (~13 h for a 30-minute video). **Approach 1 handles long video and scores 0.000; Approach 3 works and caps at four minutes.** Both halves stated in [`DESIGN.md §6.7`](DESIGN.md), with the coarse-to-fine fix designed and unbuilt |
+| R2 | Document those decisions | **DONE** | `DESIGN.md §6.2-6.7`, `DECISIONS.md`, `EXPERIMENTS.md`, `DATASETS.md`, `RUNBOOK.md`. §6.7 added late — the two engines' differing answers to R1 were undocumented until then |
+| R3 | Open weights, video input, temporal localisation, a context limit worked around | **DONE** | Cosmos3-Edge verified open, ungated, video-capable, served on stock vLLM v0.29.0. **Temporal localisation measured**: 3.11s median error on synthetic, and near-zero on real footage — the claim was tested and mostly fails, which is the finding. Context limit worked around twice: 12s windows for `windows`, 2s polls for `states` |
+| R4 | No hosted commercial API as primary | **DONE** | Self-hosted vLLM only; no hosted path exists in the code |
+| R5 | Runs on their machine in minutes, first try, without reading the code | **DONE** | **Verified on a fresh `git clone` of the pushed branch, not on the working tree**: `make preflight && make build && make demo` succeeded first try in **11.6s** and produced a valid events JSON. Docker layers were warm, so a cold host is a few minutes. Also: `make smoke` runs 6 no-GPU checks and all pass; `make data-eval` rebuilds all 8 clips from MEVA's public bucket over plain HTTPS with no AWS account or CLI |
+| R6 | 5-10 clips, 1-3 min, hand-labelled, rights-clean, defensible temporal metric | **DONE** | **8 clips, 120s each, 15 events**, MEVA CC BY 4.0, each `confirmed_by_hand` with adjudication notes — two of which record a hand verdict being overturned by zooming. Metric: tIoU R@1 at 0.3/0.5/0.7, mean tIoU, precision/recall, NVIDIA's mean relative error, false-positive rate, per-axis breakdown, per-(video, description) isolation enforced in code |
+| R7 | Report where the model's limits are | **DONE** | Measured, not asserted: a 3.11s precision floor before any windowing; mean tIoU 0.0021 and a 0.80 false-positive rate on real footage; presence reported at 47% when present against 39% when absent; a second architecture failing the same way; and a shape table saying which descriptions the method **cannot** express — motion, relations, compound events — covering two of the brief's own three worked examples |
+| R8 | GitHub repository | **DONE** | `MTaraszewski/video-reasoning-system` |
+| R9 | Deliver within about a week | **ON TRACK** | Started 2026-09-09 |
+
+**Scored, on 2026-09-11.** Four of the eight labelled clips, eight events, same
+harness and same metrics that scored Approach 1:
+
+| | Approach 1 | Approach 3 |
+|---|---|---|
+| mean tIoU | **0.000** | **0.292** |
+| R@1 tIoU>=0.3 | 0.000 | 0.375 |
+| recall@0.5 | 0.000 | 0.250 |
+| predictions / truths | 14 / 8 | 153 / 8 |
+
+Approach 1 has no overlap with any label. Approach 3 localises three of eight
+events at tIoU>=0.3. At `confidence >= 0.8`, 77% of its predictions can be dropped
+with **no** loss of recall or localisation, which is the ranking signal doing the
+job the brief asks of it.
+
+The ceiling test ran the same day and is what makes Approach 1's zero
+interpretable: on clips with the activity name printed in a box around the actor
+it still scores mean tIoU 0.018. The failure is the approach, not the footage.
+
+**Still open:** the other four clips, which would cover the `person` subject the
+subset never exercises. 2.5 hours per four clips, and the GPU window closed.
+
+### The risk this exposes
+
+Considerable effort has gone into scaffolding — Makefiles, runbook, skills, docs —
+and **the deliverable itself has never run end to end.** No `find_events()` call has
+produced the JSON the brief actually asks for.
+
+The brief is explicit that it will be judged on the solution, its value and ease of
+use, and that tests, CI and deployment mechanics are *not* evaluated. Weighed
+against that, the shortest path to a defensible submission is:
+
+1. **`make demo` producing valid events JSON** — the single command a reviewer types
+   first, and the thing R5 is strict about
+2. **merge + partial events** — the part of R1 that is the actual contribution
+3. **metrics** — R6 is unsatisfiable without them
+4. **trim and label clips** — R6's hard numbers
+5. everything else
+
+Anything not on that list waits until those are done.
+
+### Standing offer from the brief
+"Questions before you start are welcome; ask them." — an open channel to Paweł,
+not yet used.
+
+---
+
+## 1. Verified facts (Step 0)
+
+Checked 2026-09-09. Each line carries its source.
+
+### Cosmos 3 Edge — EXISTS, and is our primary engine
+- Repo ID is **`nvidia/Cosmos3-Edge`** (also `nvidia/Cosmos3-Edge-Policy-DROID`).
+  Note: **not** `nvidia/Cosmos-3-Edge`, which is what the earlier draft used.
+  — <https://huggingface.co/blog/nvidia/cosmos3edge>
+- 4B parameters. Released at SIGGRAPH, 2026-07-20. Weights + code + post-training
+  recipes published.
+  — <https://nvidianews.nvidia.com/news/nvidia-launches-cosmos-3-the-open-frontier-foundation-model-for-physical-ai>
+- **Licence: OpenMDW 1.1. Not gated** — no HF token, no licence click-through.
+  This is a real R5 advantage over Cosmos Reason 2, which *is* gated.
+  — <https://huggingface.co/nvidia/Cosmos3-Edge>
+- Omnimodal: text, image, video, audio, action in; robot actions out at 15 Hz on
+  Jetson Thor. Autoregressive tower (vision+language) + diffusion tower
+  (vision/audio/action). Robot-control resolution 640x360.
+- **Video input recommended at 4 fps for reasoning tasks.** Reasoner supports
+  long-context input **up to 256K tokens**. **BF16 only** — FP4/FP8/FP16 are not
+  officially supported.
+- Hardware tested: H100 80GB, B200 192GB, and Jetson 16-128GB.
+- Ships with a companion 2B dense reasoning module (Nemotron-powered), runnable on
+  Jetson Orin 8GB.
+- Ranked #1 open model on VANTAGE-Bench, Arena Bench, PAI-Bench and R-Bench.
+
+### Serving Cosmos 3 Edge — stock vLLM, no vLLM-Omni needed
+Cosmos 3 splits into two towers, and **only one of them is ours**:
+
+| Tower | What it does | Served by |
+|---|---|---|
+| **Reasoner** (autoregressive) | video/image/text in -> text out | **stock vLLM**, TensorRT-LLM |
+| **Generator** (diffusion) | generates video/image/audio/action | vLLM-Omni only |
+
+We need the **Reasoner only**. Video in, timestamped events out. Nothing is
+generated. So the `--omni` flag, the `vllm/vllm-omni:cosmos3` image and the
+`--no-guardrails` flag are all **out of scope** — they belong to the generator path.
+
+- `nvidia/Cosmos3-Edge` is listed in vLLM's supported-models table:
+  architecture **`Cosmos3EdgeForConditionalGeneration`**, described as
+  "Cosmos3-Edge (understanding tower)", inputs **`T + I^E+ + V^E+`**
+  (text + multiple images + multiple videos), LoRA supported.
+  — <https://github.com/vllm-project/vllm/blob/main/docs/models/supported_models.md>
+- Implementation lives in `vllm.model_executor.models.cosmos3_edge`:
+  `Cosmos3EdgeForConditionalGeneration` = **Nemotron-H backbone + SigLIP2 vision
+  encoder** + patch merger/projector, with interleaved multimodal RoPE, registered
+  via `@MULTIMODAL_REGISTRY.register_processor()` and implementing both
+  `_process_image_input()` and `_process_video_input()`.
+  — <https://docs.vllm.ai/en/latest/api/vllm/model_executor/models/cosmos3_edge/>
+- Note Edge is a **separate integration** from Nano/Super, which use the unified
+  `Cosmos3ForConditionalGeneration` / Omni checkpoint.
+- Version pinning, from the Cosmos3 reasoner recipe:
+  **`vllm==0.21.0` on CUDA 13 drivers, `vllm==0.19.1` on CUDA 12.8.**
+  — <https://recipes.vllm.ai/nvidia/Cosmos3-Nano>
+- Flags worth carrying over from that reasoner recipe:
+  `--media-io-kwargs '{"video": {"num_frames": -1}}'`, `--allowed-local-media-path`,
+  `--async-scheduling`, `--mm-encoder-tp-mode data`.
+- `UNVERIFIED` / to settle on the box:
+  - No published **Cosmos3-Edge** recipe or VRAM figure. 4B in BF16 is ~8 GB of
+    weights plus KV cache and the vision tower, so a 24 GB card is the working
+    hypothesis — **must be measured**, and it decides the AWS instance.
+  - Nano's recipe needs `--hf-overrides '{"architectures": [...]}'` to select the
+    reasoner out of its unified checkpoint. Edge's checkpoint should map to its own
+    architecture directly and not need this. **Confirm on first serve.**
+  - Exact vLLM version that first shipped `cosmos3_edge`.
+
+### Cosmos 3 architecture — two towers, and we use one
+
+Cosmos 3 is a **Mixture-of-Transformers (MoT)**: *one* model containing *two*
+transformer towers.
+— <https://developer.nvidia.com/blog/develop-physical-ai-reasoning-world-and-action-models-with-nvidia-cosmos-3/>
+
+| Tower | Type | Does | Modalities |
+|---|---|---|---|
+| **Reasoner** | autoregressive | Interprets input, "understands motion, object interactions, and other physical context". The "brain" | text / image / video / audio / action **in**, text **out** |
+| **Generator** | diffusion | Produces future observations and action sequences by iterative denoising, conditioned on the reasoner | generates video, image, audio, action |
+
+The decisive sentence for us: **"The reasoner operates independently, but
+generation requires both towers working together."** Our task is video in →
+timestamped text out. That is the Reasoner alone. We never generate anything.
+
+**What "omni" means.** *Omnimodal* = the union of modalities across both towers —
+text, image, video, audio and robot actions, in and out, in one model. **vLLM-Omni**
+is a separate project extending vLLM to serve **diffusion-based generation**; the
+`--omni` flag switches that on. Since we never generate, `--omni`, the
+`vllm/vllm-omni:cosmos3` image and `--no-guardrails` are all **out of scope**.
+Stock vLLM serving the understanding tower is the whole requirement.
+
+**Family sizes** (note the discrepancy, resolve before quoting any of them):
+- **Edge — 4B**, edge/Jetson class. — HF launch blog.
+- **Nano — 16B**, workstation class (RTX PRO 6000). — NVIDIA developer blog.
+- **Super — 64B**, datacenter (Hopper/Blackwell). — NVIDIA developer blog.
+- `CONFLICT`: Roboflow's blog describes the variant it tested as "Cosmos 3 Super
+  (32B)". NVIDIA's developer blog says Super is 64B. Do not quote a Super size
+  until this is resolved.
+- That developer blog predates Edge and does not mention it at all.
+
+### Cosmos3-Edge and temporal localisation — VERIFIED ABSENT
+Checked the model card directly. **Temporal localization, timestamps, timestamp
+overlays on frames, event detection, start/end times, VANTAGE-Bench and dense
+captioning are not mentioned anywhere on it.**
+— <https://huggingface.co/nvidia/Cosmos3-Edge>
+
+Its stated intended uses are: *multimodal understanding, world simulation, future
+prediction, action reasoning and Physical AI applications*; robotics manipulation
+and control; autonomous-vehicle action prediction; image-to-video generation;
+text-to-image generation; action-trajectory generation. The Reasoner is documented
+as accepting text, text+image or text+video and producing text, with up to 256K
+context — but **no temporal-grounding capability is claimed.**
+
+This is a documented absence, not evidence the capability is missing. It means we
+cannot cite a source for it and **must establish it empirically.**
+
+### Why Edge might behave differently from Cosmos Reason 2
+The two models share almost nothing below the API:
+
+| | Cosmos3-Edge | Cosmos-Reason2-8B |
+|---|---|---|
+| Language backbone | **Nemotron-H** | **Qwen3-VL-8B-Instruct** |
+| Vision encoder | **SigLIP2** + patch merger/projector | Qwen3-VL's own |
+| Size | 4B | 8B |
+| Timestamp localisation | not documented | **documented on the model card** |
+| Gated | no | yes |
+
+- Backbone details come from vLLM's implementation:
+  `Cosmos3EdgeAttention` is "Nemotron-H attention with interleaved multimodal
+  RoPE"; `Cosmos3EdgeTextModel` is a "Nemotron-H backbone"; `Cosmos3EdgeVisionModel`
+  is the "complete Cosmos vision tower" over a "vLLM packed SigLIP2" encoder.
+  — <https://docs.vllm.ai/en/latest/api/vllm/model_executor/models/cosmos3_edge/>
+- **Nemotron-H is a hybrid Mamba-2 / Transformer architecture**: most self-attention
+  layers are replaced by Mamba state-space layers with constant compute and memory
+  per token, giving up to ~3x faster inference.
+  — <https://arxiv.org/abs/2504.03624>
+
+Reading a burned-in timestamp requires two things to hold at once: the vision
+encoder must **resolve small text** at the sampled resolution, and the model must
+**bind that text to the frame's position** in the sequence. Neither transfers
+automatically from a Qwen3-VL-based model to a Nemotron-H + SigLIP2 one.
+
+A concrete additional worry: Edge is documented at **robot-control resolution
+640x360**. A timestamp legible at 1080p may not survive downscaling to that, and
+overlay font size is a parameter we control — so **overlay legibility is itself a
+variable to sweep**, not a fixed choice.
+
+### VANTAGE-Bench — accepted as a supplementary eval source
+- Four pillars: **Semantic** (event verification, video QA), **Spatial** (referring
+  expressions, pointing, object localisation), **Temporal** (**Temporal
+  Localization**, dense video captioning), **Spatio-Temporal** (single object
+  tracking). Domains: warehouse, transportation, smart spaces — fixed-camera.
+  Temporal Localization is scored by **mIoU**, with **Precision@0.5** secondary.
+  — <https://github.com/Clemson-Capstone/VANTAGE-Bench>
+- Licence is **`nvidia-evaluation-data-license`**; the dataset is **gated** and
+  stated to be "for evaluation purposes only"; **ground truth is withheld** and
+  scoring is server-side.
+  — <https://huggingface.co/datasets/nvidia/PhysicalAI-VANTAGE-Bench>
+- **Download is contemplated by the terms**: *"When downloaded or used in accordance
+  with our terms of service..."*
+- **Accepted** because the withheld ground truth is irrelevant — the brief requires
+  us to hand-label anyway — and because our use *is* evaluation of an NVIDIA model.
+  It is the only source covering the warehouse and transportation domain, i.e. fast
+  motion and small similar objects. **Supplementary tier only**: gated access and no
+  redistribution keep it out of the reproducible core. Full reasoning and the
+  reversal are in [`DECISIONS.md §6.1`](DECISIONS.md).
+- **Not a reproduction target.** Its leaderboard numbers cannot be reproduced
+  locally by any means, because the ground truth exists only on their scoring
+  server.
+- Also useful as **prior art for the metric**: it confirms mIoU-style temporal
+  overlap is the accepted measure for exactly this task on exactly this domain.
+
+### VANTAGE-Bench leaderboard — what it does and does not tell us
+Public zero-shot leaderboard, live since 2026-05-27.
+— <https://vantage-bench.org/> · <https://huggingface.co/spaces/clemson-computing/VANTAGE-Bench-Leaderboard>
+
+| Rank | Model | Overall |
+|---|---|---|
+| 3 | Cosmos3-Super 64B | 63.01 |
+| 5 | Cosmos3-Nano 16B | 60.67 |
+| 7 | Cosmos-Reason2-8B | 54.18 |
+
+- **`nvidia/Cosmos3-Edge` does not appear on the public leaderboard.** NVIDIA's
+  claim that Edge "ranks #1 on VANTAGE-Bench for vision analytics" among 4B models
+  is therefore **self-reported and not independently verifiable**. Do not cite it as
+  third-party evidence.
+- Per-task `Temp Loc` values were not retrievable from the rendered pages; the
+  column exists but the numbers need the live leaderboard. `UNVERIFIED`.
+- Two things worth noting from the overall column: scores sit in the **54-63 out of
+  100** band, so this task is far from solved even for the best models; and the
+  ordering is **size-monotonic** within the Cosmos family, which is not encouraging
+  for a 4B model.
+- Resolves the earlier size conflict: the leaderboard lists **Super at 64B**, matching
+  NVIDIA's developer blog and contradicting the "Super (32B)" description elsewhere.
+
+### The assessor's claim about Cosmos 3 Edge — a hypothesis under test, not evidence
+The brief states, verbatim:
+
+> "We recommend building on **NVIDIA Cosmos 3 Edge**. It takes video input, reasons
+> about what happens over time, and **can localise events with timestamps when
+> prompted correctly**"
+
+The tempting reading is "the assessor says it works, so it works." That reading is
+a trap, and the brief says so itself in its opening paragraph:
+
+> "take a capable model with a new behaviour, **understand what it actually
+> guarantees**, and turn it into something a client can call"
+
+Plus: *"we are interested to find out where the **limits** of their abilities are"*,
+and *"we care about your decisions and how you communicate them at least as much as
+about the code."* Three separate lines instructing us to **establish** the model's
+behaviour rather than inherit it. A submission that assumes the claim and builds on
+top of it has skipped the part being graded.
+
+**So the claim is treated as a hypothesis with a stated test**, not as a citation:
+
+| | |
+|---|---|
+| Claim | Edge can localise events with timestamps when prompted correctly |
+| Source | The assignment brief. Not NVIDIA's model card, which is silent on this |
+| Status | **Untested** |
+| Test | The capability probe, Step 3 — measured against clips with exact known ground truth |
+| Reported | Either way. A negative result is a finding the brief explicitly asks for |
+
+Note also what the brief does **not** say: it does not say Edge localises by reading
+timestamps **burned into frames**. That mechanism is documented for Cosmos Reason 2
+only. For Edge the mechanism is unstated, so the probe tests both burned overlays
+and vLLM's native video-timing path, and the qualifier *when prompted correctly*
+makes prompt design part of the experiment rather than a detail settled afterwards.
+
+**What the probe buys us regardless of outcome.** It measures the model's temporal
+grounding floor — the best precision achievable before any windowing or merging is
+layered on. Every later metric is interpreted against that number. Without it we
+cannot tell our pipeline's error apart from the model's.
+
+### Roboflow's own published view of Cosmos 3
+Directly relevant: the company setting this assignment has published its own
+evaluation. — <https://blog.roboflow.com/cosmos-3-vision/> (Erik Kokalj, Developer
+Experience @ Roboflow, 2026-06-03)
+- Tested **Cosmos 3 Super (32B) in thinking mode** only; Nano and Edge untested.
+- Scenarios: airport gate cargo movement, warehouse loading dock, kitchen assembly
+  line — all fixed-camera, all state-segmentation framings.
+- **Strengths:** reliably segments activity into structured state sequences with no
+  fine-tuning; good on slow-changing states (e.g. pallet fill level).
+- **Limitations:** struggles with **fast-moving actions** and **small, similar
+  objects**; 45/67 on Visual Understanding Evals, below Qwen 3.5 27B; weak on
+  spatial understanding and object counting; failed reliably on the overhead
+  kitchen line.
+- **Implication for R7:** our eval set should deliberately probe these known weak
+  spots. Confirming or contradicting a Roboflow-published finding with our own
+  measured numbers is the strongest possible answer to "where are the limits".
+
+### Cosmos Reason 2 — EXISTS; our reference model and fallback backend
+- Repo IDs: `nvidia/Cosmos-Reason2-2B`, `nvidia/Cosmos-Reason2-8B`,
+  `nvidia/Cosmos-Reason2-32B`. — <https://huggingface.co/nvidia/Cosmos-Reason2-8B>
+- 8B: gated (contact info required), **NVIDIA Open Model License, commercial use
+  permitted**, base model **Qwen3-VL-8B-Instruct**, BF16, **256K input tokens**.
+- **Minimum 32 GB GPU memory** for 8B; 24 GB for 2B. Tested on H100 / A100;
+  supported microarchitectures Hopper and Blackwell.
+- Video input: mp4. **Recommended `fps=4` to match the training setup.**
+  `max_tokens` 4096+ to avoid truncated responses.
+
+### The timestamp-overlay crux — CONFIRMED
+- Official model card: *"Our AI model recognizes timestamps added at the bottom of
+  each frame for accurate temporal localization."*
+  — <https://huggingface.co/nvidia/Cosmos-Reason2-8B>
+- The same phrasing appears in Cosmos 3 material. So the earlier draft's central
+  design premise is **correct**, not a guess.
+- **BUT `UNVERIFIED` for Cosmos3-Edge specifically:** the Cosmos3-Edge model card
+  makes **no mention of timestamp burning or temporal localisation**. Edge's
+  reasoning comes from a Nemotron-based module, not from Cosmos-Reason2. Whether
+  Edge reads burned-in timestamps is an **empirical question we must test first
+  thing on the GPU box.** This is the single largest technical risk in the build.
+- NVIDIA's temporal-localization recipe adds timestamps via
+  `add_timestamps_to_all_videos_adaptive.py`; tested fps ∈ {4, 8, 12} and found
+  **8 fps optimal for temporal localization specifically**; success criterion
+  **mean relative error < 30 %** of subtask duration.
+  — <https://nvidia-cosmos.github.io/cosmos-cookbook/recipes/post_training/reason1/temporal_localization/post_training.html>
+- Caveat: that <30 % figure comes from a **post-trained** (fine-tuned on MimicGen)
+  model, not a zero-shot guarantee. Must not be quoted as a zero-shot number.
+
+### Serving the fallback (Cosmos Reason 2)
+- Cosmos Reason 2 supports Transformers and vLLM; **`vllm>=0.11.0` recommended**.
+  Documented serving command:
+  ```
+  vllm serve <model> --max-model-len 8192 --gpu-memory-utilization 0.8 \
+    --reasoning-parser qwen3 --media-io-kwargs '{"video": {"num_frames": -1}}' \
+    --enable-prefix-caching --port 8010
+  ```
+  — <https://github.com/nvidia-cosmos/cosmos-reason2>
+- **`--reasoning-parser qwen3` means the model emits a `<think>` block before its
+  answer.** Any output parsing must account for this.
+
+### Local environment (verified by running)
+Python 3.14.6 · `uv` · `docker` (OrbStack) · `ffmpeg` · `git` present.
+**No `gh` CLI.** No NVIDIA GPU on this Mac.
+
+---
+
+## 2. Engineering constraints we must get right
+
+Derived from the verified facts above. These are the things that silently produce
+wrong-but-plausible results, so each is called out before it is written.
+
+**Model interface**
+- Cosmos 3 is a **reasoning model**: it emits a think/answer structure, not bare
+  JSON. Output parsing must extract the answer span first. Naively constraining the
+  whole response to a JSON schema and parsing it wholesale will fail.
+- Serve via the pinned **`vllm/vllm-omni:cosmos3`** image with `--omni`; record the
+  exact digest. Never rely on a floating `latest` tag for a first-try run.
+- **BF16 only.** No fp8 quantisation, despite the flag existing.
+- Timestamps are burned bottom-of-frame; **absolute, video-relative** time so a
+  reported value needs no per-window remapping.
+
+**Sampling & windowing**
+- 4 fps is the documented input rate for reasoning. 8 fps is what NVIDIA's
+  temporal-localisation recipe found optimal. Treat fps as a **measured
+  accuracy/cost knob**, and report the sweep rather than asserting a default.
+- Clamp every model-reported timestamp into the window's real span. A window must
+  never emit an event outside the footage it actually saw.
+
+**Merging across windows**
+- Chained merging must be **bounded**. An unbounded "merge if the gap to the
+  running span is small" rule collapses a dense candidate stream into one giant
+  event, because the running end keeps advancing.
+- Confidence combination must not saturate. If agreement across windows only ever
+  pushes confidence up, everything ends at ~1.0 and the ranking signal the brief
+  asks for stops discriminating.
+
+**Evaluation**
+- Metrics must be computed **per video, then aggregated**. Pooling every
+  prediction and every label into flat lists and matching on the description
+  string lets a prediction from clip A satisfy a label in clip B — and query
+  strings repeat across clips by design. This inflates every number reported.
+- No metric may be reported from a mock/offline path. Mock mode exists to prove
+  the pipeline runs, never to produce numbers.
+
+**Documentation discipline**
+- Every knob documented as a decision must actually be read by the code.
+- Every example output in the README must match what the schema really emits.
+- No hardware, cost or accuracy figure appears in a doc until it has been measured
+  on the box or cited to a primary source.
+
+## 3. Decisions taken
+
+Moved to **[`DECISIONS.md`](DECISIONS.md)** — every choice with its reason, the
+alternatives rejected and why, what would change it, and the reversals kept on the
+record.
+
+Summary of what is settled: `nvidia/Cosmos3-Edge` primary with
+`nvidia/Cosmos-Reason2-8B` as reference and `Qwen/Qwen3-VL-8B-Instruct` as a
+controlled baseline · stock vLLM, not vLLM-Omni · everything in Docker · CLI
+primary · model behind a pluggable adapter · capability probe as a first-class
+component · six dataset sources selected by failure axis · the Cosmos 3 paper
+benchmarks as the one reproduction target.
+
+---
+
+## 4. Open questions
+
+- [ ] **By what mechanism does Cosmos3-Edge localise events in time?** The brief
+      asserts it can "localise events with timestamps when prompted correctly", so
+      the capability is not in question — the *mechanism* is. Test both on the box:
+      (a) timestamps burned into frames, as documented for Cosmos Reason 2, and
+      (b) vLLM's native video input path supplying frame timing. Pick on evidence.
+      Prompt design is a first-class experiment here, given the brief's qualifier.
+- [x] ~~Which AWS instance~~ — **`g7e.2xlarge`** in **`eu-central-1`**: RTX PRO 6000
+      Blackwell, 96 GiB VRAM, 8 vCPU, 64 GiB RAM, 1900 GiB NVMe, **$5.719/hr**
+      (console-verified in Frankfurt; the widely-quoted $3.36 is us-east-1).
+      Blackwell is on NVIDIA's supported list, so the architecture risk is avoided
+      rather than accepted. 150-200 GB gp3 EBS for weights and images, datasets on
+      the ephemeral NVMe. See [`RUNBOOK.md`](RUNBOOK.md) and
+      [`DECISIONS.md §4b`](DECISIONS.md).
+- [ ] **Actual VRAM for the Edge reasoner**, measured on the box. Still unpublished;
+      it decides whether a cheaper 24 GB card would do for Edge-only runs.
+- [x] ~~Does Cosmos-Reason2 run on Ada/Ampere?~~ — **avoided, not answered.**
+      `g7e.2xlarge` is Blackwell, which NVIDIA lists as supported. The question
+      only returns if we fall back to a cheaper Ada instance.
+- [x] ~~G7e availability~~ — **confirmed offered in `eu-central-1`** (console);
+      **not** offered in `eu-west-1`. Bucket and instance must both be Frankfurt.
+- [ ] **AWS vCPU quota** for "Running On-Demand G and VT instances" — needs ≥8 for
+      `g7e.2xlarge`. Availability in the console does not imply quota; confirm the
+      applied value in Service Quotas before launching.
+- [ ] Which vLLM version first shipped `cosmos3_edge`; pin it exactly.
+- [ ] Does Edge need `--hf-overrides` to select the reasoner architecture?
+- [x] ~~VANTAGE-Bench as an eval source~~ — **reversed: accepted** as a
+      supplementary tier. Two of the three original objections did not survive
+      scrutiny. Gated access keeps it out of the reproducible core.
+      See [`DECISIONS.md §6.1`](DECISIONS.md).
+
+- [ ] Optimal fps for Edge: 4 (documented input rate) vs 8 (best in NVIDIA's
+      temporal-localisation recipe, on a different model). Measure, don't assume.
+- [ ] Do we compare against a second model at all, or spend the GPU hours on
+      fps/window sweeps for the primary? The covering email's "a specific model
+      **or group of models**" makes a comparison defensible, and a lone tIoU number
+      is hard to interpret without one.
+- [ ] **Capability matrix not yet written down.** Three tables proposed and agreed
+      in principle: (A) serving preconditions, (B) the brief's three claims per
+      model, (C) localisation decomposed into emits / parseable / in-range /
+      accurate, with a **stub control row** so a `PASS` proves the model rather than
+      the harness. Decision pending: hand-write into this file now, or have
+      `make probe` emit them as JSON and render the markdown so they cannot drift.
+- [x] ~~Rights-clean real footage for R6~~ — **sources chosen**, see
+      [`DATASETS.md`](DATASETS.md). Six sources: synthetic (ours, exact ground
+      truth), **MEVA** (CC BY 4.0, no login, fixed-camera, includes
+      `person_opens_facility_door`), and Roboflow's `supervision` assets
+      (fetch-only, licence unstated). Remaining work is tracked in that file.
+- [ ] **The MEVA slice is one scene from twelve cameras**, not twelve scenes.
+      Good for multi-view comparison, weak as a diverse eval set. Sampling across
+      dates and times would fix it — settle before labelling begins.
+- [ ] **Clips need trimming from ~5 min to the brief's 1-3 min.** Also a cost
+      lever: at 4 fps / 12 s windows / 9 s stride a 300 s clip is ~34 windows per
+      query; trimming to 2 min cuts model calls ~60%.
+- [ ] **Nothing in the eval set has forklifts**, one of the brief's own examples.
+      Needs a separate hunt if warehouse footage matters.
+- [ ] **Ask Roboflow about the `supervision` sample-video licence** — unstated, and
+      the answer may simply be "they are ours, use them".
+
+---
+
+## 5. Tooling — skills
+
+Skills live in `.claude/skills/` **inside this repo and are committed**. Each is
+created when the work that needs it arrives, not before, so it is shaped by real
+use rather than guesswork.
+
+Two were pulled forward by the decision to build the whole ecosystem before
+renting: if the GPU box is meant to do nothing but `git clone` and run, then the
+clone is a first-run test and the session is a checklist — both need to exist
+before the meter starts, not during.
+
+**No agents.** Subagents suit fan-out work where only the conclusion is wanted.
+Here the reasoning is being reviewed step by step, and delegating would hide
+exactly what is under review. The one task that suited fan-out — the licence and
+dataset survey — is done.
+
+| Skill | Job | Trigger | Status |
+|---|---|---|---|
+| **`model-facts`** | Verify any model / framework / dataset / licence claim against primary sources before it enters a doc or a decision. Owns the status vocabulary (`?` / `D` / `B` / measured / `CONFLICT`), the source hierarchy, and the rules that documented-absence is not absence and a self-reported ranking is not third-party evidence | Step 0 | **Created** |
+| **`gpu-runbook`** | Method for working on a metered box: what must be done before renting, the order of operations on the box (cheapest and most diagnostic first), which numbers to capture while it is up, and the rule that a bug reproducible locally is never debugged on a metered machine | Step 3 | **Created** — pulled forward: the ecosystem-before-renting decision makes the box session a checklist to follow, not an improvisation |
+| `cv-eval` | Temporal metrics, the labelling format, clip sourcing and licence checks, per-video metric isolation | Step 4 | Deferred |
+| **`first-run-check`** | Simulate a stranger: fresh clone, README only, no source, no fixing mid-run, timed. Lists the factors that mask a broken first run — warm image caches, files left by earlier commands, environment variables, existing credentials | Before Step 7 | **Created** — pulled forward: cloning onto the GPU box *is* a first run, and debugging it there costs GPU-hours |
+
+---
+
+## 6. Experiment plan
+
+What gets run on the rented AWS GPU, against what, and what each run is for.
+Dataset detail lives in [`DATASETS.md`](DATASETS.md).
+
+### 6.1 Models
+
+R3 requires open weights, video input, temporal localisation, and a context limit
+to work around. All four are served by **stock vLLM** on the same box, one at a
+time, so only `MODEL` changes between runs.
+
+| Model | Size | Role | Temporal localisation | Access |
+|---|---|---|---|---|
+| **`nvidia/Cosmos3-Edge`** | 4B | **Primary** — the brief's recommendation | **`B`** — asserted by the brief, absent from the model card. *This is what we test* | OpenMDW 1.1, **ungated** |
+| **`nvidia/Cosmos-Reason2-8B`** | 8B | **Reference** — its model card documents the timestamp mechanism, so it proves the approach works independently of Edge | **`D`** | NVIDIA Open Model License, **gated** |
+| `nvidia/Cosmos-Reason2-2B` | 2B | Size-scaling point, 24 GB | `D` family | gated |
+| `Qwen/Qwen3-VL-8B-Instruct` | 8B | **Controlled baseline** — see below | not claimed | open |
+
+**Why the Qwen baseline earns its GPU hours.** Cosmos-Reason2-8B's base model *is*
+Qwen3-VL-8B-Instruct. Same architecture, same parameter count; the only difference
+is NVIDIA's physical-AI post-training. Running both isolates that post-training and
+answers a question we have not found published anywhere: **does it actually buy
+anything for temporal localisation, or would the base model do?** That is a
+controlled experiment rather than a leaderboard, and it costs one extra model load.
+
+**On "a context limit you have to work around".** A 256K context appears to
+dissolve the problem. It does not. At 4 fps a 3-minute clip is ~720 frames, and
+each frame costs hundreds to thousands of vision tokens — so the binding limit is
+**frames per call**, not tokens of text. The exact figure per model is `UNVERIFIED`
+and is measured on the box; it is what sets window length, and therefore the whole
+long-video strategy.
+
+### 6.2 Reproduction targets
+
+Two candidates. They validate different things and only one is a priority.
+
+| Source | Published numbers | Reproducible locally | Validates | Priority |
+|---|---|---|---|---|
+| **Cosmos 3 technical report** — arXiv 2606.02800 | **Cosmos3-Edge**: CVBench 84.9 · MMBench-Dev 76.6 · RealWorldQA 73.3 · VideoPhy2 40.3 | **Yes** — public ground truth | **That we deployed Edge correctly** | **Do it** |
+| NVIDIA temporal-localisation recipe | Zero-shot mean relative error 52.0 / 61.3 / 68.45 % on MimicGen | Yes, but the recipe is **Cosmos-Reason1** (Qwen-VL based) on 7-second clips | Prompt design; an external control on the harness | Harvest the prompt; full rerun optional |
+
+**Why the first one matters more than it looks.** It catches the failure most
+likely to pass unnoticed: a serving bug. Wrong preprocessing, wrong frame handling
+or wrong precision produces a model that runs, answers plausibly, and scores badly
+— and we would spend the week concluding "Edge cannot localise events" when the
+real fault was ours. Hitting ~76.6 on MMBench-Dev says the deployment is sound
+before we trust a single temporal number.
+
+**Why the second is demoted.** Its two benefits are separable and mostly available
+for free. The prompt can simply be read and adapted — reproducing the numbers is
+not a prerequisite for using it. Harness validation is already covered by synthetic
+clips with exact constructed ground truth. What remains is that the control would
+be *external* rather than self-made, which is worth something but not days, on
+7-second robot-manipulation footage, against a one-week deadline.
+
+**Not a reproduction target: VANTAGE-Bench.** Its ground truth is withheld and
+scoring is server-side, so its leaderboard numbers cannot be reproduced locally by
+any means. It stays in as a dataset we hand-label ourselves. Its published scores —
+Cosmos3-Super 63.01, Cosmos3-Nano 60.67, Cosmos-Reason2-8B 54.18 — are context,
+not a target.
+
+### 6.3 The run matrix
+
+The same hand-labelled clips run against every model, so **only clip count drives
+cost**; adding a model is one more pass, adding a dataset is free.
+
+```
+                 synthetic   MEVA   VANTAGE   supervision   ComplexVAD/  Assembly101
+                                                             StreetScene
+Cosmos3-Edge         .        .        .           .             .            .
+Cosmos-Reason2-8B    .        .        .           .             .            .
+Cosmos-Reason2-2B    .        .        .           .             .            .
+Qwen3-VL-8B          .        .        .           .             .            .
+```
+
+Reported per cell: tIoU metrics (`R@1@{0.3,0.5,0.7}`, mean tIoU, precision/recall
+@0.5), mean relative error for comparability with NVIDIA's metric, plus latency and
+cost per video-minute.
+
+### 6.4 Order of operations on the box
+
+1. **Serve Edge, validate the deployment** against the paper benchmarks (§6.2)
+2. **Capability probe** — does Edge ground events in time, by which mechanism, to
+   what precision floor
+3. **Measure** VRAM and frames-per-call; set window length from the real number
+4. **Sweep** fps and window/stride on a subset
+5. **Full matrix** across models and clips
+6. Tear down
+
+Steps 1 and 2 gate everything after them. If step 2 fails for Edge, the adapter
+switches to Cosmos-Reason2-8B and the matrix is unchanged.
+
+## 7. Steps
+
+| # | Step | Status |
+|---|---|---|
+| 0 | Verify the model: existence, IDs, licence, VRAM, serving stack, localisation mechanism | **Done** — §1 |
+| 1 | Planning and design documents | **Done** |
+| 2a | Docker + Make scaffolding, uv lockfile, synthetic clip generator | **Done** |
+| 2b | Schema, config loading, typed errors, validation stages | **Done** — `schema.py`, `config.py`, `errors.py` |
+| 2c | `decode`: sample frames, burn absolute timestamps, inspect legibility | **Done** — verified by eye at 640x360; overlay occlusion measured |
+| 2d | `windows`: plan, assign frames, frame cap, cost estimate | **Done** — coverage and call count verified |
+| 2e | `extract` + model adapter + stub/vllm/replay backends | **Done** — reasoning-block parsing and time reconciliation verified |
+| 2f | `merge`: bounded chaining, non-saturating score, partial events | **Done** — 200 candidates -> 2 events; confidence 0.582/0.815/0.960/0.970 |
+| 2g | CLI wiring, `make demo` end to end | **Done** — valid JSON, no GPU |
+| 2h | Fake vLLM endpoint + scenario harness | **Done** — 10 scenarios, verified to detect injected regressions |
+| 2i | Capability probe harness (`make probe`) | **Done** — runs against the fake endpoint; needs a real model for a real answer |
+| 2j | Metrics + eval harness (`make eval`, `make eval-control`) | **Done** — per-video isolation and control exclusion enforced in code and verified |
+| 2k | Clip preparation and data verification (`make prepare-clips`, `make verify-data`) | **Done** — found one clip that did not show what its label claimed |
+| 2l | Clean-clone check: `git clone` into a fresh directory, README only | **Done** — 79 s to first events JSON; found the default-branch blocker below |
+| 3 | **On the GPU**: serve the model, validate the deployment against the paper benchmarks, run the probe, record every exchange for replay | Not started — harness ready |
+| 4 | Real eval footage | **In progress** — 6 clips fetched with declared activities covering the brief's own examples; trim plan and candidate worksheet generated; **hand confirmation outstanding**. `prepare-clips` still reads the wrong source and ignores the trim plan |
+| 5 | Measured runs: model x clip matrix, fps/window sweep, failure analysis | Not started |
+| 6 | README results, leaderboard and figures from measured numbers only | Not started |
+| 7 | Final first-run rehearsal, then submit | Not started |
+
+### Clean-clone check — result
+
+Run 2026-09-10 from a fresh `git clone` into a directory that had never held this
+project, following only the README, with no fixing mid-run.
+
+| Step | Time | Result |
+|---|---|---|
+| `make preflight` | — | pass |
+| `make build` | 73 s | pass |
+| `make data` | 5 s | pass — 6 clips with exact ground truth |
+| `make demo` | 1 s | pass — valid events JSON, 2 model calls |
+| `make verify-data` | 3 s | pass — labels sound, every clip shows what it claims |
+| `make probe` | 3 s | pass |
+| `make plan` | 1 s | pass |
+| `make frames` | 0 s | pass |
+| **Total to first events JSON** | **79 s** | |
+
+**Two honest caveats.** The 73 s build ran with a warm Docker layer cache; a cold
+host also pulls the base image and apt packages, realistically 3-5 minutes. And
+`make fake-test` and `make run` on a custom video have still not been exercised
+from clean.
+
+**The check also found the blocker below**, which no test could have.
+
+**Why step 4 does not block step 3.** The probe measures a *precision floor*, which
+requires ground truth with zero labelling error — so it runs on synthetic clips by
+design. Real footage is needed for the eval, not the probe. Doing step 4 first would
+also risk labelling for a mechanism the probe may show does not work.
+
+### Infrastructure, done in parallel
+
+| Item | Status |
+|---|---|
+| S3 staging bucket (`eu-central-1`) | **Created** — name lives in gitignored `make/local.mk`, not in the repo |
+| Datasets fetched locally: synthetic 6, MEVA 12, supervision 3 | **Done** — 1.5 GB |
+| Staged to S3 | **Done** — 24 objects, verified |
+| `g7e.2xlarge` availability in `eu-central-1` | **Confirmed** |
+| vCPU quota ≥8 for G instances | **BLOCKED — quota is 0, increase requested** |
+| Instance launched | Blocked on the above |
+
+**GPU access is blocked by two stacked issues, found in this order.**
+
+1. **Account verification** for `eu-central-1` — an AWS-side hold on launching
+   resources in the region. Cleared on its own.
+2. **vCPU quota of zero.** Revealed only once verification cleared: G, P, X and Trn
+   families are all at 0 on this account, while Standard sits at 256 and F at 64.
+   GPU quotas are simply never granted by default.
+
+| Quota | Code | Was | Requested | Status |
+|---|---|---|---|---|
+| Running On-Demand G and VT instances | `L-DB2E81BA` | 0 | 16 | PENDING |
+| All G and VT Spot Instance Requests | `L-3819A6DF` | 0 | 16 | PENDING |
+
+Requested **16 rather than 8** so `g7e.4xlarge` needs no second request; spot as
+well as on-demand because it is the same review and 60-70% cheaper, and this
+workload is re-runnable measurement where an interruption costs time, not results.
+
+Zero-to-nonzero GPU requests are a human review — hours, sometimes a day or two.
+This was flagged from the start as the one blocker no local preparation could
+shorten, and it is the only thing now standing between the harness and a measured
+result.
+
+**Check status:**
+```
+aws service-quotas list-requested-service-quota-change-history \
+  --service-code ec2 --region eu-central-1 --no-cli-pager --output json \
+  | jq -r '.RequestedQuotas[] | [.Status, .DesiredValue, .QuotaName] | @tsv'
+```
+
+
+---
+
+## 8. Log
+
+- **2026-09-09** — Ran Step 0. Confirmed `nvidia/Cosmos3-Edge` exists (correct repo
+  ID has no hyphens), is OpenMDW-1.1 licensed and ungated, and is natively served by
+  **stock vLLM** as `Cosmos3EdgeForConditionalGeneration` — vLLM-Omni is only needed
+  for the generator tower, which we do not use. Confirmed the timestamp-overlay
+  mechanism is real and documented for Cosmos Reason 2 and Cosmos 3, but **not
+  stated on the Edge card** — logged as the top risk. Found VANTAGE-Bench, whose
+  Temporal Localization task matches this assignment, as a candidate eval source.
+  Found Roboflow's own published Cosmos 3 evaluation and recorded its stated
+  limitations as targets for our failure analysis.
+- **2026-09-09 (later)** — Reversed the VANTAGE-Bench rejection: two of the three
+  original reasons did not survive scrutiny, and download is permitted by its terms.
+  Accepted as a supplementary tier for the warehouse/transportation domain nothing
+  else covers. Added ComplexVAD, Street Scene and Assembly101 as further sources.
+  Established that the brief names no dataset, so clips are selected by **failure
+  axis** rather than to match its three example phrases. Settled the model set at
+  four, including `Qwen/Qwen3-VL-8B-Instruct` as a controlled baseline — it is the
+  base model Cosmos-Reason2-8B was post-trained from. Demoted the MimicGen
+  reproduction to optional and adopted the Cosmos 3 paper benchmarks instead, as a
+  check that the deployment itself is correct. Wrote `DECISIONS.md`, `DATASETS.md`
+  and the README.
+
+- **2026-09-09 (afternoon)** — Completed increment 2a: Docker, compose, a `make/`
+  directory of includes, uv with a committed lockfile, preflight scripts and the
+  synthetic clip generator. Five bugs surfaced only by running it, including
+  `.ONESHELL` being silently ignored on macOS's GNU Make 3.81 and a `data/` bind
+  mount that compose read as a named volume.
+  Fetched all three local dataset sources and staged 1.5 GB to
+  the staging bucket in `eu-central-1`. A region check now resolves
+  the bucket's true region rather than trusting `AWS_REGION`, after an inherited
+  environment variable silently pointed transfers at `eu-west-1` — S3 redirects
+  rather than failing, so the only symptom would have been slow, cross-region-billed
+  transfers.
+  Chose `g7e.2xlarge` (Blackwell) over `g6e.xlarge` (Ada) to avoid the
+  unsupported-architecture risk, and corrected the price to the Frankfurt rate of
+  $5.719/hr after finding the quoted $3.36 was us-east-1.
+  Verified the MEVA slice with `ffprobe`: filename-encoded durations are accurate,
+  and one clip is 352x240 among eleven 1080p ones — kept deliberately as a
+  low-resolution failure axis rather than discarded.
+
+- **2026-09-10** — Built the two things the GPU session exists to run. `make probe`
+  characterises a model as a single window per clip, so windowing and merging are
+  removed and the remaining error is the model's; `make eval` reports tIoU metrics,
+  NVIDIA's relative error, false-positive rate and a per-axis breakdown, with
+  per-`(video, description)` isolation enforced in code.
+  Found **information leakage** in MEVA's curated example clips: they are rendered
+  with the activity label burned into the picture, so a model can read the answer.
+  Prevention is impossible, so they are contained as a `positive_control` ceiling
+  test, with exclusion from headline metrics enforced and verified — a deliberately
+  contaminated file of 9 truths produced a headline over 7.
+  Established that the earlier MEVA fetch was **blind, not that MEVA is poor**: only
+  ~22-27 of 328 released hours are annotated, and the corpus exists for a challenge
+  about finding rare activity in mostly-empty footage. Selection is now by activity.
+  Found that **`machine-stop.mp4` did not show what its label claimed** — an axis
+  name mismatch meant the renderer never drew the machine, so the clip showed a
+  moving box during the window labelled "the machine stops moving". It had passed
+  through the pipeline, the probe and the eval without complaint. `make verify-data`
+  now checks every clip against its own ground truth, and validates `labels.json`.
+  Two bugs in that checker itself accused correct clips before it could be trusted.
+
+- **2026-09-10 (later)** — Ran the first clean-clone check. The code passes from a
+  fresh clone in 79 s to first events JSON, every README command working. The check
+  also found something no test could: `git status` reporting `dev...origin/dev`
+  clean and in sync says nothing about what a *clone* receives. The audits check
+  what is in the files, not what is handed to someone starting fresh.
+
+- **2026-09-10 (afternoon)** — MEVA selection by activity finally produced usable
+  footage: six clips whose annotations declare `Vehicle_Reversing`,
+  `Vehicle_Stopping`, `Open_Facility_Door` and `Enter_Facility` — the brief's own
+  three examples. Two bugs on the way: video filenames carry a release suffix the
+  annotation filenames lack, and the resulting download failures were swallowed so
+  the script exited 0 having fetched nothing.
+  Added `make screen-clips`, an objective motion measure for "does anything happen
+  here", and recorded its four blind spots rather than presenting it as reliable —
+  it under-reads slow events, short events, and anything outside its sampling
+  window, and cannot distinguish a busy clip from one containing your event.
+  Added `make meva-plan`: annotations locate events and compute a trim window that
+  maximises whole events captured, because one clip's events sit at 45s, 64s, 74s
+  and 268s and a naive trim would silently drop the last. Labels remain ours, marked
+  `confirmed_by_hand: false` until checked.
+  Moved the S3 bucket name out of the repo into a gitignored `make/local.mk`, ahead
+  of making the repository public.
+
+- **2026-09-10 (GPU session 1)** — First contact with real hardware.
+  `g7e.2xlarge` confirmed: RTX PRO 6000 Blackwell, **97,887 MiB**, driver
+  595.91.07, CUDA 13.2 — and `preflight-gpu` passed, retiring the
+  unsupported-architecture risk that drove the instance choice. The AMI's console
+  description omitted G7, but its login banner lists it.
+  First flag failure: `--media-io-kwargs`, carried from the Cosmos3-Nano recipe,
+  broke on quoting **and** configures a vLLM code path this system never uses —
+  we decode and timestamp frames ourselves rather than handing vLLM a video file.
+  Removed rather than re-quoted.
+  **Known limitation this creates:** the probe now tests only the burned-overlay
+  mechanism. Testing vLLM's native video-timing path would need a backend that
+  sends video files instead of frames. Worth building only if the overlay
+  mechanism fails.
+
+- **2026-09-10 (labelling)** — The eval set was invalid, and finding out cost a
+  full labelling pass. Fourteen candidates were located by MEVA's annotations and
+  reviewed on contact sheets; **eight were unlabellable**, `hospital.G301` lost
+  both its events, and what survived was three events across two cameras pointed
+  at the same building.
+
+  **Root cause was in our own selection, not the footage.** Clips were chosen
+  because their annotation *declared an activity*. Nothing asked how large the
+  actor was in frame, and the annotation is silent on it. MEVA publishes
+  `.geom.yml` — per-frame actor boxes — beside `.activities.yml`, and the fetch
+  had been discarding it with `awk '/activities\.yml$/'`. It answers the question
+  directly for 5–70 KB per clip against 56–203 MB per video.
+
+  Median actor height ranks **monotonically with six hand verdicts reached before
+  the measurement existed** (694/295/267 px labellable, 121/41/38 px not), so
+  `scripts/screen_geom.py` is calibrated rather than guessed. It **ranks and never
+  rejects**: a false positive costs ten seconds on a sheet, a false negative is
+  silent, and `G329` was nearly lost that way already. Across the full 64-clip
+  corpus it returns 17 clips in the "good" band and located `Vehicle_Reversing` at
+  232 px — the brief's "a forklift reverses", unlabellable at 41 px on `G328`. We
+  had the right dataset and the wrong camera.
+
+  **Second finding: contact sheets are biased late on event starts.** Twice a
+  sheet reading was overturned by zooming into the source, both times mine and
+  both times too late — a sheet shows the door *panel* swinging long after the
+  actor began working the knob. Sheets locate; they are not evidence about a
+  boundary. Event sheets now size tiles from measured actor height (~150 px on the
+  sheet regardless of camera distance), and MEVA's boundary times are kept
+  verbatim where a hand reading disagrees.
+
+  **Five tooling defects fixed, two of which would have corrupted the labels:**
+  `CLIP_LIMIT ?= 6` silently truncated the sorted source list exactly where newly
+  fetched clips land; `prepare_clips.py` rewrote the labels template wholesale, so
+  any later re-run would have destroyed every hand judgement with `git status`
+  reporting nothing wrong. It now merges — judged rows are carried verbatim,
+  pending rows refresh so upstream fixes reach the labeller, and `--retrim`
+  refuses rather than warns. Also: hour-boundary clips are filed under their END
+  hour in S3 (2 of 6 shortlisted clips 404'd), `Sit_Down`/`Stand_Up` were missing
+  from the phrasing map and reached the labeller as class names, and sheet
+  filenames omitted the date so two clips from one camera were indistinguishable.
+
+  **Result: 8 clips, 120 s each, 15 hand-confirmed events**, covering all three of
+  the brief's worked examples, durations 1.4–13.6 s. `G328`/`G336`/`G301` are kept
+  unlabelled as measured negatives and as a hallucination probe — MEVA declares
+  events there that no human can verify, so asking the model for them tests
+  whether it invents confident localisations when the evidence is absent.
+
+  Still outstanding, all on GPU: re-run the probe (current 80 % / 3.5 s figures
+  were measured through the broken JSON parser and are not reportable), run the
+  eval on these labels, run the hallucination probe, fill the README tables.
+
+- **2026-09-10 (GPU session 2 — the measured run)** — `nvidia/Cosmos3-Edge` on an
+  NVIDIA L4 (23,034 MiB, driver 595.91.07) via vLLM 0.29.0. The architecture
+  resolved as `Cosmos3EdgeForConditionalGeneration` on Ada, retiring the last
+  hardware risk: the version pin was about vLLM, not about Blackwell.
+
+  **Hardware facts, previously `UNVERIFIED`:** encoder cache budget **24,300
+  tokens** — the real ceiling on frames per window, against the 48 we had chosen
+  arbitrarily. GPU KV cache 116,640 tokens, max concurrency 3.56x. Weights and
+  non-torch memory 4.97 GiB of 22.04 GiB, so the 4B model uses under a quarter of
+  the card. Cold start ~3.5 minutes.
+
+  **Capability probe, synthetic:** `overlay` answered 100% of cases at 3.50 s
+  median boundary error; `native` 80% at 3.11 s; `terse` 40% at 51.6 s per call.
+  `overlay` chosen for the eval over the probe's own verdict, which ranked on
+  median error alone and so rewarded `native` for declining the hardest case —
+  a flaw in `verdict()` worth fixing.
+
+  **Eval, 1,352 calls:** R@1 0.000 at every threshold, mean tIoU 0.002,
+  false-positive rate 0.802, mean relative error 3.151 against NVIDIA's <0.30
+  target. 268 s of compute per video-minute at 13 descriptions per clip.
+
+  **The finding.** Across 104 (clip, description) pairs the model reported an
+  event on 47% of the 15 where one existed and 39% of the 89 where none did. It
+  cannot discriminate presence. A second probe — single window, event guaranteed
+  present and centred, real footage — closed the attribution: it answered 13% of
+  the time, against 100% on synthetic. So it localises when told an event is
+  there, and cannot establish the "given".
+
+  **Two of our own defects inflated the picture, both now fixed.** 13 of 81
+  predictions carried confidence 0.485, which is our own 0.5 default through the
+  merge's noisy-OR — an invented number shaped like a measurement. And 57% of
+  predictions were degenerate: 13 zero-length points, 33 spanning essentially the
+  whole window. Two-stage extraction (yes/no first, localise only on yes,
+  confidence from the token logprob) removes both. On a 2-clip subsample it
+  produced 0 degenerate spans and 10 distinct confidence values — and the **same
+  prediction count**, so the presence failure is the model's, not the harness's.
+
+  **A hypothesis raised and withdrawn.** The two-stage subsample showed 11 of 12
+  predictions landing in the last 20% of their window regardless of the question,
+  which would have meant the burned-in timestamp was not grounding the model at
+  all. Checked against all 81 single-stage predictions: mean position 40%, spread
+  across every quartile. The clustering came from a prompt written that afternoon,
+  not from the model. Recorded because it was one message away from being reported
+  as a headline finding.
+
+  **External corroboration.** Roboflow's published Cosmos 3 evaluation finds it
+  strong on slow-changing states in isolated regions and weak on fast motion and
+  small objects, and reports that splitting inference per region of interest beat
+  one combined call. Our configuration — whole frame, motion-event queries, actors
+  at 26-787 px — is their worst case on every axis. The near-zero result is an
+  independent reproduction of the model's own evaluators' caveats.
+
+  **Not measured:** three of the four planned models never ran, so the
+  Qwen-versus-Reason2 comparison isolating NVIDIA's post-training is still open;
+  and `eval-control`, the ceiling test on clips with the activity name burned into
+  the frame, was not run — it is what would separate "cannot recognise events"
+  from "cannot see at this resolution".
+
+  Cost: ~$4 of GPU at a verified $1.22249/hr on `g6.2xlarge`.
+
+- **2026-09-10 (model sweep)** — Built the multi-model path and got one more model
+  measured. `models.tsv` carries the registry; `make model-sweep` serves each in
+  turn and writes per-model outputs; `make compare` prints the leaderboard.
+
+  **Cosmos-Reason2-2B: 20% emit, 9.50 s median error** on the synthetic probe,
+  against Cosmos3-Edge's 100% and 3.50 s at the same prompt and sampling rate.
+  This was the hypothesis most worth testing — Reason2's card documents the
+  burned-in timestamp mechanism where Edge's does not — and it fails. The model
+  the technique is documented for did worse than the one it isn't. vLLM resolves
+  Reason2-2B as `Qwen3VLForConditionalGeneration`, so that is a second
+  architecture failing, not just a second checkpoint.
+
+  Three variables move at once (4B vs 2B, Nemotron-H vs Qwen3-VL, documented vs
+  not), so it is a data point rather than a controlled comparison. What it rules
+  out is the comfortable explanation: the failure is not a quirk of the model the
+  brief happened to name.
+
+  **The 8B models could not run.** Qwen3-VL-8B loaded 16.65 GiB of weights on the
+  L4's 22.04 GiB usable, leaving 0.65 GiB for KV cache against the 2.25 GiB a
+  16384 context needs; vLLM put the ceiling at 4720 tokens, too small for a
+  48-frame window. Running them at fewer frames would have broken the very
+  comparison they exist for, so they are marked as needing ~40 GiB and skipped.
+  The Qwen-versus-Reason2 question stays open.
+
+  **Four defects found by using the tooling**, all the same shape — a check that
+  looked like it verified something and did not:
+  - `min_vram_gib` was written from the datasheet (24) and compared against what
+    `nvidia-smi` reports (22), so the sweep would have skipped Cosmos3-Edge, a
+    model that had already completed a 1352-call eval on that exact card.
+  - The probe target never passed `--model`, so it read `config.yaml` and the
+    identity guard refused: "endpoint is serving Cosmos-Reason2-2B, but MODEL is
+    Cosmos3-Edge". That guard prevented a mislabelled row in the leaderboard.
+  - The sweep summary counted a model as "ran" when a stage had errored.
+  - `compare_models.py` printed each model's best prompt without naming it, so
+    Edge-on-`native` sat beside Reason2-on-`overlay` looking like a like-for-like
+    comparison. It now names the prompt and warns when rows differ.
+
+  Also: `docker-compose.yml` defaulted to vLLM v0.21.0 when `VLLM_IMAGE` was
+  absent — the one version measured as unable to load this model. Any invocation
+  not going through make would pull 10 GB and then fail.
+
+  Cost: ~$14 of GPU across the day, at a verified $1.22249/hr.
+
+- **2026-09-10 (Approach 2)** — Approach 1 is a measured dead end, and its failure
+  was specific enough to point somewhere: the model can time an event it is told
+  is present and cannot establish presence. So Approach 2 stops asking it to
+  report a time or decide anything, and uses it as a noisy sensor sampled over
+  time.
+
+  Poll a closed-set state question per timestep, ask in **both option orders and
+  average**, take confidence from the token logprobs, and detect the event as a
+  sustained departure from the clip's own baseline.
+
+  **Results: three hits at tIoU 0.46, 0.26 and 0.54 (mean 0.42), one clean true
+  negative, two misses.** Approach 1's mean tIoU across its entire eval was 0.002.
+
+  **The scope rule:** works when the state is a binary configuration of an object
+  that visibly changes shape; fails on presence and on motion. Decidable from the
+  description before any GPU time is spent. Two of the brief's three worked
+  examples are motion states and fall outside it.
+
+  **Four errors of mine, each caught by a control rather than by reasoning:**
+  - The first state result was pure option-order bias. It answered "(b)" whichever
+    label sat second, and the probability curve rose at the same moment in both
+    orderings — so the apparent detection was positional. The swap test caught it;
+    nothing about the first run looked wrong.
+  - Cropping "did not help" because the crop ran after the frame had already been
+    downscaled to 640px, so the subject occupied the same pixels in a smaller
+    image with its context removed. An operation in the wrong order produced a
+    clean, plausible negative.
+  - `guided_choice` had been removed from vLLM in v0.12.0 and we are on 0.29. An
+    unrecognised `extra_body` key is silently ignored, so the output was never
+    constrained — in the probe *and* in the two-stage detector shipped earlier.
+  - "Large object" was the wrong explanation for why doors work. A car door
+    succeeds at 322 px where a person in a doorway fails at 295 px.
+
+  **Not done:** Approach 2 is a probe script, not integrated behind `find_events`,
+  not run across the full eval set, and its state pairs are hand-written rather
+  than derived from the description.
+
+- **2026-09-10 (four framings, and the one that mattered)** — Kept pushing
+  Approach 2 and ended up somewhere more useful than another score.
+
+  **Two scope rules proposed and falsified.** "Binary configurations work,
+  presence and motion fail" died on `G423` — standing versus sitting is a binary
+  configuration of a visible person and produced nothing. "Doors work" died on
+  `G340` — a car door that did not. Actor size, object size and object class were
+  each contradicted by a later test. Three detections is not a rule.
+
+  **Pairwise comparison: chance.** Asking which of two frame sequences contains
+  the change came back flat at 0.50, range 0.05 and 0.01, on a known hit and a
+  known miss. The diagnosis is the finding: both sequences go in one call with
+  text markers, and the model does not bind images to them. It cannot reason over
+  grouped image sequences within a single prompt.
+
+  **Reason-then-classify: the perception is there.** Every probe until this one
+  capped generation at 1-4 tokens and read a logprob — a reasoning model used as a
+  one-token classifier. Asked to describe first, it returned "the door is closed in
+  all frames" at t=2, "a person is opening the door" at t=4, "the door is open in
+  some frames, showing a person inside" at t=6, and "closed" at t=8. Against a
+  label of 3.0-5.7s that is correct at every timestep.
+
+  Four framings had been discarding that. Two defects sat between the perception
+  and the score, both ours: "describe the door" asks for appearance and got colour,
+  handle and frame, so the classifier scored +0.91 for "open" on text saying
+  "closed in most frames"; and the reasoning block was concatenated with the
+  answer, so the classifier read the model thinking aloud. Both fixed. Whether the
+  fix recovers the signal end to end is NOT yet measured.
+
+  The same output explains the `G423` miss without a new hypothesis: it describes
+  "a person standing near a table in the hallway" in a scene with several people.
+  Ambiguous subject, so the question was never well posed.
+
+  The lesson worth carrying: four negative results were reported before anyone
+  looked at what the model actually said. The moment we printed its own words, the
+  diagnosis took one reading.
+
+- **2026-09-10 (Approach 3 — caption, parse, derive)** — Followed the
+  reason-then-classify finding to its conclusion and arrived at a design with no
+  forced choice, no logprobs and no threshold in it. Every failure of the day
+  traced back to one of those three.
+
+  Caption each timestep free-form, read the state out of the model's own words with
+  string matching, and take the event to be the transition between consecutive
+  states.
+
+  **Result on `admin.G326`** (label 3.0-5.7s, 1s steps): closed through t=4, open
+  t=6-8, closed from t=9. Last closed at t=5, first open at t=6, so the transition
+  sits at t~5.5s -- **inside the label** -- and the door returning to closed at t=9
+  matches the contact sheet independently. Agreement of about 0.3s, from a model
+  whose best synthetic boundary error was 3.5s and which under Approach 1 could not
+  answer on real footage at all.
+
+  **Why the parse is not a model call.** It was. Order-averaging that text
+  classifier drove every score to exactly 0.00 -- the signature of choosing purely
+  by position, since always answering "(b)" averages to 0.5/0.5 under reversal. It
+  never read the text at all. The image task kept a weak signal under the same
+  treatment, so the blindness is specific to text classification.
+
+  **Failure mode recorded:** at t=5 the description reads "The door starts in an
+  open state and closes across the frames" -- the change is detected at exactly the
+  right moment with its direction reversed. Seeing a change and getting the sign
+  wrong is more tractable than not seeing it.
+
+  **Scoring must change with the method.** Interval tIoU compares a state interval
+  ("when was it open", 6-9s) against an act label ("when did it open", 3.0-5.7s)
+  and understates the result -- which is why state polling scored 0.26-0.55 while
+  being far closer than that suggests. The right measure is the transition instant
+  against the label's span.
+
+  **Not done:** one clip, one question. Running across all 15 labelled events with
+  transition scoring is the number that belongs in the README and does not exist.
+
+- **2026-09-11 (Approach 3 scored)** — `run_transitions.py` runs the
+  caption-parse-derive timeline around every labelled event and scores the
+  transition instant against the label's span. 1s steps, 2s spans, 6s padding.
+
+  **6 of 10 scoreable events hit.** Two of those — `G329` and `G340` — are clips no
+  state-polling framing could touch, so this is a different method rather than the
+  same one with a better score.
+
+  Misses, each with a different cause: `G300` "gets out of a vehicle" landed 0.3s
+  outside the label, which is below the 1s step resolution and is a scoring
+  convention rather than a failure; `G423` sit and stand failed on an **ambiguous
+  subject** -- the caption reads "a person standing near a table in the hallway" in
+  a scene with several people; `G300` "vehicle stops moving" produced no transition
+  at all, consistent with every framing tried today failing on motion.
+
+  **Five of fifteen labelled events are not scoreable**, because no binary state
+  pair expresses them -- including "a vehicle reverses", the brief's own forklift
+  analogue. The denominator of 10 already encodes that.
+
+  **There is no held-out set, and the write-up now says so.** `G326`, `G329`,
+  `G423`, `G300` and `G340` were each used to develop a prompt, a threshold or a
+  state pair before being scored. `G421` is the only clip that never influenced a
+  decision and it has no state pair. The states.json mappings are hand-written by
+  someone who had seen which framings worked; the 1s step, 2s span and the earlier
+  0.10 margin were all chosen by looking at `G326`. A post-hoc split does not fix
+  that -- the knowledge is already in the design. More labelled clips, held back
+  and scored once, is the only fix.
+
+  Also: the system still needs a human to turn a client's sentence into a state
+  pair. That is one cheap text call and is not built.
+
+- **2026-09-11 (the boundary, stated)** — Consolidated Approach 3's limitations
+  into one statement rather than leaving them scattered, because they all follow
+  from a single fact: the primitive is a persistent binary property of one object.
+
+  Sorting the labelled events by the SHAPE of the request rather than by outcome:
+  object configuration works (6 of 6 door events); actor posture is expressible but
+  fails when several people are present; motion, relations between actors and
+  compound events do not fit the primitive at all.
+
+  Motion has failed under every framing tried -- event queries, state polling,
+  pairwise comparison, captions. A 2-second window shows position, not velocity.
+  Relations are worse: "someone hands an object to another person" has no object
+  whose binary property changes, so no prompt work rescues it.
+
+  Two of the brief's three worked examples -- "a forklift reverses" and "the machine
+  stops moving" -- are motion, and fall outside.
+
+  Also recorded as boundaries rather than bugs: multi-actor scenes need spatial
+  disambiguation the client's sentence does not contain; the state pairs are
+  hand-written and auto-derivation would hit the same wall; resolution equals the
+  step size; there is no held-out set.
+
+  The honest headline: the method converts a class of event-detection problems into
+  classification the model can do, and that class is narrower than what a client
+  would naturally ask. Being able to say which is which from the sentence alone,
+  before spending anything, is the part worth having.
+
+- **2026-09-11 (final transition run, and partial events)** — 7 of 10 events show a
+  transition within the polling resolution, 5 of 10 strictly inside the label.
+  Three runs of the same command gave identical output and a poll-by-poll diff of
+  two was 133/133 identical in both caption and parsed state, so the pipeline is
+  reproducible given the same call sequence.
+
+  **Partial-event reporting works and is read off the boundary state**, which is
+  the one place Approach 3 is architecturally stronger than Approach 1: the latter
+  could only infer partiality from a merged span touching a window edge. Two events
+  began already in the target state, three ended still in it.
+
+  **A diagnostic arrived that we did not design for.** Two failures that both
+  printed "no transition" are now distinguishable: both boundary flags plus no
+  transition means the model reported ONE state across the whole span, whereas no
+  flags means the target state never occurred. All three motion and posture misses
+  are in the first bucket and all three are multi-actor scenes -- "vehicle stops
+  moving" reported stationary throughout a car park of parked cars, "stands up"
+  reported standing while describing "a person near a table" in a room with several
+  people.
+
+  **That softens the earlier claim that motion is unreadable.** Those results are
+  equally consistent with subject ambiguity. Separating the two needs a motion event
+  with an unambiguous subject, which the labelled set does not contain. The docs
+  previously stated the motion conclusion more strongly than the evidence supports
+  and have been corrected.
+
+  Known display bug: an event can print HIT with an instant outside the label,
+  because the mark is computed over all transitions while the printed instant is
+  the earliest within tolerance. The count is right, the number beside it can
+  mislead.
+
+  Instance stopped. All results copied off, including 133 captions per run -- any
+  future question about why an event missed can be answered by reading rather than
+  by renting a GPU.
+
+- **2026-09-11 (the comparison, measured)** — Approach 3 scored across four
+  labelled clips by the harness that scored Approach 1: **mean tIoU 0.000 ->
+  0.292**, R@1>=0.3 0.000 -> 0.375, recall@0.5 0.000 -> 0.250. On the descriptions
+  it accepts, 0.334 and 0.429. 1,904 calls, 2h28m, $0.377 per video-minute.
+
+  R@1>=0.7 is 0.000 for both, which is the ~3s precision floor from the capability
+  probe showing through — a 2.7-second event cannot reach 70% overlap when
+  boundaries carry seconds of error.
+
+  **The weakness is precision: 153 predictions for 8 truths.** But sweeping a
+  threshold over the confidence we added that morning, at no GPU cost: at 0.8,
+  **35 predictions survive and recall, R@1 and mean tIoU are unchanged**. 77%
+  discarded for nothing. At 0.9 it breaks. Approach 1's confidence could not do
+  this at all — 48 of its 81 values were constants from our own merge code. This
+  is the first evidence `agreement x sharpness x coverage` ranks anything.
+
+  **The ceiling test, finally run.** On MEVA's curated clips, where the activity
+  name is burned into the picture in a box around the actor, Approach 1 scores
+  **mean tIoU 0.018, recall 0.000**. Given the answer written on the frame it
+  still cannot localise. That makes the 0.000 on real footage a property of the
+  approach rather than of the data, and retrospectively justifies building a
+  second engine instead of tuning the first. It does not separate vision from
+  prompting — both are still implicated — and saying so is the honest limit of
+  what one cheap experiment buys.
+
+- **2026-09-11 (first full-clip run; triggered polling; a ground-truth finding)** —
+  Ran `admin.G326` end to end for the first time instead of in windows around a
+  label. Uniform 1s polling: 119 calls, 453s. Driven from the change signal:
+  **12 calls, 63s**, both events kept — 9.9x fewer calls, 7.2x faster, with 9 of
+  the 12 calls landing inside the two events.
+
+  The saving exposed a bug it had been hiding. The derivation placed each
+  transition at the midpoint of its bracket, which is right on a uniform grid and
+  nonsense across an 82-second gap: a 3-second door was reported as a
+  **42-second event at confidence 1.0**. Two fixes, both in derivation, not
+  polling — a state is no longer carried across an unobserved gap (`states.edge`,
+  `carry_steps`), and boundary sharpness now multiplies into confidence. The
+  interval became 6.25–8.50 at confidence 0.4, marked partial. Uniform polling on
+  the same clip is unaffected at 1.0, which is the separation the number should
+  always have made.
+
+  Neither fix improves accuracy: tIoU against the label is 0.036 uniform, 0
+  triggered. The residual is the state-vs-event offset, not the polling.
+
+  **MEVA's annotation is not exhaustive, confirmed.** The run found a door opening
+  at 94–96s; MT checked it and it is real. The annotation file for the whole
+  five-minute source contains exactly two instances, both already in our labels.
+  The metric this reaches is `precision@0.5` alone — `tp / n_preds`, so a correct
+  detection of an unannotated event is charged as an error. `false_positive_rate`
+  keys on (video, description) and is untouched; `mean_tIoU` and relative error
+  iterate over truths and cannot see surplus predictions. Windowed evaluation
+  could never have surfaced any of this.
+
+- **2026-09-11 (decomposition and routing, documented)** — Named the shape of
+  Approach 1's failure rather than just its score. It issued ONE call per (window,
+  description) asked to do three jobs: decide presence, locate the boundaries,
+  report them as JSON. It can do the third (28 of 30 parsed after the repair) and
+  the second when told the event is present (3.5s median). It cannot do the first
+  (47% vs 39%). One capability of three, mixed into a single answer, so a wrong
+  output never said which stage had failed.
+
+  Every diagnostic that eventually worked came from splitting the job -- the probe
+  separated localisation from detection, the caption stage separated perception
+  from scoring. Neither was visible while one call did everything. Approach 3 is
+  that decomposition made explicit: caption (model) -> parse (code) -> derive
+  (code).
+
+  **Routing added as a design decision.** Ten of fifteen descriptions decompose
+  into a persistent binary state; five do not, and no prompting changes it. The
+  engine is therefore chosen from the sentence before any GPU spend. A description
+  with no state pair is reported as NOT EXPRESSIBLE rather than falling back to
+  Approach 1 -- which would answer, with output measured as uninformative.
+  Returning a known-bad answer where a client expects a real one is worse than
+  returning nothing and saying why.
+
+  Implemented: states_map presence is the router. Not implemented: deriving the
+  state pair from the sentence, which would make the router's decision function
+  fall out of the derivation step.

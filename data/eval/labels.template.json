@@ -1,0 +1,397 @@
+[
+  {
+    "video": "2018-03-07.16-50-00.16-55-00.admin.G329.r13.mp4",
+    "axis": "real_fixed_camera",
+    "duration_s": 120.0,
+    "source": "2018-03-07.16-50-00.16-55-00.admin.G329.r13.avi",
+    "trimmed_from_s": 86.3,
+    "events": [
+      {
+        "description": "a person enters through the door",
+        "start_s": 3.0,
+        "end_s": 4.833,
+        "meva_activity": "Enter_Facility",
+        "confirmed_by_hand": true,
+        "status": "confirmed",
+        "description_matches_footage": true,
+        "note": "MT chose MEVA's candidate times. Sheet reading suggested 3.4-4.6 against the candidate 3.0-4.83; the candidate is ~0.4s wide at the start.",
+        "label_source": "meva_candidate_times"
+      }
+    ]
+  },
+  {
+    "video": "2018-03-07.16-50-00.16-55-00.bus.G331.r13.mp4",
+    "axis": "real_fixed_camera",
+    "duration_s": 120.0,
+    "source": "2018-03-07.16-50-00.16-55-00.bus.G331.r13.avi",
+    "trimmed_from_s": 23.033,
+    "events": [
+      {
+        "description": "a person buys something",
+        "start_s": 16.034,
+        "end_s": 21.867,
+        "meva_activity": "Purchasing",
+        "confirmed_by_hand": false,
+        "status": "suspect",
+        "description_matches_footage": null,
+        "note": "Group IS at the counter, but a transaction is not resolvable at ~40px on the sheet (267px in source). G421 Purchasing at 662px is the control that will settle size vs subtlety"
+      },
+      {
+        "description": "someone hands an object to another person",
+        "start_s": 19.267,
+        "end_s": 21.6,
+        "meva_activity": "Object_Transfer",
+        "confirmed_by_hand": false,
+        "status": "suspect",
+        "description_matches_footage": null,
+        "note": "MT: maybe true, hard to verify. Same counter"
+      }
+    ]
+  },
+  {
+    "video": "2018-03-07.16-50-01.16-55-01.admin.G326.r13.mp4",
+    "axis": "real_fixed_camera",
+    "duration_s": 120.0,
+    "source": "2018-03-07.16-50-01.16-55-01.admin.G326.r13.avi",
+    "trimmed_from_s": 82.2,
+    "events": [
+      {
+        "description": "a person opens a building door",
+        "start_s": 3.0,
+        "end_s": 5.733,
+        "meva_activity": "Open_Facility_Door",
+        "confirmed_by_hand": true,
+        "status": "confirmed",
+        "description_matches_footage": true,
+        "note": "MEVA's 3.0-5.73 is CORRECT, confirmed by MT zooming into the source: a person is visible behind the glass approaching the door and working the knob from 3.0s; the panel itself only swings at ~5.0s. My earlier reading of 'door shut until 5.0, so start is 1.8s too early' was wrong -- it tracked the door PANEL, not the act of opening it. Second time a zoom overturned a sheet reading (see also G329).",
+        "label_source": "meva_candidate_times_confirmed_by_zoom"
+      },
+      {
+        "description": "a person enters through the door",
+        "start_s": 5.167,
+        "end_s": 7.5,
+        "meva_activity": "Enter_Facility",
+        "confirmed_by_hand": true,
+        "status": "confirmed",
+        "description_matches_footage": true,
+        "note": "MT chose MEVA's candidate times. Sheet reading suggested 5.2-7.2 against the candidate 5.17-7.5; the 0.3s difference is within labelling noise.",
+        "label_source": "meva_candidate_times"
+      }
+    ]
+  },
+  {
+    "video": "2018-03-07.16-50-01.16-55-01.school.G328.r13.mp4",
+    "axis": "real_fixed_camera",
+    "duration_s": 120.0,
+    "source": "2018-03-07.16-50-01.16-55-01.school.G328.r13.avi",
+    "trimmed_from_s": 42.633,
+    "events": [
+      {
+        "description": "a vehicle door opens",
+        "start_s": 3.0,
+        "end_s": 5.234,
+        "meva_activity": "Open_Vehicle_Door",
+        "confirmed_by_hand": false,
+        "status": "unlabellable",
+        "description_matches_footage": false,
+        "note": "MT: a person IS visible moving, but no door opening. Actor 41px"
+      },
+      {
+        "description": "a person gets into a vehicle",
+        "start_s": 3.0,
+        "end_s": 6.467,
+        "meva_activity": "Enter_Vehicle",
+        "confirmed_by_hand": false,
+        "status": "unlabellable",
+        "description_matches_footage": false,
+        "note": "MT: person visible moving, but not entering a vehicle. Actor 41px"
+      },
+      {
+        "description": "a vehicle reverses",
+        "start_s": 22.0,
+        "end_s": 29.6,
+        "meva_activity": "Vehicle_Reversing",
+        "confirmed_by_hand": false,
+        "status": "unlabellable",
+        "description_matches_footage": null,
+        "note": "Something shifts near the white van; reversing vs forward not separable at 41px"
+      },
+      {
+        "description": "a vehicle starts moving",
+        "start_s": 31.967,
+        "end_s": 33.967,
+        "meva_activity": "Vehicle_Starting",
+        "confirmed_by_hand": false,
+        "status": "unlabellable",
+        "description_matches_footage": null,
+        "note": "No discernible change across the window"
+      }
+    ]
+  },
+  {
+    "video": "2018-03-07.16-50-06.16-55-06.school.G336.r13.mp4",
+    "axis": "real_fixed_camera",
+    "duration_s": 120.0,
+    "source": "2018-03-07.16-50-06.16-55-06.school.G336.r13.avi",
+    "trimmed_from_s": 25.767,
+    "events": [
+      {
+        "description": "a vehicle turns left",
+        "start_s": 3.0,
+        "end_s": 9.433,
+        "meva_activity": "Vehicle_Turning_Left",
+        "confirmed_by_hand": false,
+        "status": "suspect",
+        "description_matches_footage": null,
+        "note": "A dark car does traverse the far road 3.5-8.5, but 'left' is not confirmable at ~25px"
+      },
+      {
+        "description": "a vehicle stops moving",
+        "start_s": 15.866,
+        "end_s": 16.866,
+        "meva_activity": "Vehicle_Stopping",
+        "confirmed_by_hand": false,
+        "status": "unlabellable",
+        "description_matches_footage": null,
+        "note": "Actors at the treeline, ~38px"
+      },
+      {
+        "description": "a vehicle turns right",
+        "start_s": 22.233,
+        "end_s": 26.766,
+        "meva_activity": "Vehicle_Turning_Right",
+        "confirmed_by_hand": false,
+        "status": "unlabellable",
+        "description_matches_footage": null,
+        "note": "Road empty throughout the window"
+      }
+    ]
+  },
+  {
+    "video": "2018-03-07.16-50-07.16-55-07.hospital.G301.r13.mp4",
+    "axis": "real_fixed_camera",
+    "duration_s": 120.0,
+    "source": "2018-03-07.16-50-07.16-55-07.hospital.G301.r13.avi",
+    "trimmed_from_s": 92.433,
+    "events": [
+      {
+        "description": "a person opens a building door",
+        "start_s": 3.0,
+        "end_s": 5.7,
+        "meva_activity": "Open_Facility_Door",
+        "confirmed_by_hand": false,
+        "status": "unlabellable",
+        "description_matches_footage": null,
+        "note": "Only a shadow in the recessed doorway at 1.0-2.5s, BEFORE the window. Actor 121px, deep shade"
+      },
+      {
+        "description": "a person comes out through the door",
+        "start_s": 3.0,
+        "end_s": 26.867,
+        "meva_activity": "Exit_Facility",
+        "confirmed_by_hand": false,
+        "status": "unlabellable",
+        "description_matches_footage": null,
+        "note": "24s window over a completely static scene; no actor visible at any point"
+      }
+    ]
+  },
+  {
+    "video": "2018-03-07.16-55-00.17-00-00.bus.G340.r13.mp4",
+    "axis": "real_fixed_camera",
+    "duration_s": 120.0,
+    "source": "2018-03-07.16-55-00.17-00-00.bus.G340.r13.avi",
+    "trimmed_from_s": 43.367,
+    "events": [
+      {
+        "description": "a person gets into a vehicle",
+        "start_s": 3.0,
+        "end_s": 6.833,
+        "meva_activity": "Enter_Vehicle",
+        "span_suspect": false,
+        "phrasing_mapped": true,
+        "status": "confirmed",
+        "confirmed_by_hand": true,
+        "description_matches_footage": true,
+        "note": "MT: reviewed on the event sheet, boundaries accepted as located"
+      }
+    ]
+  },
+  {
+    "video": "2018-03-11.16-20-04.16-25-04.school.G300.r13.mp4",
+    "axis": "real_fixed_camera",
+    "duration_s": 120.0,
+    "source": "2018-03-11.16-20-04.16-25-04.school.G300.r13.avi",
+    "trimmed_from_s": 180.0,
+    "events": [
+      {
+        "description": "a vehicle door opens",
+        "start_s": 9.033,
+        "end_s": 12.733,
+        "meva_activity": "Open_Vehicle_Door",
+        "span_suspect": false,
+        "phrasing_mapped": true,
+        "status": "confirmed",
+        "confirmed_by_hand": true,
+        "description_matches_footage": true,
+        "note": "MT: reviewed on the event sheet, boundaries accepted as located"
+      },
+      {
+        "description": "a vehicle stops moving",
+        "start_s": 9.1,
+        "end_s": 10.667,
+        "meva_activity": "Vehicle_Stopping",
+        "span_suspect": false,
+        "phrasing_mapped": true,
+        "status": "confirmed",
+        "confirmed_by_hand": true,
+        "description_matches_footage": true,
+        "note": "MT: reviewed on the event sheet, boundaries accepted as located"
+      },
+      {
+        "description": "a vehicle drops someone off",
+        "start_s": 9.7,
+        "end_s": 20.2,
+        "meva_activity": "Vehicle_DropsOff_Person",
+        "span_suspect": false,
+        "phrasing_mapped": true,
+        "status": "confirmed",
+        "confirmed_by_hand": true,
+        "description_matches_footage": true,
+        "note": "MT: MEVA span 9.7-120.0 covered the vehicle's whole presence. Drop-off ends when the vehicle leaves at 20.2. A tighter 9.7-15.2/15.7 (person out, door closed) would describe GETTING OUT, which is already event 03 at 11.5-13.7"
+      },
+      {
+        "description": "a person gets out of a vehicle",
+        "start_s": 11.5,
+        "end_s": 13.733,
+        "meva_activity": "Exit_Vehicle",
+        "span_suspect": false,
+        "phrasing_mapped": true,
+        "status": "confirmed",
+        "confirmed_by_hand": true,
+        "description_matches_footage": true,
+        "note": "MT: reviewed on the event sheet, boundaries accepted as located"
+      }
+    ]
+  },
+  {
+    "video": "2018-03-12.10-00-01.10-05-01.school.G423.r13.mp4",
+    "axis": "real_fixed_camera",
+    "duration_s": 120.0,
+    "source": "2018-03-12.10-00-01.10-05-01.school.G423.r13.avi",
+    "trimmed_from_s": 16.267,
+    "events": [
+      {
+        "description": "a person sits down",
+        "start_s": 3.0,
+        "end_s": 5.033,
+        "meva_activity": "Sit_Down",
+        "span_suspect": false,
+        "phrasing_mapped": true,
+        "status": "confirmed",
+        "confirmed_by_hand": true,
+        "description_matches_footage": true,
+        "note": "MT: reviewed on the event sheet, boundaries accepted as located"
+      },
+      {
+        "description": "a person stands up",
+        "start_s": 37.566,
+        "end_s": 39.0,
+        "meva_activity": "Stand_Up",
+        "span_suspect": false,
+        "phrasing_mapped": true,
+        "status": "confirmed",
+        "confirmed_by_hand": true,
+        "description_matches_footage": true,
+        "note": "MT: reviewed on the event sheet, boundaries accepted as located"
+      },
+      {
+        "description": "someone hands an object to another person",
+        "start_s": 79.333,
+        "end_s": 81.433,
+        "meva_activity": "Object_Transfer",
+        "span_suspect": false,
+        "phrasing_mapped": true,
+        "status": "confirmed",
+        "confirmed_by_hand": true,
+        "description_matches_footage": true,
+        "note": "MT: reviewed on the event sheet, boundaries accepted as located"
+      },
+      {
+        "description": "a person buys something",
+        "start_s": 79.333,
+        "end_s": 85.133,
+        "meva_activity": "Purchasing",
+        "span_suspect": false,
+        "phrasing_mapped": true,
+        "status": "confirmed",
+        "confirmed_by_hand": true,
+        "description_matches_footage": true,
+        "note": "MT: reviewed on the event sheet, boundaries accepted as located"
+      }
+    ]
+  },
+  {
+    "video": "2018-03-12.10-00-02.10-05-01.admin.G326.r13.mp4",
+    "axis": "real_fixed_camera",
+    "duration_s": 120.0,
+    "source": "2018-03-12.10-00-02.10-05-01.admin.G326.r13.avi",
+    "trimmed_from_s": 117.767,
+    "events": [
+      {
+        "description": "a person comes out through the door",
+        "start_s": 3.0,
+        "end_s": 5.266,
+        "meva_activity": "Exit_Facility",
+        "span_suspect": false,
+        "phrasing_mapped": true,
+        "status": "confirmed",
+        "confirmed_by_hand": true,
+        "description_matches_footage": true,
+        "note": "MT: reviewed on the event sheet, boundaries accepted as located"
+      }
+    ]
+  },
+  {
+    "video": "2018-03-13.17-40-08.17-45-08.school.G300.r13.mp4",
+    "axis": "real_fixed_camera",
+    "duration_s": 120.0,
+    "source": "2018-03-13.17-40-08.17-45-08.school.G300.r13.avi",
+    "trimmed_from_s": 3.567,
+    "events": [
+      {
+        "description": "a vehicle reverses",
+        "start_s": 3.0,
+        "end_s": 16.633,
+        "meva_activity": "Vehicle_Reversing",
+        "span_suspect": false,
+        "phrasing_mapped": true,
+        "status": "confirmed",
+        "confirmed_by_hand": true,
+        "description_matches_footage": true,
+        "note": "MT: reviewed on the event sheet, boundaries accepted as located"
+      }
+    ]
+  },
+  {
+    "video": "2018-03-15.14-55-00.15-00-00.school.G421.r13.mp4",
+    "axis": "real_fixed_camera",
+    "duration_s": 120.0,
+    "source": "2018-03-15.14-55-00.15-00-00.school.G421.r13.avi",
+    "trimmed_from_s": 18.667,
+    "events": [
+      {
+        "description": "a person buys something",
+        "start_s": 3.0,
+        "end_s": 9.0,
+        "meva_activity": "Purchasing",
+        "span_suspect": false,
+        "phrasing_mapped": true,
+        "status": "confirmed",
+        "confirmed_by_hand": true,
+        "description_matches_footage": true,
+        "note": "MT: reviewed on the event sheet, boundaries accepted as located"
+      }
+    ]
+  }
+]

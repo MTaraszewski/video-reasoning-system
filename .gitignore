@@ -216,3 +216,49 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# --- project ---
+# reference material — NONE of it is tracked, including the assignment brief.
+# The brief is the client's document, not ours to republish in a public
+# repository; it is kept locally and purged from history.
+reference/
+
+# runtime artifacts
+out/
+weights/
+results.jsonl
+*.mp4
+!sample/*.mp4
+
+.venv/
+
+# local overrides: bucket names, region, GPU pricing — never in a public repo
+make/local.mk
+
+# --- runtime data (never commit footage) ---
+# `data/` alone would not work with the negations below: git does not descend into
+# an excluded directory, so `!data/eval/labels.json` would never match. `data/*`
+# excludes the CONTENTS while leaving the directory itself traversable.
+data/*
+!data/.gitkeep
+
+# Narrow exceptions: the hand-labelling work products. They are small text files
+# and they ARE the evaluation deliverable -- without labels.json a reviewer cannot
+# reproduce a single number we report. Each directory is re-opened, then its
+# contents re-excluded, then the specific files allowed back: without the middle
+# step, re-opening data/meva-index/ would sweep in 128 MEVA annotation files.
+!data/eval/
+data/eval/*
+!data/eval/labels.json
+!data/eval/labels.template.json
+!data/eval/labelling-notes.md
+
+!data/meva-index/
+data/meva-index/*
+!data/meva-index/screen.json
+!data/meva-index/shortlist.json
+!data/meva-index/shortlist.md
+
+!data/meva-annotated/
+data/meva-annotated/*
+!data/meva-annotated/labels.candidate.json

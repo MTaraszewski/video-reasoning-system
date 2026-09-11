@@ -1,0 +1,109 @@
+# Two services, two jobs. Nothing runs on the host.
+#
+#   finder — CPU. All the logic. Runs anywhere.
+#   vllm   — GPU. The weights, and nothing else.
+#
+# They can also be split across machines: run finder locally and point BASE_URL
+# at a GPU box elsewhere. That is a configuration choice, not a different build.
+
+services:
+  finder:
+    build:
+      context: .
+      dockerfile: docker/finder.Dockerfile
+    image: video-reasoning-finder:dev
+    environment:
+      - MODEL=${MODEL:-nvidia/Cosmos3-Edge}
+      - BASE_URL=${BASE_URL:-http://vllm:8000/v1}
+      - ALLOW_NO_GPU=${ALLOW_NO_GPU:-}
+      - GPU_HOURLY=${GPU_HOURLY:-}
+    volumes:
+      # Source is mounted so an edit takes effect without a rebuild during
+      # development. The image is self-contained without it.
+      - ./src:/app/src
+      - ./scripts:/app/scripts
+      - ./eval:/app/eval
+      - ./config.yaml:/app/config.yaml:ro
+      # Read-only: it is configuration, and a container should not rewrite the
+      # mapping the results were produced under.
+      - ./states.json:/app/states.json:ro
+      # Data is READ-ONLY: the service must never modify input footage.
+      - ${DATA_DIR:-./data}:/data:ro
+      - ${OUT_DIR:-./out}:/out
+    working_dir: /app
+
+  # Same image as finder, but /data is WRITABLE. Kept as a separate service on
+  # purpose: the finder's read-only mount is a guarantee about client footage,
+  # and generating our own fixtures is a different job. Relaxing finder's mount
+  # to make one script work would quietly delete that guarantee.
+  datagen:
+    image: video-reasoning-finder:dev
+    build:
+      context: .
+      dockerfile: docker/finder.Dockerfile
+    volumes:
+      - ./src:/app/src
+      - ./scripts:/app/scripts
+      - ./config.yaml:/app/config.yaml:ro
+      # Read-only: it is configuration, and a container should not rewrite the
+      # mapping the results were produced under.
+      - ./states.json:/app/states.json:ro
+      - ${DATA_DIR:-./data}:/data
+    working_dir: /app
+
+  # A fake vLLM endpoint. The stub backend proves the pipeline; this proves the
+  # code BETWEEN us and the model — HTTP, think-block parsing, timestamp
+  # clamping, recording, the model-identity check — none of which needs a GPU.
+  # Scenarios return the responses that actually break parsers.
+  fake-vllm:
+    image: video-reasoning-finder:dev
+    build:
+      context: .
+      dockerfile: docker/finder.Dockerfile
+    ports:
+      - "${VLLM_PORT:-8000}:8000"
+    volumes:
+      - ./scripts:/app/scripts
+    command: >
+      python scripts/fake_vllm.py
+      --model ${MODEL:-nvidia/Cosmos3-Edge}
+      --scenario ${SCENARIO:-think}
+    working_dir: /app
+
+  vllm:
+    # Pinned deliberately. A floating `latest` tag is the most likely cause of
+    # "it worked for you and not for us" — the exact failure we are guarding.
+    # The fallback matters. It is what a bare `docker compose` command gets when
+    # VLLM_IMAGE is absent -- i.e. any invocation that does not go through make.
+    # It used to be v0.21.0, which is the one version we have MEASURED as unable
+    # to load this model: its bundled Transformers predates cosmos3_edge and
+    # refuses the architecture before reaching the GPU. A default that cannot
+    # work is worse than no default; it pulls 10 GB and then fails.
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.29.0}
+    ports:
+      - "${VLLM_PORT:-8000}:8000"
+    environment:
+      - HF_HOME=/weights
+      - HF_TOKEN=${HF_TOKEN:-}
+    volumes:
+      - weights:/weights
+      - ${DATA_DIR:-./data}:/data:ro
+    # MODEL and VLLM_ARGS are supplied by make/serve.mk.
+    command: >
+      --model ${MODEL:-nvidia/Cosmos3-Edge}
+      --dtype bfloat16
+      ${VLLM_ARGS:-}
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+volumes:
+  # Named so a container restart does not re-download several GB of weights,
+  # which would otherwise dominate the "runs in a few minutes" bar on any run
+  # after the first.
+  weights:

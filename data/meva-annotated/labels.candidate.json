@@ -1,0 +1,380 @@
+[
+  {
+    "video": "2018-03-07.16-50-00.16-55-00.admin.G329.mp4",
+    "source": "2018-03-07.16-50-00.16-55-00.admin.G329.r13.avi",
+    "axis": "real_fixed_camera",
+    "trim": {
+      "start_s": 86.3,
+      "length_s": 120.0
+    },
+    "duration_s": 120.0,
+    "events": [
+      {
+        "description": "a person enters through the door",
+        "phrasing_mapped": true,
+        "start_s": 3.0,
+        "end_s": 4.833,
+        "meva_activity": "Enter_Facility",
+        "span_suspect": false,
+        "confirmed_by_hand": false
+      }
+    ]
+  },
+  {
+    "video": "2018-03-07.16-50-00.16-55-00.bus.G331.mp4",
+    "source": "2018-03-07.16-50-00.16-55-00.bus.G331.r13.avi",
+    "axis": "real_fixed_camera",
+    "trim": {
+      "start_s": 23.033,
+      "length_s": 120.0
+    },
+    "duration_s": 120.0,
+    "events": [
+      {
+        "description": "a person buys something",
+        "phrasing_mapped": true,
+        "start_s": 16.034,
+        "end_s": 21.867,
+        "meva_activity": "Purchasing",
+        "span_suspect": false,
+        "confirmed_by_hand": false
+      },
+      {
+        "description": "someone hands an object to another person",
+        "phrasing_mapped": true,
+        "start_s": 19.267,
+        "end_s": 21.6,
+        "meva_activity": "Object_Transfer",
+        "span_suspect": false,
+        "confirmed_by_hand": false
+      }
+    ]
+  },
+  {
+    "video": "2018-03-07.16-50-01.16-55-01.admin.G326.mp4",
+    "source": "2018-03-07.16-50-01.16-55-01.admin.G326.r13.avi",
+    "axis": "real_fixed_camera",
+    "trim": {
+      "start_s": 82.2,
+      "length_s": 120.0
+    },
+    "duration_s": 120.0,
+    "events": [
+      {
+        "description": "a person opens a building door",
+        "phrasing_mapped": true,
+        "start_s": 3.0,
+        "end_s": 5.733,
+        "meva_activity": "Open_Facility_Door",
+        "span_suspect": false,
+        "confirmed_by_hand": false
+      },
+      {
+        "description": "a person enters through the door",
+        "phrasing_mapped": true,
+        "start_s": 5.167,
+        "end_s": 7.5,
+        "meva_activity": "Enter_Facility",
+        "span_suspect": false,
+        "confirmed_by_hand": false
+      }
+    ]
+  },
+  {
+    "video": "2018-03-07.16-50-01.16-55-01.school.G328.mp4",
+    "source": "2018-03-07.16-50-01.16-55-01.school.G328.r13.avi",
+    "axis": "real_fixed_camera",
+    "trim": {
+      "start_s": 42.633,
+      "length_s": 120.0
+    },
+    "duration_s": 120.0,
+    "events": [
+      {
+        "description": "a vehicle door opens",
+        "phrasing_mapped": true,
+        "start_s": 3.0,
+        "end_s": 5.234,
+        "meva_activity": "Open_Vehicle_Door",
+        "span_suspect": false,
+        "confirmed_by_hand": false
+      },
+      {
+        "description": "a person gets into a vehicle",
+        "phrasing_mapped": true,
+        "start_s": 3.0,
+        "end_s": 6.467,
+        "meva_activity": "Enter_Vehicle",
+        "span_suspect": false,
+        "confirmed_by_hand": false
+      },
+      {
+        "description": "a vehicle reverses",
+        "phrasing_mapped": true,
+        "start_s": 22.0,
+        "end_s": 29.6,
+        "meva_activity": "Vehicle_Reversing",
+        "span_suspect": false,
+        "confirmed_by_hand": false
+      },
+      {
+        "description": "a vehicle starts moving",
+        "phrasing_mapped": true,
+        "start_s": 31.967,
+        "end_s": 33.967,
+        "meva_activity": "Vehicle_Starting",
+        "span_suspect": false,
+        "confirmed_by_hand": false
+      }
+    ]
+  },
+  {
+    "video": "2018-03-07.16-50-06.16-55-06.school.G336.mp4",
+    "source": "2018-03-07.16-50-06.16-55-06.school.G336.r13.avi",
+    "axis": "real_fixed_camera",
+    "trim": {
+      "start_s": 25.767,
+      "length_s": 120.0
+    },
+    "duration_s": 120.0,
+    "events": [
+      {
+        "description": "a vehicle turns left",
+        "phrasing_mapped": true,
+        "start_s": 3.0,
+        "end_s": 9.433,
+        "meva_activity": "Vehicle_Turning_Left",
+        "span_suspect": false,
+        "confirmed_by_hand": false
+      },
+      {
+        "description": "a vehicle stops moving",
+        "phrasing_mapped": true,
+        "start_s": 15.866,
+        "end_s": 16.866,
+        "meva_activity": "Vehicle_Stopping",
+        "span_suspect": false,
+        "confirmed_by_hand": false
+      },
+      {
+        "description": "a vehicle turns right",
+        "phrasing_mapped": true,
+        "start_s": 22.233,
+        "end_s": 26.766,
+        "meva_activity": "Vehicle_Turning_Right",
+        "span_suspect": false,
+        "confirmed_by_hand": false
+      }
+    ]
+  },
+  {
+    "video": "2018-03-07.16-50-07.16-55-07.hospital.G301.mp4",
+    "source": "2018-03-07.16-50-07.16-55-07.hospital.G301.r13.avi",
+    "axis": "real_fixed_camera",
+    "trim": {
+      "start_s": 92.433,
+      "length_s": 120.0
+    },
+    "duration_s": 120.0,
+    "events": [
+      {
+        "description": "a person opens a building door",
+        "phrasing_mapped": true,
+        "start_s": 3.0,
+        "end_s": 5.7,
+        "meva_activity": "Open_Facility_Door",
+        "span_suspect": false,
+        "confirmed_by_hand": false
+      },
+      {
+        "description": "a person comes out through the door",
+        "phrasing_mapped": true,
+        "start_s": 3.0,
+        "end_s": 26.867,
+        "meva_activity": "Exit_Facility",
+        "span_suspect": true,
+        "confirmed_by_hand": false
+      }
+    ]
+  },
+  {
+    "video": "2018-03-07.16-55-00.17-00-00.bus.G340.mp4",
+    "source": "2018-03-07.16-55-00.17-00-00.bus.G340.r13.avi",
+    "axis": "real_fixed_camera",
+    "trim": {
+      "start_s": 43.367,
+      "length_s": 120.0
+    },
+    "duration_s": 120.0,
+    "events": [
+      {
+        "description": "a person gets into a vehicle",
+        "phrasing_mapped": true,
+        "start_s": 3.0,
+        "end_s": 6.833,
+        "meva_activity": "Enter_Vehicle",
+        "span_suspect": false,
+        "confirmed_by_hand": false
+      }
+    ]
+  },
+  {
+    "video": "2018-03-11.16-20-04.16-25-04.school.G300.mp4",
+    "source": "2018-03-11.16-20-04.16-25-04.school.G300.r13.avi",
+    "axis": "real_fixed_camera",
+    "trim": {
+      "start_s": 180.0,
+      "length_s": 120.0
+    },
+    "duration_s": 120.0,
+    "events": [
+      {
+        "description": "a vehicle door opens",
+        "phrasing_mapped": true,
+        "start_s": 9.033,
+        "end_s": 12.733,
+        "meva_activity": "Open_Vehicle_Door",
+        "span_suspect": false,
+        "confirmed_by_hand": false
+      },
+      {
+        "description": "a vehicle stops moving",
+        "phrasing_mapped": true,
+        "start_s": 9.1,
+        "end_s": 10.667,
+        "meva_activity": "Vehicle_Stopping",
+        "span_suspect": false,
+        "confirmed_by_hand": false
+      },
+      {
+        "description": "a vehicle drops someone off",
+        "phrasing_mapped": true,
+        "start_s": 9.7,
+        "end_s": 119.967,
+        "meva_activity": "Vehicle_DropsOff_Person",
+        "span_suspect": true,
+        "confirmed_by_hand": false
+      },
+      {
+        "description": "a person gets out of a vehicle",
+        "phrasing_mapped": true,
+        "start_s": 11.5,
+        "end_s": 13.733,
+        "meva_activity": "Exit_Vehicle",
+        "span_suspect": false,
+        "confirmed_by_hand": false
+      }
+    ]
+  },
+  {
+    "video": "2018-03-12.10-00-01.10-05-01.school.G423.mp4",
+    "source": "2018-03-12.10-00-01.10-05-01.school.G423.r13.avi",
+    "axis": "real_fixed_camera",
+    "trim": {
+      "start_s": 16.267,
+      "length_s": 120.0
+    },
+    "duration_s": 120.0,
+    "events": [
+      {
+        "description": "a person sits down",
+        "phrasing_mapped": true,
+        "start_s": 3.0,
+        "end_s": 5.033,
+        "meva_activity": "Sit_Down",
+        "span_suspect": false,
+        "confirmed_by_hand": false
+      },
+      {
+        "description": "a person stands up",
+        "phrasing_mapped": true,
+        "start_s": 37.566,
+        "end_s": 39.0,
+        "meva_activity": "Stand_Up",
+        "span_suspect": false,
+        "confirmed_by_hand": false
+      },
+      {
+        "description": "someone hands an object to another person",
+        "phrasing_mapped": true,
+        "start_s": 79.333,
+        "end_s": 81.433,
+        "meva_activity": "Object_Transfer",
+        "span_suspect": false,
+        "confirmed_by_hand": false
+      },
+      {
+        "description": "a person buys something",
+        "phrasing_mapped": true,
+        "start_s": 79.333,
+        "end_s": 85.133,
+        "meva_activity": "Purchasing",
+        "span_suspect": false,
+        "confirmed_by_hand": false
+      }
+    ]
+  },
+  {
+    "video": "2018-03-12.10-00-02.10-05-01.admin.G326.mp4",
+    "source": "2018-03-12.10-00-02.10-05-01.admin.G326.r13.avi",
+    "axis": "real_fixed_camera",
+    "trim": {
+      "start_s": 117.767,
+      "length_s": 120.0
+    },
+    "duration_s": 120.0,
+    "events": [
+      {
+        "description": "a person comes out through the door",
+        "phrasing_mapped": true,
+        "start_s": 3.0,
+        "end_s": 5.266,
+        "meva_activity": "Exit_Facility",
+        "span_suspect": false,
+        "confirmed_by_hand": false
+      }
+    ]
+  },
+  {
+    "video": "2018-03-13.17-40-08.17-45-08.school.G300.mp4",
+    "source": "2018-03-13.17-40-08.17-45-08.school.G300.r13.avi",
+    "axis": "real_fixed_camera",
+    "trim": {
+      "start_s": 3.567,
+      "length_s": 120.0
+    },
+    "duration_s": 120.0,
+    "events": [
+      {
+        "description": "a vehicle reverses",
+        "phrasing_mapped": true,
+        "start_s": 3.0,
+        "end_s": 16.633,
+        "meva_activity": "Vehicle_Reversing",
+        "span_suspect": false,
+        "confirmed_by_hand": false
+      }
+    ]
+  },
+  {
+    "video": "2018-03-15.14-55-00.15-00-00.school.G421.mp4",
+    "source": "2018-03-15.14-55-00.15-00-00.school.G421.r13.avi",
+    "axis": "real_fixed_camera",
+    "trim": {
+      "start_s": 18.667,
+      "length_s": 120.0
+    },
+    "duration_s": 120.0,
+    "events": [
+      {
+        "description": "a person buys something",
+        "phrasing_mapped": true,
+        "start_s": 3.0,
+        "end_s": 9.0,
+        "meva_activity": "Purchasing",
+        "span_suspect": false,
+        "confirmed_by_hand": false
+      }
+    ]
+  }
+]

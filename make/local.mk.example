@@ -1,0 +1,12 @@
+# Copy to make/local.mk (gitignored) and edit. Nothing here is committed.
+#
+#     cp make/local.mk.example make/local.mk
+#
+# Your own S3 bucket for staging clips to the GPU box. Must be in the SAME region
+# as the instance, or the staging step costs more than it saves.
+S3_BUCKET  = my-video-reasoning-bucket
+AWS_REGION = eu-central-1
+
+# Instance price, for cost-per-video-minute in eval output. Leave unset and cost
+# is simply not reported, rather than reported from a guessed rate.
+# GPU_HOURLY = 5.719
