@@ -82,15 +82,21 @@ exist yet.
 
 | # | Requirement | Status | Where / what is missing |
 |---|---|---|---|
-| R1 | Long-video handling: sampling, windowing, cross-boundary merge, partial events | **DONE** | `decode.py`, `windows.py`, `merge.py`; behaviour verified and evidenced in [`DESIGN.md §6`](DESIGN.md) |
-| R2 | Document those decisions | **DONE** | `DESIGN.md`, `DECISIONS.md`, `DATASETS.md`, `RUNBOOK.md` |
-| R3 | Open weights, video input, temporal localisation, a context limit worked around | **PART** | model verified open/ungated/video-capable; **temporal localisation is the thing under test**; frames-per-call limit not yet measured |
-| R4 | No hosted commercial API as primary | **DONE** | self-hosted vLLM only; no hosted path exists |
-| R5 | **Runs on their machine in minutes, first try, without reading the code** | **PART** | **Clean-clone verified**: `preflight`, `build`, `data`, `demo`, `verify-data`, `probe`, `plan`, `frames` all pass from a fresh clone — **79 s to first events JSON**. Caveat: the 73 s build had a warm Docker layer cache, so a cold host is realistically 3-5 min. `fake-test` and `run` on a custom video not yet exercised from clean |
-| R6 | 5-10 clips, 1-3 min, hand-labelled, rights-clean, defensible temporal metric | **PART** | **Metric done** — tIoU R@1 at 0.3/0.5/0.7, mean tIoU, precision/recall, NVIDIA's mean relative error, false-positive rate, per-axis breakdown, per-video isolation enforced. Six synthetic clips verified against their own labels. **Real clips still to fetch (`MEVA_MODE=annotated`), trim and hand-label** |
-| R7 | Report where the model's limits are | **TODO** | The instruments exist — per-axis metrics, the probe's precision floor, hallucination-rejection counts, the positive-control ceiling test. **Nothing measured**, because no model has been run |
-| R8 | GitHub repository | **DONE** | pushed to `origin/dev` |
-| R9 | Deliver within about a week | **ON TRACK** | started 2026-09-09 |
+| R1 | Long-video handling: sampling, windowing, cross-boundary merge, partial events | **PART** | All four met by `windows` — `decode.py`, `windows.py`, `merge.py`, [`DESIGN.md §6`](DESIGN.md). `states` meets sampling and partial-event reporting, and does not window or merge **because it cannot fragment an event**. But it does not chunk either, so cost is linear in duration and the work budget refuses past ~4.2 min at 4 subjects. **Approach 1 handles long video and scores 0.000; Approach 3 works and caps at four minutes.** Both halves stated in [`DESIGN.md §6.7`](DESIGN.md), with the coarse-to-fine fix designed and unbuilt |
+| R2 | Document those decisions | **DONE** | `DESIGN.md §6.2-6.7`, `DECISIONS.md`, `EXPERIMENTS.md`, `DATASETS.md`, `RUNBOOK.md`. §6.7 added late — the two engines' differing answers to R1 were undocumented until then |
+| R3 | Open weights, video input, temporal localisation, a context limit worked around | **DONE** | Cosmos3-Edge verified open, ungated, video-capable, served on stock vLLM v0.29.0. **Temporal localisation measured**: 3.11s median error on synthetic, and near-zero on real footage — the claim was tested and mostly fails, which is the finding. Context limit worked around twice: 12s windows for `windows`, 2s polls for `states` |
+| R4 | No hosted commercial API as primary | **DONE** | Self-hosted vLLM only; no hosted path exists in the code |
+| R5 | Runs on their machine in minutes, first try, without reading the code | **DONE** | **Verified on a fresh `git clone` of the pushed branch, not on the working tree**: `make preflight && make build && make demo` succeeded first try in **11.6s** and produced a valid events JSON. Docker layers were warm, so a cold host is a few minutes. Also: `make smoke` runs 6 no-GPU checks and all pass; `make data-eval` rebuilds all 8 clips from MEVA's public bucket over plain HTTPS with no AWS account or CLI |
+| R6 | 5-10 clips, 1-3 min, hand-labelled, rights-clean, defensible temporal metric | **DONE** | **8 clips, 120s each, 15 events**, MEVA CC BY 4.0, each `confirmed_by_hand` with adjudication notes — two of which record a hand verdict being overturned by zooming. Metric: tIoU R@1 at 0.3/0.5/0.7, mean tIoU, precision/recall, NVIDIA's mean relative error, false-positive rate, per-axis breakdown, per-(video, description) isolation enforced in code |
+| R7 | Report where the model's limits are | **DONE** | Measured, not asserted: a 3.11s precision floor before any windowing; mean tIoU 0.0021 and a 0.80 false-positive rate on real footage; presence reported at 47% when present against 39% when absent; a second architecture failing the same way; and a shape table saying which descriptions the method **cannot** express — motion, relations, compound events — covering two of the brief's own three worked examples |
+| R8 | GitHub repository | **DONE** | `MTaraszewski/video-reasoning-system` |
+| R9 | Deliver within about a week | **ON TRACK** | Started 2026-09-09 |
+
+**The one thing still open:** Approach 3 has never been scored across the labelled
+set. Every number for it comes from single clips. The harness could not run it
+until 2026-09-11 and the run takes hours; it is in flight as this is written. Until
+it lands, the comparison between the two approaches rests on one clip, and that is
+an anecdote rather than a result.
 
 ### The risk this exposes
 

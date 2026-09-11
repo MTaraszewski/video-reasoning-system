@@ -183,6 +183,27 @@ def run(
 
 
 @app.command()
+def schema(
+    out: str = typer.Option(None, "-o", "--out", help="Write here (default stdout)."),
+) -> None:
+    """Print the JSON Schema for the output contract.
+
+    The brief asks for "a strict, documented JSON schema". The schema lives in
+    `schema.py` as a validated model, and this emits it in machine-readable form
+    so a client can check a response without reading our Python -- and so the
+    documentation cannot drift from the thing it documents, which it had.
+    """
+    from .schema import FindEventsResult
+    text = json.dumps(FindEventsResult.model_json_schema(), indent=2)
+    if out:
+        Path(out).parent.mkdir(parents=True, exist_ok=True)
+        Path(out).write_text(text + "\n")
+        console.print(f"-> {out}")
+    else:
+        print(text)
+
+
+@app.command()
 def frames(
     video: str = typer.Argument(..., help="Video to sample."),
     out: str = typer.Option("/out/frames", "-o", "--out", help="Directory for PNGs."),

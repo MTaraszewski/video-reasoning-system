@@ -212,11 +212,13 @@ object** — and are properties of the design, not defects in it.
 |---|---|---|
 | configuration of one object | door open / closed | **yes** |
 | posture of one actor | sitting / standing | expressible; fails with several people |
-| motion | *"a vehicle reverses"* | **no** — a 2-second window shows position, not velocity |
+| presence of motion | *"the machine stops moving"* | **expressible** — `moving / stationary` |
+| direction of motion | *"a vehicle reverses"* | **no** — a window of positions carries no sign |
 | relation between actors | *"hands an object to another person"* | **no** — not a state of any one object |
 | compound | *"a person buys something"* | **no** — a sequence, not a state |
 
-Two of the brief's three worked examples are motion, and fall outside.
+Of the brief's three worked examples, *"a person enters through the door"* and
+*"the machine stops moving"* are in shape; *"a forklift reverses"* is not.
 
 Also true and worth saying plainly: the state pairs are hand-written; there is no
 held-out set, so every clip that produced a number also shaped a threshold or a

@@ -171,6 +171,14 @@ CLIPS    ?= 4
 STEP_S   ?= 1.0
 WATCH_S  ?= 30
 
+.PHONY: schema
+schema:  ## [any] regenerate schema.json, the machine-readable output contract
+	@# Captured on the HOST, not written inside the container: the repo root is
+	@# not mounted, so -o /app/schema.json would write into a layer that is
+	@# discarded when the container exits.
+	@$(COMPOSE) run --rm --no-TTY finder video-reasoning schema > schema.json
+	@echo "-> schema.json  ($$(wc -l < schema.json) lines)"
+
 # Every check that needs no GPU, in one command. This is what answers "does the
 # repo work on my machine" before anyone rents an instance -- it exercises the
 # host, the image, the whole pipeline end to end, the data, the decoder, and the

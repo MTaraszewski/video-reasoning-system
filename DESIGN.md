@@ -478,6 +478,112 @@ The distinction the implementation draws is between **"the event ended here"** a
 
 ---
 
+### 6.7 Long video: how each approach answers the clause, and where one stops
+
+The brief is specific: *"Videos may be longer than what the model can look at in
+one go. Your service must handle that: decide how to sample frames, how to split
+the video into windows, how to merge or de-duplicate events that straddle window
+boundaries, and how to report an event the model saw only partially."*
+
+The two engines answer it differently, and one of them answers it by not having
+the problem.
+
+| clause | `windows` (Approach 1) | `states` (Approach 3) |
+|---|---|---|
+| sample frames | 4 fps, 640px, 48-frame cap — §6.2 | same sampler, same settings |
+| split into windows | 12s window, 9s stride, 3s overlap — §6.3 | **does not window** |
+| merge across boundaries | IoU 0.3, gap 0.5s, span cap 60s — §6.4 | **does not merge** |
+| report a partial event | the span touched a window edge — §6.6 | the span edge, **and** a state that could not be carried across an unobserved gap |
+
+The two "does not" entries are consequences of the design rather than omissions.
+**Approach 3 never fragments an event**, because each poll is independent and
+events are derived from transitions in one continuous timeline. There is no
+boundary for an event to straddle, so there is nothing to merge or de-duplicate,
+and the whole class of bug that §6.4 exists to prevent cannot occur. Its partial
+reporting is richer for the same reason: it can say *"the door was already open
+when the observed span began"*, which a window-edge test cannot express.
+
+**Where it stops is cost, not context.** Every poll shows 2 seconds, so the model's
+context limit is never approached at any video length — the thing the clause is
+really about is solved trivially. But polling is uniform over the whole clip, so
+calls scale linearly with duration and nothing chunks:
+
+```
+cost   = subjects x polls
+polls  = (duration - span_s) / step_s
+
+4 subjects, step_s 1.0, limits.max_model_calls 1000
+  →  polls <= 250  →  duration <= ~251 s  =  4.2 minutes
+  →  a 30-minute video needs 7,196 calls and is REFUSED
+```
+
+The ceiling moves with how many distinct subjects are asked about: one subject
+gives 1,000 polls, about 16.7 minutes; four gives 4.2. It is not a property of the
+model, and it is not the context limit -- every call shows 2 seconds whatever the
+video's length. It is the work budget meeting linear scaling.
+
+Worth being exact about what changed and when. Until `limits.max_model_calls` was
+extended to cover this path, there was no refusal at all: a 30-minute video would
+have run for roughly eight hours and produced a result. The guard converted a
+silent disaster into an explicit one, which is better and is not the same as
+solving it.
+
+So for long video, **Approach 1 handles it and scores 0.000; Approach 3 works and
+caps out at four minutes.** That is the honest position, and neither half of it
+should be quoted without the other.
+
+#### The fix, and why it is shaped the way it is
+
+Not built. But the design follows from the method's own premise rather than from
+taste, so it is worth stating precisely.
+
+**The premise is that the state is persistent.** A door that opens stays open for
+some duration. That has a consequence the uniform grid pays for and does not use:
+*a coarse grid cannot miss a transition, it can only fail to locate it.* As long
+as the polling interval is shorter than the shortest state, every change appears
+as a disagreement between two consecutive polls. Only the boundary is imprecise,
+and only the boundary needs refining.
+
+So: **poll coarsely, then bisect the disagreements.**
+
+```
+coarse pass    step 4s over the whole clip      detects every transition
+refine pass    bisect each disagreeing bracket  locates it to step_s
+```
+
+For a 30-minute clip with 4 subjects and ~20 transitions:
+
+| | calls | resolution |
+|---|---|---|
+| uniform at 1s (today) | 7,196 | 1s |
+| coarse 4s + bisection | ~1,960 | 1s |
+| coarse 8s + bisection | ~1,140 | 1s |
+
+**3.7x to 6.3x cheaper at identical resolution**, because the refinement is spent
+only where something changed — which is what triggered polling was trying to
+achieve, arrived at through the model's own answers instead of a pixel heuristic.
+
+The constraint is explicit and is the thing to get right: **the coarse step must be
+shorter than the shortest state you care about.** Our labelled door-open spans run
+about 4 seconds, so 4s is the safe ceiling on this data and 8s would risk a door
+opening and closing entirely between two polls. That is a measurable property of
+the domain, not a tuning knob.
+
+**Motion belongs here too, but inverted.** Today's triggered run used the change
+signal to *select* the top-12 peaks, and lost the event — it never sampled t=4.0s
+where the grid first reads *open*. Used instead as a **negative filter** — skip a
+coarse poll only where the signal is flat across the entire interval — it can only
+remove provably-static time, and a blind spot costs a skipped poll rather than a
+missed event. That is a far safer use of a signal whose blind spots are documented
+in `motion.py` and real.
+
+This shape is also what makes the approach streamable: a coarse pass over one
+chunk, refinement inside it, emit, carry only the last state forward. Bounded
+memory, bounded latency, and partial events at chunk edges already have a
+representation.
+
+---
+
 ## 7. The model adapter
 
 `extract` is the only component that knows a model exists, and it talks to it
@@ -603,7 +709,6 @@ the reviewer's setup to one standard vLLM container.
   "video": "warehouse_02.mp4",
   "duration_s": 142.6,
   "queries": ["a forklift reverses"],
-  "model": "nvidia/Cosmos3-Edge",
   "events": [
     {
       "description": "a forklift reverses",   // which query this matched
@@ -611,12 +716,38 @@ the reviewer's setup to one standard vLLM container.
       "end_s": 15.10,
       "confidence": 0.82,                     // ranking signal, NOT a probability
       "evidence": "forklift moving backward toward the rack",
-      "partial": false,                       // true if truncated by an observation edge
-      "source_windows": [1, 2]                // provenance
+      "partial": false,                       // true if the true extent is unknown
+      "source_windows": [1, 2]                // provenance; empty for `states`
     }
+  ],
+  "run": {                                    // how this result was produced
+    "model": "nvidia/Cosmos3-Edge",
+    "backend": "vllm",
+    "sample_fps": 4.0,
+    "window_s": 12.0,                         // span_s under the `states` strategy
+    "stride_s": 9.0,                          // step_s under the `states` strategy
+    "windows": 16,
+    "model_calls": 16,
+    "elapsed_s": 62.4,
+    "stub": false                             // stub results are refused by the eval
+  },
+  "polls": [                                  // `states` only; null otherwise
+    {"t": 12.0, "subject": "forklift", "state": "the forklift is moving",
+     "truncated": false, "text": "The forklift is moving backward..."}
   ]
 }
 ```
+
+The exact shape is generated from the code, not transcribed by hand:
+
+```bash
+make schema          # writes schema.json, the JSON Schema for this contract
+```
+
+That matters because this section was wrong for a while in three ways at once --
+it showed a top-level `model` that does not exist, and omitted `run` and `polls`
+which do. Prose describing a contract drifts from the contract; a generated
+artifact cannot.
 
 `evidence` and `source_windows` are there so a result can be argued with. A client
 who disagrees with a detection can see what the model claimed to see and which part
@@ -1681,17 +1812,30 @@ Sorting the fifteen labelled events by the *shape* of what is being asked:
 |---|---|---|
 | configuration of one object | door open / closed | **yes** — 6 of 6 door events hit |
 | posture of one actor | sitting / standing | expressible, but fails when several people are present |
-| **motion** | *"a vehicle reverses"*, *"the machine stops moving"* | **no** — not readable from a single window |
+| **direction of motion** | *"a vehicle reverses"* | **no** — a window shows position, not which way it is going |
+| **presence of motion** | *"the machine stops moving"*, *"a vehicle stops moving"* | **expressible** — `moving / stationary`. Several frames in one window do show whether a thing is where it was |
 | **relation between actors** | *"someone hands an object to another person"* | **no** — not a state of any one object |
 | **compound or abstract** | *"a person buys something"*, *"a vehicle drops someone off"* | **no** — a sequence, not a state |
 
-Two of the brief's three worked examples — *"a forklift reverses"* and *"the
-machine stops moving"* — are motion, and fall outside.
+**"Motion" is two different questions and only one of them is outside.**
 
-**Motion is not a state.** It has failed under every framing tried: event queries,
-state polling, pairwise comparison, and captions. A single 2-second window shows
-position, not velocity. Expressing it needs a different primitive — comparing
-consecutive captions for movement language rather than classifying one.
+*Being stationary* is a persistent property: a 2-second window contains several
+frames, and a thing in the same position across all of them is observably not
+moving. So *"the machine stops moving"* decomposes to `moving / stationary`, and
+`states.json` carries exactly that pair for *"a vehicle stops moving"*. It is
+expressible. Whether the model actually reads it is a separate question, and one
+the labelled set answers — `school.G300` carries that event.
+
+*Direction* is not. *"A forklift reverses"* asks which way a thing is going, and a
+window of positions does not carry a sign. It has failed under every framing
+tried: event queries, state polling, pairwise comparison, and captions. Expressing
+it needs a different primitive — comparing consecutive captions for movement
+language rather than classifying one.
+
+So of the brief's three worked examples, *"a person enters through the door"* and
+*"the machine stops moving"* are in shape, and *"a forklift reverses"* is not. An
+earlier version of this table lumped both motion questions together and claimed
+two of three fell outside. That was pessimistic and wrong.
 
 **Relations are not states.** *"Someone hands an object to another person"* is a
 relation between two actors evolving over time. There is no object whose binary
