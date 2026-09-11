@@ -73,6 +73,13 @@ def run(
         None, "--trigger/--no-trigger",
         help="states only: caption where the picture changed instead of on a "
              "fixed grid."),
+    step_s: float = typer.Option(
+        None, help="states only: seconds between polls. This is the boundary "
+                   "resolution under uniform polling."),
+    span_s: float = typer.Option(
+        None, help="states only: seconds of frames shown per poll. Larger than "
+                   "--step-s means consecutive polls overlap, and a disagreement "
+                   "between them brackets the change only to their union."),
 ) -> None:
     """Find events in a video matching one or more descriptions."""
     from .backends import make_backend
@@ -104,6 +111,8 @@ def run(
                 "windowing.stride_s": stride_s,
                 "strategy": strategy,
                 "states.trigger": trigger,
+                "states.step_s": step_s,
+                "states.span_s": span_s,
             },
         )
         for w in cfg.warnings():

@@ -1371,14 +1371,28 @@ description asserted neither open nor closed, and the parser declined rather tha
 guessing.
 
 Driving the same polls from the change signal (`motion.py`, top-12 peaks):
-**12 calls, 63s** — 9.9x fewer calls, 7.2x faster — with both events still found.
-Nine of the twelve calls landed inside the two events, which is the change signal
-doing exactly what it was added to do.
+**12 calls, 68s** — 9.9x fewer calls, 6.9x faster. Nine of the twelve calls landed
+inside the two events, so the signal found the right places.
 
-| | calls | time | event 1 | event 2 |
-|---|---|---|---|---|
-| uniform, 1s grid | 119 | 453s | 5.50–8.50 (conf 1.0) | 93.50–96.50 (conf 1.0) |
-| triggered, top-12 | 12 | 63s | 6.25–8.50 (conf 0.4, partial) | 93.50–95.75 (conf 0.4, partial) |
+It then lost the event anyway. Both runs below come from **one server instance**,
+which turns out to matter:
+
+| | calls | time | event 1 | tIoU vs label | event 2 |
+|---|---|---|---|---|---|
+| uniform, 1s grid | 119 | 467s | 3.50–8.50 @ 1.0 | **0.406** | 93.50–96.50 @ 1.0 |
+| triggered, top-12 | 12 | 68s | 6.25–9.50 @ 0.4, partial | **0.000** | 93.25–95.75 @ 0.4 |
+
+The triggered interval begins after the label ends. The cause is specific: the
+uniform grid first reads *open* at **t=4.0s**, and the trigger never polls there.
+`trigger_min_gap_s` forbids two polls closer than 2s — including at the strongest
+peak, which it had correctly identified. **The change signal finds where; the
+spacing rule then prevents it from resolving when.** That is an argument for
+triggering to locate brackets and sweeping densely inside them, not for triggering
+alone, and it is why `trigger` is off by default.
+
+An earlier version of this table showed the two strategies within 0.75s of each
+other. That comparison was invalid — the runs came from different server
+instances, and the model's answer at one poll differs between them.
 
 **Cost matters here, not as an optimisation but as a feasibility bound.** At 3.8s
 per call, uniform polling of the 13 descriptions across the 8 eval clips is about
@@ -1408,9 +1422,9 @@ Two changes, both in the derivation rather than the polling:
 
 1. **A state is not carried across an unobserved gap.** Past `carry_steps x
    step_s`, `states.edge` stops interpolating and reports what was observed: a
-   poll at `t` saw frames spanning `t ± span_s/2`, so evidence ends there and the
-   span is marked **partial**. Unknown is not the same as unchanged. This turns
-   6.25–48.75 into 6.25–8.50.
+   poll at `t` is evidence about the window `[t, t + span_s]` it was sampled from
+   and nothing outside it, so the span ends there and is marked **partial**.
+   Unknown is not the same as unchanged. This turns 6.25–48.75 into 6.25–9.50.
 2. **Boundary sharpness reaches confidence.** `confidence = agreement x
    sharpness`, where sharpness is `step_s / widest interpolated bracket`. The same
    two events now score 1.0 from the uniform grid and 0.4 from the trigger — same
@@ -1427,6 +1441,62 @@ the person reaching for and working the knob from 3.0s; the model reports the do
 **visibly open** from ~6s. Both readings were confirmed by hand on this clip. That
 offset is definitional and it caps achievable tIoU on short events no matter how
 dense the polling gets.
+
+#### The same input does not always give the same answer
+
+Temperature is 0, yet the model's answer at one poll moved between runs. Chasing
+it down produced three measurements, in order:
+
+1. **Within one server instance, repeats are bit-identical.** The same triggered
+   command five times: identical timelines, identical intervals, identical
+   confidences. Whatever varies, it is not per-request sampling.
+2. **Across a server restart, the answer changes.** The poll at t=5.0s read
+   *closed*, then *open* after a redeploy, then *closed* again after
+   `serve-down && serve-bg`. The uniform run's first *open* moved from t=6.0 to
+   t=4.0 across the same restart.
+3. **Within one instance, the same frames give different answers under different
+   request histories.** In a single server session, the triggered run read t=5.0
+   as *closed* and the uniform run sixty seconds later read it as *open*. Both
+   sample `[t, t + span_s]` through the same code path, so the frames were
+   identical; the only difference is that one had issued 4 prior requests and the
+   other 5.
+
+The most likely cause is vLLM's batching and prefix-cache state changing
+floating-point reduction order, which flips only near-ties — and t=5.0 is exactly
+a near-tie, since the door panel begins to swing at ~5.0s on this clip. That is a
+**hypothesis**, not a measurement: confirming it needs logprobs at that poll across
+states, which has not been run.
+
+What is established is enough to act on. **A number from this pipeline is a
+property of (input, code, server instance, request history), not of (input, code)
+alone.** Comparisons are therefore only valid inside a single server session, and
+the uniform-vs-triggered table above was re-run for that reason. Results reported
+without that scope — including two figures in an earlier revision of this document
+— compared different things and said so confidently.
+
+#### Poll timestamps and window extents disagree
+
+`_poll_states` samples `[t, t + span_s]` and records the poll at `t`, while
+`parse_state` takes the last state mentioned — so a window in which the state
+*changes* reports its **ending** state. With `step_s=1.0` and `span_s=2.0` those
+two conventions are 2 seconds apart, and consecutive polls overlap by half.
+
+On the fresh uniform run, t=3.0 (window 3.0–5.0) read *closed* and t=4.0 (window
+4.0–6.0) read *open*. Those windows overlap and disagree, so the change is bracketed
+only to their **union, 3.0–6.0**. The derivation reports 3.50 — the midpoint of the
+poll labels — which is a convention, not a measurement. Under the parse's own
+semantics it should be nearer 5.5.
+
+This matters more than it looks, because **the bias is currently helping the score
+for the wrong reason.** The model reports the door *visibly open* later than MEVA's
+*opening* activity; the timestamp convention shifts every boundary earlier. Two
+errors point in opposite directions and partly cancel, and the 0.406 above banks
+that cancellation.
+
+`span_s == step_s` removes the ambiguity at **no extra cost** — the call count is
+set by `step_s` alone. It is exposed as `--span-s` / `SPAN_S=` for exactly this
+experiment. UNRESOLVED: not yet run, and the honest expectation is that it makes
+the headline number worse.
 
 #### The ground truth is not exhaustive, and now we can prove it
 

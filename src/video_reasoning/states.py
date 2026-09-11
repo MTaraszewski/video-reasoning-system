@@ -151,17 +151,24 @@ def edge(tr: Transition, *, max_bracket_s: float, span_s: float,
     after the grid was removed.
 
     Past `max_bracket_s` we stop interpolating and report what was observed
-    instead. A poll at t saw frames spanning t +/- span_s/2, so evidence for its
-    state ends there; after that the state is unknown, which is not the same as
-    unchanged. The caller marks such a span partial.
+    instead. `_poll_states` samples `[t, t + span_s]`, so a poll at t is evidence
+    about that window and nothing outside it: the target state is known no earlier
+    than the start of the first window that reported it, and no later than the end
+    of the last one. Beyond those the state is unknown, which is not the same as
+    unchanged -- the caller marks such a span partial.
+
+    Using the window extents matters. An earlier version used `t +/- span_s/2`,
+    which both claimed evidence from before a window began and cut the far edge a
+    second short of what was actually seen.
 
     Returns the time and whether the bracket was too wide to interpolate.
     """
     lo, hi = tr.bracket
     if tr.width <= max_bracket_s:
         return tr.at, False
-    half = span_s / 2
-    return (round(hi - half, 3), True) if opening else (round(lo + half, 3), True)
+    # opening: `hi` is the first poll in the target state, its window starts there.
+    # closing: `lo` is the last poll in it, its window runs to lo + span_s.
+    return (round(hi, 3), True) if opening else (round(lo + span_s, 3), True)
 
 
 def boundaries(polls: list[StatePoll], states: tuple[str, str]) -> Boundaries:
