@@ -231,6 +231,18 @@ def validate(
         err_console.print(f"[red]not valid JSON[/] {path}: {e}")
         raise typer.Exit(1)
 
+    # An eval report is a different document with a different shape. Told that
+    # `video`, `duration_s`, `queries` and `run` are all missing, a reader
+    # reasonably concludes the contract is broken. It is the wrong file.
+    if "predictions" in data and "overall" in data:
+        err_console.print(
+            f"[yellow]{f.name} is an evaluation report, not a results file.[/]")
+        err_console.print(
+            "  The contract covers what `find_events` returns; an eval report "
+            "holds metrics and per-prediction rows instead.")
+        err_console.print("  fix validate a run's output, e.g. out/events.json")
+        raise typer.Exit(2)
+
     try:
         res = FindEventsResult(**data)
     except ValidationError as e:
