@@ -150,6 +150,27 @@ OFFSET_PROMPT ?= localize
 CONTROL_LABELS ?= /data/meva-examples/labels.json
 CONTROL_DATA   ?= /data/meva-examples
 
+# Where is a running eval right now? The eval prints one line per CLIP and
+# nothing in between, so a states run goes quiet for 30+ minutes at a time and
+# looks hung. This reconstructs the position from the model server's request log
+# without touching the running job -- see scripts/eval_progress.sh for why that
+# is sound.
+.PHONY: eval-progress eval-watch
+eval-progress:  ## [any] where is a running eval? one-shot
+	@SUBJECTS=$(SUBJECTS) POLLS=$(POLLS) CLIPS=$(CLIPS) STEP_S=$(STEP_S) \
+	  scripts/eval_progress.sh
+
+eval-watch:  ## [any] same, refreshing every WATCH_S seconds (default 30)
+	@SUBJECTS=$(SUBJECTS) POLLS=$(POLLS) CLIPS=$(CLIPS) STEP_S=$(STEP_S) \
+	  scripts/eval_progress.sh $(WATCH_S)
+
+# Defaults describe the run we measure most; override for a different shape.
+SUBJECTS ?= 4
+POLLS    ?= 119
+CLIPS    ?= 4
+STEP_S   ?= 1.0
+WATCH_S  ?= 30
+
 # Every check that needs no GPU, in one command. This is what answers "does the
 # repo work on my machine" before anyone rents an instance -- it exercises the
 # host, the image, the whole pipeline end to end, the data, the decoder, and the
