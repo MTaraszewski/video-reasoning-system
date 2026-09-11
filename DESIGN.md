@@ -150,33 +150,63 @@ never produces a reported metric — see §12.
 
 ## 4. Components
 
+There are **two engines behind one `find_events`**, chosen by a flag, and the
+second routes per description before spending anything.
+
 ```mermaid
-graph LR
-    A["decode<br/>sample + timestamp"] --> B["windows<br/>plan + assign"]
-    B --> C["extract<br/>model adapter"]
-    C --> D["merge<br/>stitch + dedup"]
-    D --> E["schema<br/>validate"]
+graph TB
+    Q["video + descriptions"] --> ST{"strategy"}
 
-    C <-->|"chat completions"| M["vLLM"]
+    ST -->|"windows — Approach 1"| W1["decode<br/>sample + timestamp"]
+    W1 --> W2["extract<br/>ask WHEN"]
+    W2 --> W3["merge<br/>stitch + dedup"]
+    W3 --> OUT["schema<br/>validate"]
 
-    style C fill:#2d4a8a,stroke:#1a2f5a,color:#fff
+    ST -->|"states — Approach 3"| R{"has a<br/>state pair?"}
+    R -->|"no"| DEC["declined<br/>not expressible"]
+    DEC --> OUT
+    R -->|"yes"| G["group by state set<br/>9 descriptions → 4 subjects"]
+    G --> P["poll<br/>caption each step"]
+    P --> PA["parse<br/>string match"]
+    PA --> DV["derive<br/>transitions → events"]
+    DV --> OUT
+
+    W2 <-->|"chat completions"| M["vLLM"]
+    P <-->|"chat completions"| M
+
+    style W2 fill:#2d4a8a,stroke:#1a2f5a,color:#fff
+    style P fill:#2d4a8a,stroke:#1a2f5a,color:#fff
     style M fill:#3d6b2f,stroke:#254019,color:#fff
+    style DEC fill:#7a3b3b,stroke:#4a1f1f,color:#fff
 ```
 
-| Component | Responsibility | Why it is its own piece |
-|---|---|---|
-| `decode` | Open the video, sample frames at a target rate, burn an absolute timestamp onto each | The timestamp overlay is the mechanism the whole system rests on |
-| `windows` | Plan overlapping windows over the duration; assign frames; cap frames per window | The long-video answer, and the only place the context limit is reasoned about |
-| `extract` | One `(window, query)` → candidate events, via the model adapter | The only component that knows a model exists |
-| `merge` | Stitch candidates across window boundaries; de-duplicate; flag truncation | Where overlapping windows become one clean answer |
-| `schema` | The public contract, validated | The product surface |
+**Only two boxes are blue, and they are the only ones that call a model.** That is
+the whole argument for Approach 3: `parse` and `derive` are string matching and
+arithmetic in code, doing the temporal reasoning the model was measured as unable
+to do, while the model is left with the perception it can do.
 
-Data flows one way. Only `extract` talks to the network, so everything else is
-testable and debuggable offline.
+| Component | Used by | Responsibility |
+|---|---|---|
+| `decode` | both | Open the video, sample frames at a target rate, optionally burn an absolute timestamp onto each |
+| `windows` | windows | Plan overlapping windows; assign frames; cap frames per window |
+| `extract` | windows | One `(window, query)` → candidate events, via the model adapter |
+| `merge` | windows | Stitch candidates across window boundaries; de-duplicate; flag truncation |
+| **router** | states | Description → state pair, or **declined**. Decided before any GPU spend |
+| **`states.poll`** | states | Caption the clip on a grid, or only where the picture changed |
+| **`states.parse`** | states | Read which state a caption asserts. Deterministic — a model was tried here and scored 0.00 |
+| **`states.derive`** | states | Transitions → events, with confidence from agreement, sharpness and coverage |
+| `motion` | states | Inter-frame change signal, for triggered polling |
+| `schema` | both | The public contract, validated |
+
+Data flows one way. Only `extract` and `states.poll` talk to the network, so
+everything else is testable and debuggable offline.
 
 ---
 
 ## 5. Request flow
+
+**Approach 1 — ask the model when the event happened.** One call per
+`(window, description)`, doing three jobs at once.
 
 ```mermaid
 sequenceDiagram
@@ -199,6 +229,40 @@ sequenceDiagram
     F->>F: score, flag partials, validate
     F-->>C: events JSON
 ```
+
+**Approach 3 — caption, parse, derive.** The model is asked only what the scene
+*is*. Notice where the loop sits: once per **subject**, not once per description,
+and the model is never asked about time.
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant F as Finder
+    participant V as vLLM
+
+    C->>F: video + descriptions
+    F->>F: route each description to its state pair
+    Note over F: no pair → declined as not expressible,<br/>never as "no events found"
+    F->>F: group by state set — 9 descriptions, 4 subjects
+
+    loop each subject x each timestep
+        F->>V: frames + "what state is the door in?"
+        V-->>F: a sentence describing the state
+        F->>F: parse the state — string match, no model
+    end
+
+    loop each description
+        F->>F: find transitions into its target state
+        F->>F: place boundaries, refusing to interpolate<br/>across unobserved gaps
+        F->>F: confidence = agreement x sharpness x coverage
+    end
+    F->>F: validate
+    F-->>C: events JSON + the captions behind them
+```
+
+The asymmetry between the two is the finding. Approach 1 asks one question that
+requires detection, localisation and formatting together; Approach 3 asks a
+question with one job and does the rest in code.
 
 ---
 

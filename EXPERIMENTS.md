@@ -160,7 +160,35 @@ comfortable explanation.
 
 ---
 
-## 8 — Approach 3: caption, parse, derive
+## 8 — Approach 2: ask the model to compare two moments
+
+**Why.** If the model cannot say *when* something happened, perhaps it can say
+*which of two moments* shows the event — a comparison is a much smaller question
+than a localisation, and a binary answer is easy to score.
+
+**Method.** Show two short spans and ask which one contains the described event,
+or whether the state differs between them. Probe script, never pipeline code.
+
+**Result.** It failed for a reason that had nothing to do with vision. Averaged
+over both option orders, the model scored **exactly 0.00 on every description** —
+the signature of answering by *position* rather than by content. Asked "A or B" it
+reliably picked the last option offered; reversing the order reversed the answer.
+
+**What changed.** Two things, and the second matters more than the first.
+
+The immediate lesson was to stop asking the model multiple-choice questions.
+Option-order bias cannot be prompted away, and averaging two orders costs double
+for an answer that carries no information.
+
+The deeper lesson shaped Approach 3: **ask the model to describe, not to choose.**
+A free-form sentence — *"the door is closed in the initial frames and then opens"* —
+has no options to be biased by, and the choosing can be done afterwards in code
+where it is deterministic. Approach 3's `parse_state` exists because Approach 2
+proved a model could not be trusted with that step.
+
+---
+
+## 9 — Approach 3: caption, parse, derive
 
 **Why.** If the model can perceive but cannot reason about time, give it only the
 perception and do the temporal reasoning in code.
@@ -182,7 +210,7 @@ switchable with `--strategy states`, so both remain runnable for comparison.
 
 ---
 
-## 9 — What happens over a whole clip, not a window around the answer?
+## 10 — What happens over a whole clip, not a window around the answer?
 
 **Why.** Every Approach 3 number so far came from short windows placed around a
 known label. That is not the task.
@@ -205,7 +233,7 @@ s/call, the full eval was 9.3 hours.
 
 ---
 
-## 10 — Can we poll only where something changes?
+## 11 — Can we poll only where something changes?
 
 **Why.** If most polls confirm stillness, spend them where the picture moves. This
 is the real-time design: a cheap signal decides when the expensive model runs.
@@ -238,7 +266,7 @@ marking such spans partial.
 
 ---
 
-## 11 — Is any of this reproducible run to run?
+## 12 — Is any of this reproducible run to run?
 
 **Why.** A poll's answer changed between two runs at temperature 0. If results move
 on their own, no comparison above means anything.
@@ -271,7 +299,7 @@ confidently; that claim was wrong and was withdrawn.
 
 ---
 
-## 12 — Do overlapping poll windows bias the boundaries?
+## 13 — Do overlapping poll windows bias the boundaries?
 
 **Why.** A poll recorded at `t` is sampled from `[t, t+span_s]`, and the parser takes
 the *last* state mentioned — so a window where the state changes reports its
@@ -305,7 +333,7 @@ evidence stands behind an interval*.
 
 ---
 
-## 13 — Making the full evaluation affordable
+## 14 — Making the full evaluation affordable
 
 **Why.** Scoring Approach 3 across the set is the one thing between measured work
 and a defensible claim, and at 8,568 calls it was 9.3 hours.
@@ -332,8 +360,49 @@ would give both subjects the same state. Mitigated structurally — one labelled
 per subject, longest-subject-first matching, and a subject with no line reported as
 **no answer** rather than inheriting a neighbour's.
 
-**Status:** grouping is verified against a fake captioning backend. Whether the
-shared prompt keeps the parse rate is **measured separately and not yet concluded**.
+**Grouping works.** Verified against a fake captioning backend: 5 descriptions
+collapse to 2 sweeps, the three door descriptions return identical intervals, and
+the reversed sit/stand pair correctly returns opposite intervals from the same
+polls.
+
+### Shared captioning was measured, and it fails
+
+Run on `admin.G326` with all four subjects, 119 calls, 1,215 s.
+
+| subject | polls parsing to a state | per-subject baseline |
+|---|---|---|
+| `door` | 35 / 119 = **29%** | 101 / 119 = **85%** |
+| `car door` | 7 / 119 = 6% | — |
+| `person` | **0 / 119** | — |
+| `vehicle` | 1 / 119 = 1% | — |
+
+Asked about four things at once, the model mentions one or none. `person` never
+parsed in 119 calls.
+
+It is also **not fast**: 10.21 s per call against 3.92 s for a single-subject call,
+nearly triple, because the answer is four times longer. The net saving over the
+grouped path is ~1.5x, not 4x — 2.7 h against 4.1 h.
+
+And the failure is worse than omission. The captions show the subjects actively
+**interfering**:
+
+> *"The car door — wait, maybe the door is a car door? Wait, the frames show a
+> do…"*
+> *"- car door: if the door is a car door, then the state is open, and no change."*
+
+Naming `door` and `car door` in one prompt made the model conflate them. It
+reported **"a vehicle door opens" as 5.0–97.0 s** on a clip with no vehicle-door
+label, and the door event itself degraded from 3.50–8.50 (tIoU 0.406) to
+4.50–9.00 (tIoU ~0.21).
+
+**Verdict: `shared_caption` stays off.** The measurement is kept as a clean
+negative result about the caption-once-query-many pattern at this model size — it
+is the architecture NVIDIA's VSS uses, and at 4B with similar subjects in one
+prompt it does not survive.
+
+**What changed.** That 92-second false positive at confidence 1.0 is what forced
+the **coverage** factor into the confidence score: four polls held a span that was
+93% unobserved, and both existing factors were maximal on it.
 
 ---
 

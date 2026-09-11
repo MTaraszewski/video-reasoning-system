@@ -137,16 +137,21 @@ comparison is one argument apart rather than one branch apart.
 
 | | Approach 1 (windows) | Approach 3 (states) |
 |---|---|---|
-| mean tIoU, 8 clips / 15 events | **0.0021** | *not yet scored across the set* |
-| R@1 tIoU≥0.3 | **0.000** | — |
+| mean tIoU — 8 clips, 15 events | **0.0021** | *not yet scored* |
+| mean tIoU — 4 clips, 8 events | **0.000** | *not yet scored* |
+| R@1 tIoU≥0.3 | 0.000 | — |
+| recall@0.5 | 0.000 | — |
 | false-positive rate | 0.80 | — |
-| model calls | 1,352 | 3,808 (grouped) |
-| single clip `admin.G326` | event at 90–102s | **3.50–8.50s, tIoU 0.406** |
+| model calls | 1,352 | 1,904 (4 clips, grouped) |
+| single clip `admin.G326` | event at 90–102 s | **3.50–8.50 s, tIoU 0.406** |
 
-**Approach 3 has not been scored across the full set.** The harness could not run
-it until recently, and the run itself takes 1.5–4 hours. Single-clip results are
-promising and single-clip results are not an evaluation; that gap is stated rather
-than papered over.
+Approach 1 has **zero overlap with any label** on real footage — not a low score, no
+overlap at all. On the same clip where it placed the door opening at 90–102 s
+against a 3.0–5.7 s label, Approach 3 returns 3.50–8.50 s.
+
+**But Approach 3 has not been scored across a set.** The harness could not run it
+until recently and the run takes hours. One clip is an anecdote; that gap is stated
+rather than papered over, and it is the only number missing from this document.
 
 The capability probe, on synthetic clips with exact constructed ground truth:
 

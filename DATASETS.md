@@ -419,6 +419,38 @@ as the original. Re-encoding, not stream copy — a stream copy cuts only at
 keyframes, so the real start drifts by up to a keyframe interval and every label
 silently shifts with it.
 
+### MEVA annotates selected instances, not everything that happens
+
+Confirmed, not assumed, and it changes how one metric should be read.
+
+A full-clip run on `admin.G326` reported a door opening at **94-96s** that our
+labels do not contain. It was checked by hand and **it is real**.
+
+It is absent because MEVA never annotated it. The annotation file for the entire
+five-minute source holds exactly two activity instances:
+
+```
+Open_Facility_Door   source 85.2-87.9 s   ->  clip 3.0-5.7 s   labelled
+Enter_Facility       source 87.4-89.7 s   ->  clip 5.2-7.5 s   labelled
+```
+
+That is the complete file, not a subset we trimmed. Our labels reproduce it in
+full. So MEVA is an index of **selected activity instances**, not of everything on
+camera, and a system that finds more than MEVA declared is not necessarily wrong.
+
+**Which metric this reaches, exactly.** Only `precision@0.5`, which is
+`tp / n_predictions` -- a correct detection of an unannotated event sits in the
+denominator and can never be a true positive. It does **not** reach:
+
+- `false_positive_rate`, which keys on (video, description) pairs, and this clip
+  does carry that description as a truth
+- `mean_tIoU` and `mean_relative_error`, which iterate over truths and take the
+  best matching prediction, so surplus predictions cannot reach them
+
+**Why windowed evaluation could never have shown this.** Windows placed around
+known labels can only ever find labelled events. It took a full-clip run to
+surface, which is an argument for running the whole clip even when it costs more.
+
 ### Kept as measured negatives
 
 `G328` (41 px), `G336` (38 px) and `G301` (121 px) stay in the repo, unlabelled and
