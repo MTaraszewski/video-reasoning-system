@@ -112,6 +112,19 @@ can do the third (28 of 30 parsed) and the second when told the event is present
 (3.1s median error). It cannot do the first. Mixing all three into one answer meant
 a wrong output never said which stage had failed.
 
+**Approach 2 — ask the model to compare two moments.** If it cannot say *when*,
+perhaps it can say *which of these two spans* shows the event. A comparison is a
+smaller question than a localisation.
+
+It failed for a reason that had nothing to do with vision. Averaged over both
+option orders, it scored **exactly 0.00 on every description** — the signature of
+answering by *position* rather than content. Asked "A or B" it reliably picked
+whichever came last, and reversing the order reversed the answer.
+
+The lesson shaped what came next: **ask the model to describe, not to choose.** A
+free-form sentence has no options to be biased by, and the choosing can be done
+afterwards in code where it is deterministic.
+
 **Approach 3 — caption, parse, derive.** Ask only what the scene *is*, repeatedly:
 *"what state is the door in?"* Parse the answer in code. Derive the event from the
 transition between states. The model does perception, which it can do; the code
@@ -187,6 +200,48 @@ prompt; and a result depends on which vLLM server instance produced it (see
 [EXPERIMENTS.md](EXPERIMENTS.md)).
 
 ---
+
+## What was used, and what was not
+
+Four data sources were selected and assessed. **Two produced numbers**, and the
+distinction is worth being explicit about, because an assessed dataset can look
+like a used one.
+
+| source | status | used for |
+|---|---|---|
+| **MEVA** (CC BY 4.0, public bucket) | **used** | the real eval: 8 clips, 15 hand-labelled events |
+| **synthetic** (generated here) | **used** | the capability probe — exact constructed ground truth |
+| MEVA curated examples | fetched, **not used** | the ceiling test (`eval-control`) was never run |
+| `supervision` sample videos | fetched, **not used** | licence unstated, so never a candidate for reported numbers |
+| VANTAGE-Bench | assessed, **never fetched** | gated; needs accepted terms and a token |
+
+**Every measured number in this repository comes from MEVA or from synthetic
+clips.** Nothing else contributed to a result.
+
+The system is not tied to either. `find_events` takes a video path and a list of
+descriptions, so a new dataset needs only clips plus a `labels.json` in the same
+shape — see [DATASETS.md](DATASETS.md#reproducing-the-eval-set). What does *not*
+transfer automatically is `states.json`: the description → state-pair mapping is
+hand-written, so a new domain needs that written too. Deriving it from the
+description is one cheap text call and is not built.
+
+## Not done, and why
+
+Traceability for everything planned or implied that does not exist. An unrun
+experiment quoted as a result is the worst kind of error, so these are named.
+
+| not done | why | consequence |
+|---|---|---|
+| **Approach 3 scored across a set** | the harness could not run it until recently; the run takes hours | the one hole in the results table |
+| ceiling test — activity name burned into the frame | not built out | cannot separate "cannot recognise events" from "cannot see at this resolution" |
+| Qwen3-VL-8B vs Cosmos-Reason2-8B | neither fits in the L4's 22 GiB with a 48-frame window | the comparison isolating NVIDIA's post-training stays open |
+| held-out set | needs more labelled clips, not a post-hoc split | every clip that produced a number also shaped a prompt or threshold |
+| deriving state pairs from the description | one cheap text call; unbuilt | a human is still in the loop, once per new description |
+| two-stage trigger — locate brackets, then sweep inside them | designed from the triggered-polling result, not built | triggered polling is 10× cheaper and loses the event, so it stays off |
+| instant-vs-span metric in `metrics.py` | interval tIoU already works | transition scoring lives in a script rather than the harness |
+| captioning in the stub and replay backends | the recorder hooks `extract()` only | Approach 3 cannot be exercised without a GPU |
+| `make sweep`, `make viz` | marked planned in the Makefile | fps/window frontier and timeline rendering unavailable |
+| tests, CI, linters, scaling, security | the brief states these are not evaluated | deliberate — see [DESIGN.md §15](DESIGN.md) |
 
 ## Where the detail lives
 
