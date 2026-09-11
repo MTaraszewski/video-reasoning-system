@@ -28,17 +28,41 @@ make demo             # end-to-end on a generated clip, stub backend
 `make demo` uses a stub model, so the output is synthetic and the eval harness
 refuses to score it. It proves the pipeline, not the model.
 
+## Check everything works before renting a GPU
+
+```bash
+make smoke
+```
+
+Runs every check that needs no GPU and reports each one: the host, the image, the
+pipeline end to end, the labelled data, the decoder, and the **real** model adapter
+against a fake endpoint that returns refusals, hallucinations, malformed JSON and
+think-blocks. Takes about three minutes.
+
+It does not prove the model works — nothing in it touches real weights.
+
 ## Reproduce the measured results — needs one GPU
 
 ```bash
-make data-eval        # rebuild the 8 labelled clips from public sources
-make pull             # pull the pinned vLLM image (large; do it early)
-make serve-bg         # start the model
-make serve-wait       # block until it answers
+make preflight                    # can this host run it at all?
+make build                        # build the CPU image
+make data-eval                    # rebuild the 8 labelled clips from public sources
+make pull                         # pull the pinned vLLM image (large; do it early)
+make serve-bg && make serve-wait  # start the model, block until it answers
 
-make eval                                        # Approach 1
-make eval STRATEGY=states EVAL_OUT=/out/eval-states.json   # Approach 3
+make eval                                                 # Approach 1   ~1.2 h
+make eval STRATEGY=states EVAL_OUT=/out/eval-states.json   # Approach 3   ~4.1 h
+
+make serve-down
 ```
+
+**That is 5.3 hours end to end.** Add `EVAL_LIMIT=4` to both for a ~3-hour version,
+or `EVAL_LIMIT=1` to prove the whole path works in about ten minutes before
+committing a GPU to the rest.
+
+`EVAL_OUT=` is not optional on the second command. Both write `/out/eval.json` by
+default, so without it the second run silently overwrites the first — a trap that
+cost two comparisons during development.
 
 `make data-eval` downloads from MEVA's **public** bucket over plain HTTPS — no AWS
 account, no credentials, no `aws` CLI. The clips are not in the repository;

@@ -150,6 +150,35 @@ OFFSET_PROMPT ?= localize
 CONTROL_LABELS ?= /data/meva-examples/labels.json
 CONTROL_DATA   ?= /data/meva-examples
 
+# Every check that needs no GPU, in one command. This is what answers "does the
+# repo work on my machine" before anyone rents an instance -- it exercises the
+# host, the image, the whole pipeline end to end, the data, the decoder, and the
+# real model adapter against a fake endpoint.
+#
+# It does NOT prove the model works. Nothing here touches a GPU or real weights,
+# and `demo` runs on the stub, whose results the eval harness refuses to score.
+SMOKE ?= preflight build demo verify-data frames fake-test
+
+.PHONY: smoke
+smoke:  ## [any] run every check that needs no GPU, and report which passed
+	@fail=0; \
+	for t in $(SMOKE); do \
+	  printf '  %-14s ' "$$t"; \
+	  if $(MAKE) --no-print-directory $$t >/tmp/smoke-$$t.log 2>&1; then \
+	    echo "PASS"; \
+	  else \
+	    echo "FAIL   -> /tmp/smoke-$$t.log"; fail=1; \
+	  fi; \
+	done; \
+	$(MAKE) --no-print-directory fake-down >/dev/null 2>&1 || true; \
+	echo; \
+	if [ $$fail -eq 0 ]; then \
+	  echo "all $(words $(SMOKE)) checks passed - no GPU was used"; \
+	  echo "next: make pull && make serve-bg && make serve-wait && make eval"; \
+	else \
+	  echo "SOME CHECKS FAILED - see the logs named above"; exit 1; \
+	fi
+
 eval:  ## [gpu] run the labelled set, print the metric table
 	@mkdir -p $(OUT_DIR)
 	@# The labelled clips are rebuilt from labels.json, which IS committed. Without
