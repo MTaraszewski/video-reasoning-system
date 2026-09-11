@@ -582,6 +582,55 @@ chunk, refinement inside it, emit, carry only the last state forward. Bounded
 memory, bounded latency, and partial events at chunk edges already have a
 representation.
 
+#### The decode cost is worse than the model cost, and it is quadratic
+
+Stated above as if model calls were the binding constraint. **They are not.**
+`sample_frames` decodes from the start of the file on every call -- there is no
+`container.seek()` -- so a poll at t=118s decodes 118 seconds of video to obtain
+two. Measured on `admin.G326`, one poll:
+
+```
+start_s=   0.0   0.26 s
+start_s=  30.0   1.12 s
+start_s=  60.0   1.95 s
+start_s=  90.0   2.84 s
+start_s= 118.0   3.69 s        ~0.029 s per second of offset
+```
+
+Summed over a clip's polls that is quadratic in duration:
+
+| clip length | decode, polls only | against model time |
+|---|---|---|
+| 120s | **235s (~3.9 min)** | ~11% on top of 31 min |
+| 1800s | **~13 hours** | dwarfs the ~8 hours of model calls |
+
+It also accounts for the gap between predicted and observed clip time in the
+labelled run -- 31 minutes of model calls, 35-38 minutes elapsed.
+
+**The fix is `container.seek()` to the keyframe before `start_s`.** A few lines.
+120s of polls drop from 235s to about 31s; 1800s drops from 13 hours to about 8
+minutes.
+
+**It is a prerequisite for the coarse-to-fine design above, not an alternative to
+it.** Coarse-to-fine cuts model calls 3.7-6.3x and barely touches decode:
+
+```
+30-minute clip, coarse 4s -> 450 polls
+  decode without seek    450 x ~26s avg  =  3.3 hours    still dominates
+  decode with seek       450 x 0.26s     =  ~2 minutes
+```
+
+So neither change makes long video work alone. Together they put a 30-minute clip
+at roughly 2.2 hours, dominated by model calls -- which is the regime the work
+budget was designed to govern.
+
+**Not built, and it must be verified rather than trusted.** A subtly wrong seek
+changes *which frames are sampled*, which changes every downstream number while
+still looking entirely reasonable -- the exact failure class this document keeps
+recording. The check is cheap and decisive: sample the same windows with and
+without seek and assert the frame timestamps are identical. Nothing about accuracy
+changes if it is right; if it is wrong, everything does.
+
 ---
 
 ## 7. The model adapter

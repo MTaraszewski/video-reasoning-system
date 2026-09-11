@@ -264,6 +264,7 @@ experiment quoted as a result is the worst kind of error, so these are named.
 | held-out set | needs more labelled clips, not a post-hoc split | every clip that produced a number also shaped a prompt or threshold |
 | deriving state pairs from the description | one cheap text call; unbuilt | a human is still in the loop, once per new description |
 | two-stage trigger — locate brackets, then sweep inside them | designed from the triggered-polling result, not built | triggered polling is 10× cheaper and loses the event, so it stays off |
+| `container.seek()` in `sample_frames` | measured, not built | decode runs from the file start on every poll, so decode cost is **quadratic** in clip length: 235 s per 120 s clip, ~13 h for a 30-minute one. It is what actually caps Approach 3's video length, and a prerequisite for the coarse-to-fine design rather than an alternative |
 | instant-vs-span metric in `metrics.py` | interval tIoU already works | transition scoring lives in a script rather than the harness |
 | captioning in the stub and replay backends | the recorder hooks `extract()` only | Approach 3 cannot be exercised without a GPU |
 | `make sweep`, `make viz` | marked planned in the Makefile | fps/window frontier and timeline rendering unavailable |
