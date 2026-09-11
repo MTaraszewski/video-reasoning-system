@@ -23,6 +23,22 @@ console = Console()
 err_console = Console(stderr=True)
 
 
+def _load_states_map(path: str | None) -> dict:
+    """Load description -> (state_a, state_b). Keys starting with _ are comments.
+
+    A description with no entry is reported by the states strategy as not
+    expressible, never as "no events found". The distinction matters: "someone
+    hands an object to another person" is a relation between two actors, not a
+    binary property of one object, and reporting it as absent would blame the
+    model for the shape of the question.
+    """
+    if not path:
+        return {}
+    return {k: tuple(v) for k, v in
+            json.loads(Path(path).read_text()).items()
+            if not k.startswith("_")}
+
+
 def _fail(e: VideoReasoningError) -> None:
     """One place where errors become output, so every failure looks the same."""
     err_console.print(f"[red]{type(e).__name__}[/] {e.message}")
@@ -138,15 +154,7 @@ def run(
                 "as evidence; the eval harness will refuse to score them."
             )
 
-        # A description with no entry here is reported by the states strategy as
-        # not expressible, never as "no events found". The distinction matters:
-        # "someone hands an object to another person" is a relation between two
-        # actors, not a binary property of one object.
-        smap: dict = {}
-        if states_map:
-            smap = {k: tuple(v) for k, v in
-                    json.loads(Path(states_map).read_text()).items()
-                    if not k.startswith("_")}
+        smap = _load_states_map(states_map)
         result = find_events(video, wanted, cfg, be, prompt=prompt,
                              progress=not quiet, states_map=smap)
     except VideoReasoningError as e:
@@ -373,10 +381,25 @@ def evaluate(
     detect_threshold: float = typer.Option(
         None, help="P(present) required to localise. Higher trades recall for "
                    "precision."),
+    strategy: str = typer.Option(
+        None, help="windows (Approach 1) | states (Approach 3). Both score "
+                   "through this same harness, on the same labels."),
+    states_map: str = typer.Option(
+        None, help="JSON mapping a description to its two states. Required by "
+                   "--strategy states."),
+    shared_caption: bool = typer.Option(
+        None, "--shared-caption/--no-shared-caption",
+        help="states only: one caption per timestep covering every subject."),
+    step_s: float = typer.Option(None, help="states only: seconds between polls."),
+    span_s: float = typer.Option(None, help="states only: seconds of frames per poll."),
+    trigger: bool = typer.Option(
+        None, "--trigger/--no-trigger",
+        help="states only: poll where the picture changed, not on a fixed grid."),
 ) -> None:
     """Run the labelled set and report defensible temporal metrics."""
     from .backends import make_backend
     from .config import load_config
+    from .errors import InvalidInput
     from .evaluate import run_eval
 
     try:
@@ -385,12 +408,28 @@ def evaluate(
             "sampling.fps": fps,
             "windowing.window_s": window_s, "windowing.stride_s": stride_s,
             "detect.enabled": detect, "detect.threshold": detect_threshold,
+            "strategy": strategy,
+            "states.shared_caption": shared_caption,
+            "states.step_s": step_s, "states.span_s": span_s,
+            "states.trigger": trigger,
         })
+        smap = _load_states_map(states_map)
+        # Refuse rather than score zero. Without a map every description routes to
+        # "not expressible", the run emits nothing, and the output is a page of
+        # zeroes that reads exactly like a model that found nothing -- the most
+        # expensive kind of silent failure, since it costs a full GPU run first.
+        if cfg.strategy == "states" and not smap:
+            raise InvalidInput(
+                "--strategy states needs --states-map; without it every "
+                "description is unanswerable and the eval scores zero.",
+                fix="pass --states-map /app/states.json",
+            )
         be = make_backend(cfg, backend, replay_dir=replay)
         if hasattr(be, "check"):
             be.check()
         res = run_eval(labels, data_dir, cfg, be, prompt=prompt,
-                       progress=not quiet, gpu_hourly=gpu_hourly, limit=limit)
+                       progress=not quiet, gpu_hourly=gpu_hourly, limit=limit,
+                       states_map=smap)
     except VideoReasoningError as e:
         _fail(e)
 
@@ -399,7 +438,16 @@ def evaluate(
 
     o = res["overall"]
     console.print(f"\n[bold]Overall[/]  {res['model']}  "
+                  f"strategy={res.get('strategy', 'windows')}  "
                   f"prompt={res['prompt']}  fps={res['sampling']['fps']}")
+    cov = res.get("coverage") or {}
+    if cov.get("declined") is not None:
+        console.print(
+            f"  coverage           {cov['descriptions_routed']}/"
+            f"{cov['descriptions_total']} descriptions, "
+            f"{cov['events_routed']}/{cov['events_total']} labelled events")
+        for d in cov["declined"]:
+            console.print(f"    declined: {d}")
     console.print(f"  predictions {o['n_predictions']:<5} truths {o['n_truths']}")
     for thr in (0.3, 0.5, 0.7):
         console.print(f"  R@1 tIoU>={thr}      {o[f'R@1_tIoU{thr}']:.3f}")

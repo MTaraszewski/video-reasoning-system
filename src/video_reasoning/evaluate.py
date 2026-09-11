@@ -68,8 +68,14 @@ def run_eval(
     labels_path: str | Path, data_dir: str | Path, cfg: Config, backend: Backend,
     *, prompt: str | None = None, progress: bool = True,
     gpu_hourly: float | None = None, limit: int | None = None,
+    states_map: dict[str, tuple[str, str]] | None = None,
 ) -> dict:
-    """Evaluate on every labelled clip and report metrics."""
+    """Evaluate on every labelled clip and report metrics.
+
+    `states_map` is what makes the `states` strategy scoreable. Without it every
+    description routes to "not expressible" and the run scores zero -- which would
+    read as a model result and is a wiring failure.
+    """
     if getattr(backend, "is_stub", False):
         raise InvalidInput(
             "refusing to evaluate with the stub backend: its output is a "
@@ -123,7 +129,7 @@ def run_eval(
         if progress:
             print(f"  [{i}/{len(plan)}] {video} x {len(queries)} description(s)")
         result = find_events(path, queries, cfg, backend, prompt=prompt,
-                             progress=False)
+                             progress=False, states_map=states_map)
         total_video_s += result.duration_s
         total_calls += result.run.model_calls
         for e in result.events:
@@ -148,15 +154,55 @@ def run_eval(
     main_truths = [t for t in truths if t["video"] not in control_videos]
     main_preds = [p for p in preds if p["video"] not in control_videos]
     metrics = aggregate(main_preds, main_truths)
+
+    # Coverage, reported as a first-class result rather than a footnote.
+    #
+    # The `states` strategy declines descriptions that do not decompose into a
+    # binary state -- "someone hands an object to another person" is a relation
+    # between two actors, and no prompt turns it into a property of one object.
+    # There are two defensible numbers and they answer different questions, so
+    # BOTH are reported and neither is called "the" score:
+    #
+    #   overall          every labelled event, a declined description counting as
+    #                    a miss. This is what a client experiences.
+    #   overall_routed   only the events whose description the strategy accepted.
+    #                    This is how well the method works where it applies.
+    #
+    # Reporting only the second would flatter the system by scoring it solely on
+    # the questions it chose to answer. Reporting only the first would hide that
+    # the failure is a property of the request, not of the model.
+    routed = set(states_map or {})
+    if cfg.strategy == "states":
+        r_truths = [t for t in main_truths if t["description"] in routed]
+        r_preds = [p for p in main_preds if p["description"] in routed]
+        coverage = {
+            "strategy": "states",
+            "descriptions_total": len({t["description"] for t in main_truths}),
+            "descriptions_routed": len({t["description"] for t in main_truths}
+                                       & routed),
+            "events_total": len(main_truths),
+            "events_routed": len(r_truths),
+            "declined": sorted({t["description"] for t in main_truths} - routed),
+        }
+        routed_metrics = aggregate(r_preds, r_truths) if r_truths else None
+    else:
+        coverage, routed_metrics = {"strategy": cfg.strategy}, None
+
     out = {
         "labels": str(labels_path),
         "model": cfg.model.name,
         "backend": backend.describe(),
         "prompt": prompt or "overlay",
+        "strategy": cfg.strategy,
         "sampling": {"fps": cfg.sampling.fps,
                      "window_s": cfg.windowing.window_s,
-                     "stride_s": cfg.windowing.stride_s},
+                     "stride_s": cfg.windowing.stride_s,
+                     "step_s": cfg.states.step_s, "span_s": cfg.states.span_s,
+                     "trigger": cfg.states.trigger,
+                     "shared_caption": cfg.states.shared_caption},
+        "coverage": coverage,
         "overall": metrics,
+        "overall_routed": routed_metrics,
         "overall_excludes": sorted(CONTROL_AXES & set(axes.values())),
         "by_axis": by_axis(preds, truths, axes),
         "per_video": per_video,

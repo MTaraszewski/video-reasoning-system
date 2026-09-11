@@ -167,6 +167,11 @@ eval:  ## [gpu] run the labelled set, print the metric table
 	  $(if $(PROMPT),--prompt $(PROMPT),) \
 	  $(if $(SAMPLE_FPS),--fps $(SAMPLE_FPS),) \
 	  $(if $(GPU_HOURLY),--gpu-hourly $(GPU_HOURLY),) \
+	  $(if $(STRATEGY),--strategy $(STRATEGY) --states-map $(STATES_MAP),) \
+	  $(if $(SHARED),--shared-caption,) \
+	  $(if $(STEP_S),--step-s $(STEP_S),) \
+	  $(if $(SPAN_S),--span-s $(SPAN_S),) \
+	  $(if $(TRIGGER),--trigger,) \
 	  $(if $(REPLAY),--replay /out/$(REPLAY),)
 	@echo; echo "-> $(OUT_DIR)/eval.json"
 
