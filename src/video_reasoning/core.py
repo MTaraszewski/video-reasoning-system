@@ -181,6 +181,31 @@ def _frange(lo: float, hi: float, step: float) -> list[float]:
     return out
 
 
+def _coverage(times: list[float], start: float, end: float,
+              span_s: float) -> float:
+    """Fraction of the interval that a supporting poll actually observed.
+
+    A poll at t saw `[t, t + span_s]`. Merging those windows and clipping to the
+    interval gives the seconds of the reported event that were genuinely looked
+    at, as opposed to inferred by carrying a state across a gap.
+
+    Measured on admin.G326 under shared captioning: a "vehicle door opens" event
+    was reported as 5.0-97.0s at confidence 1.0 on the strength of four polls --
+    six observed seconds out of ninety-two. Coverage puts that at 0.065.
+    """
+    length = end - start
+    if length <= 0:
+        return 1.0
+    spans = sorted((max(t, start), min(t + span_s, end)) for t in times)
+    seen, hi = 0.0, start
+    for lo, up in spans:
+        if up <= hi:
+            continue
+        seen += up - max(lo, hi)
+        hi = up
+    return min(1.0, round(seen / length, 4))
+
+
 def _events_from_states(
     query: str, polls: list[StatePoll], states: tuple[str, str], duration: float,
     *, max_bracket_s: float, span_s: float, step_s: float,
@@ -192,12 +217,21 @@ def _events_from_states(
     Each boundary is placed by `states.edge`, which interpolates inside a narrow
     bracket and refuses to inside a wide one.
 
-    Confidence is agreement times sharpness. Agreement is the fraction of polls
-    inside the interval that call it the target state. Sharpness is how tightly
-    the boundaries are pinned -- a transition bracketed to one step is worth more
-    than the same transition bracketed to thirty, and reporting both at 1.0 is
-    how Approach 1's stated confidence failed. Both halves are measured over data
-    we already hold; neither is a number the model asserts about itself.
+    Confidence is `agreement x sharpness x coverage`. Each factor catches a
+    failure that was actually observed, and none is a number the model asserts
+    about itself -- Approach 1's stated confidence came back as exactly 1.0 on 28
+    of 81 predictions and ranked nothing.
+
+    - **agreement** -- the fraction of informative polls inside the interval that
+      call it the target state.
+    - **sharpness** -- how tightly the boundaries are pinned, `step_s` over the
+      widest bracket interpolated across. A transition bracketed to one step is
+      worth more than the same transition bracketed to thirty.
+    - **coverage** -- how much of the interval was actually looked at: the union
+      of the supporting polls' windows, over the interval's length. Without it, a
+      92-second span resting on four polls scored 1.0, because every poll agreed
+      and both edges had been truncated rather than interpolated. A single-poll
+      blip scored 1.0 for the same reason from the other direction.
     """
     target = states[1]
     trs = transitions(polls)
@@ -231,9 +265,11 @@ def _events_from_states(
         # exactly the observed evidence, and what is unknown beyond it is carried
         # by `partial` rather than discounted twice.
         sharp = step_s / max(step_s, widest) if widest else 1.0
+        cover = _coverage([p.t for p in inside if p.state == target],
+                          start, end, span_s)
         events.append(Event(
             description=query, start_s=round(start, 3), end_s=round(min(end, duration), 3),
-            confidence=round(agree * sharp, 4),
+            confidence=round(agree * sharp * cover, 4),
             evidence=next((p.text[:200] for p in inside if p.state == target), ""),
             partial=partial or end >= duration - 1e-6,
             source_windows=[],
