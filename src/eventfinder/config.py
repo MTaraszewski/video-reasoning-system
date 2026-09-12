@@ -96,22 +96,40 @@ class SignalConfig(BaseModel):
     fps: float = Field(2.0, gt=0)
     # Long edge of the greyscale thumbnail the delta is computed on.
     thumb_px: int = Field(128, gt=0)
-    # Hysteresis, in robust z-units above the clip's own median change. Opening
-    # at hi and closing at lo stops a single noisy frame from opening a bracket
-    # and stops a real, slow change from being chopped into fragments.
-    hi_z: float = Field(6.0, gt=0)
-    lo_z: float = Field(3.0, gt=0)
-    # Floor on the raw per-pixel delta, so a completely still clip does not
-    # manufacture brackets out of sensor noise by z-scoring it.
-    min_pixel_delta: float = Field(0.04, ge=0)
+    # Hysteresis, as percentiles of the clip's OWN change distribution. Open a
+    # bracket above hi_pct, close it below lo_pct.
+    #
+    # MEASURED, and a correction to the inherited design, which gated on robust
+    # z-units. On this footage the median change is exactly 0.0 on six of eight
+    # clips, so the MAD collapses, the z-scale falls back to a standard
+    # deviation the event itself inflates, and `max z` ranges from 6.1 on one
+    # clip to 359.9 on another -- not comparable, which was the whole point of
+    # standardising. At hi_z=6.0 the detector contributed nothing: bracket
+    # recall was 5/15 and every hit came from a sentinel.
+    #
+    # A percentile gate needs no scale. The labelled events sit at a median
+    # percentile rank of 0.97 within their clips, and 11 of 15 are above p95 --
+    # so the ranking was always good enough and only the threshold was wrong.
+    hi_pct: float = Field(97.0, gt=0, lt=100)
+    lo_pct: float = Field(90.0, gt=0, lt=100)
+    # Floor on the raw moving-pixel fraction, so a still clip cannot manufacture
+    # brackets out of its own sensor noise -- a percentile gate always fires on
+    # some fraction of any clip, including an empty one. MEASURED: the labelled
+    # events run from 0.0085 to 0.11, so the inherited 0.04 rejected half of
+    # them on its own.
+    min_pixel_delta: float = Field(0.002, ge=0)
     # Padding around a detected change, so the observer sees both sides of it.
-    pad_s: float = Field(2.0, ge=0)
+    pad_s: float = Field(4.0, ge=0)
     # A look taken on a fixed cadence regardless of change. This is the guard
     # against the signal's blind spots: the previous engine's trigger scored
     # tIoU 0.000 against 0.406 for uniform polling on the same clip, entirely
     # because it declined to sample a time it judged uninteresting. Sentinels
     # bound that failure instead of hoping it does not happen.
     sentinel_every_s: float = Field(45.0, gt=0)
+    # How WIDE a sentinel look is. A sentinel is a glance, not a span: derived
+    # from `sentinel_every_s` it was 22.5 s wide, which alone put mean coverage
+    # at 66% of the clip and made the change detector nearly pointless.
+    sentinel_width_s: float = Field(8.0, gt=0)
     # Merge brackets closer than this, rather than paying twice to look at the
     # same moment from two sides.
     merge_gap_s: float = Field(1.0, ge=0)
@@ -217,11 +235,11 @@ class Config(BaseModel):
                 f"leaving {o.step_s - o.span_s:.2f}s between polls that no poll observes.",
                 "set observe.step_s <= observe.span_s",
             )
-        if s.lo_z >= s.hi_z:
+        if s.lo_pct >= s.hi_pct:
             raise ConfigError(
-                f"signal.lo_z ({s.lo_z}) is not below signal.hi_z ({s.hi_z}), so the "
-                "hysteresis has no width and a bracket closes on the frame it opens.",
-                "set signal.lo_z strictly below signal.hi_z",
+                f"signal.lo_pct ({s.lo_pct}) is not below signal.hi_pct ({s.hi_pct}), so "
+                "the hysteresis has no width and a bracket closes on the sample it opens.",
+                "set signal.lo_pct strictly below signal.hi_pct",
             )
         if s.max_bracket_s < o.span_s:
             raise ConfigError(

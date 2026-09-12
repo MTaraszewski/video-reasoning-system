@@ -214,6 +214,25 @@ smoke:  ## [any] run every check that needs no GPU, and report which passed
 	  echo "SOME CHECKS FAILED - see the logs named above"; exit 1; \
 	fi
 
+# --- eventfinder (new architecture, `real-time` branch) ----------------------
+#
+# Phases 0-3 of the rebuild need no GPU and no model, which is the point: the
+# stages that decide whether anything downstream CAN work are the cheap ones.
+
+# Runs on the host venv, not in the image: no GPU, no container, no model. If
+# .venv is missing, `make venv` builds it from the same uv.lock the image uses.
+EF_PY ?= .venv/bin/python
+
+.PHONY: ef-test ef-brackets ef-sweep
+ef-test:  ## [any] eventfinder unit tests: contracts, compiler, signal
+	@$(EF_PY) -m pytest tests/eventfinder -q
+
+ef-brackets:  ## [any] do brackets contain the labelled events? no GPU
+	@$(EF_PY) scripts/score_brackets.py
+
+ef-sweep:  ## [any] bracket recall vs coverage frontier, no GPU
+	@$(EF_PY) scripts/score_brackets.py --sweep
+
 eval:  ## [gpu] run the labelled set, print the metric table
 	@mkdir -p $(OUT_DIR)
 	@# The labelled clips are rebuilt from labels.json, which IS committed. Without

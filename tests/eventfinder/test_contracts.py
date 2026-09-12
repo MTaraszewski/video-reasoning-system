@@ -127,7 +127,7 @@ def test_step_larger_than_span_is_refused():
 
 def test_hysteresis_without_width_is_refused():
     c = cfg_mod.Config()
-    c.signal.lo_z = c.signal.hi_z
+    c.signal.lo_pct = c.signal.hi_pct
     with pytest.raises(cfg_mod.ConfigError, match="hysteresis"):
         c.check()
 
