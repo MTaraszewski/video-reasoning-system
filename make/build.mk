@@ -233,6 +233,21 @@ ef-brackets:  ## [any] do brackets contain the labelled events? no GPU
 ef-sweep:  ## [any] bracket recall vs coverage frontier, no GPU
 	@$(EF_PY) scripts/score_brackets.py --sweep
 
+.PHONY: ef-smoke ef-plan ef-live
+# Everything that can run without a GPU. The fake endpoint checks the REQUEST
+# SHAPE, so a wrong content type or a missing structured_outputs fails here on
+# the laptop rather than quietly on the box.
+ef-smoke:  ## [any] contracts, compiler, signal, pipeline and live path, no GPU
+	@$(EF_PY) -m pytest tests/eventfinder -q
+
+ef-plan:  ## [any] what a run would cost, before spending it (VIDEO=... QUERIES="a;b")
+	@$(EF_PY) -m eventfinder.cli plan $(VIDEO) \
+	  $(foreach q,$(subst ;, ,$(QUERIES)),-d "$(q)")
+
+ef-live:  ## [gpu] stream a file as if it were a camera
+	@$(EF_PY) -m eventfinder.cli live $(VIDEO) \
+	  $(foreach q,$(subst ;, ,$(QUERIES)),-d "$(q)") $(if $(REALTIME),--realtime,)
+
 eval:  ## [gpu] run the labelled set, print the metric table
 	@mkdir -p $(OUT_DIR)
 	@# The labelled clips are rebuilt from labels.json, which IS committed. Without

@@ -206,3 +206,33 @@ def frame_to_data_url(img: Image.Image, quality: int = 85) -> str:
     buf = io.BytesIO()
     img.save(buf, format="JPEG", quality=quality)
     return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
+
+
+def write_clip(frames: list[Frame], path: str | Path, fps: float) -> Path:
+    """Encode already-sampled, already-stamped frames to an mp4.
+
+    Needed only for the `video` media path, where the clip must travel as one
+    video rather than as a list of images. Encoding costs a few tens of
+    milliseconds against a model call measured in seconds, and it is what makes
+    the two media paths comparable on identical pixels: the same Frame objects
+    go to both, so a difference in results is the request shape and not the
+    sampling.
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not frames:
+        raise MediaError("no frames to encode")
+    w, h = frames[0].image.size
+    # libx264 requires even dimensions and rejects odd ones outright.
+    w, h = w - (w % 2), h - (h % 2)
+    with av.open(str(path), mode="w") as out:
+        st = out.add_stream("libx264", rate=Fraction(round(fps * 1000), 1000))
+        st.width, st.height, st.pix_fmt = w, h, "yuv420p"
+        # High quality: the timestamp overlay is small text, and compression
+        # artefacts on it would make the frame stop being self-describing.
+        st.options = {"crf": "18", "preset": "veryfast"}
+        for f in frames:
+            img = f.image if f.image.size == (w, h) else f.image.crop((0, 0, w, h))
+            out.mux(st.encode(av.VideoFrame.from_image(img.convert("RGB"))))
+        out.mux(st.encode())
+    return path

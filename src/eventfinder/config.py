@@ -150,6 +150,22 @@ class ObserveConfig(BaseModel):
     # request and 1.8% KV cache use throughout an 8,871-second evaluation, so
     # two to three times the throughput was available and unused.
     concurrency: int = Field(3, gt=0)
+    # How many model calls a bracket costs, and the single highest-leverage
+    # unknown in the system.
+    #
+    #   per_step     one call per stamp time. Frames span [t, t+span_s]. This is
+    #                what the previous engine did, and it is the safe path: the
+    #                model answers about one moment.
+    #   per_bracket  ONE call for the whole bracket, one frame per stamp time,
+    #                and the model returns a state for each. If it can do this
+    #                reliably it is worth roughly 8x on calls per camera-minute
+    #                -- an 8 s bracket at step_s=1.0 costs 1 call instead of 9 --
+    #                and it collapses emit latency to a single call.
+    #
+    # UNMEASURED. `per_step` is the default because it is the one with evidence
+    # behind it; `per_bracket` is the experiment that decides the unit economics.
+    mode: str = Field("per_step", pattern="^(per_step|per_bracket)$")
+
     # MEASURED. One caption per timestep covering every subject, instead of one
     # sweep per subject. Tried and it FAILED: door parse rate fell 85% -> 29%,
     # `person` parsed 0 of 119 polls, per-call latency rose to 10.2 s, and the
