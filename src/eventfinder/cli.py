@@ -25,6 +25,22 @@ from .stream import LiveFinder, frames_from_file
 app = typer.Typer(add_completion=False, help=__doc__)
 
 
+def _descs(description: list[str], queries: str | None) -> list[str]:
+    """`-d` repeated, or one semicolon-separated `--queries` string.
+
+    Both exist because make cannot pass a repeated option cleanly: expanding a
+    list into `-d "..." -d "..."` splits on whitespace, so every multi-word
+    description silently became several one-word ones. The repo's other targets
+    already use the `--queries "a;b"` form; this matches it.
+    """
+    out = list(description or [])
+    if queries:
+        out += [q.strip() for q in queries.split(";") if q.strip()]
+    if not out:
+        raise typer.BadParameter("give at least one description, via -d or --queries")
+    return out
+
+
 def _cfg(config: str | None, mode: str | None, media: str | None) -> Config:
     c = load(config) if config else Config()
     if mode:
@@ -45,11 +61,12 @@ def _reasoner(c: Config, media: str):
 
 
 @app.command()
-def plan(video: str, description: list[str] = typer.Option(..., "-d", "--description"),
+def plan(video: str, description: list[str] = typer.Option([], "-d", "--description"),
+         queries: str = typer.Option(None, "--queries", help='semicolon-separated: "a;b"'),
          config: str = typer.Option(None), mode: str = typer.Option(None)):
     """What the run would do, before a single model call."""
     c = _cfg(config, mode, None)
-    probes, brackets, tasks, info = plan_run(video, description, c)
+    probes, brackets, tasks, info = plan_run(video, _descs(description, queries), c)
     typer.echo(f"video       {Path(video).name}  {info.duration_s:.1f}s  {info.width}x{info.height}")
     for p in probes:
         if p.expressible:
@@ -66,7 +83,8 @@ def plan(video: str, description: list[str] = typer.Option(..., "-d", "--descrip
 
 
 @app.command()
-def run(video: str, description: list[str] = typer.Option(..., "-d", "--description"),
+def run(video: str, description: list[str] = typer.Option([], "-d", "--description"),
+         queries: str = typer.Option(None, "--queries", help='semicolon-separated: "a;b"'),
         out: str = typer.Option("out/events.json"), config: str = typer.Option(None),
         mode: str = typer.Option(None), media: str = typer.Option("video"),
         verify: bool = typer.Option(False, help="also ask the model for its own verdict"),
@@ -85,7 +103,8 @@ def run(video: str, description: list[str] = typer.Option(..., "-d", "--descript
             bar.update(want - state["n"])
             state["n"] = want
 
-        doc = batch_run(video, description, c, r, verify=verify, on_progress=prog)
+        doc = batch_run(video, _descs(description, queries), c, r, verify=verify,
+                        on_progress=prog)
     Path(out).parent.mkdir(parents=True, exist_ok=True)
     Path(out).write_text(doc.model_dump_json(indent=2))
     if record:
@@ -99,13 +118,14 @@ def run(video: str, description: list[str] = typer.Option(..., "-d", "--descript
 
 
 @app.command()
-def live(video: str, description: list[str] = typer.Option(..., "-d", "--description"),
+def live(video: str, description: list[str] = typer.Option([], "-d", "--description"),
+         queries: str = typer.Option(None, "--queries", help='semicolon-separated: "a;b"'),
          config: str = typer.Option(None), media: str = typer.Option("video"),
          realtime: bool = typer.Option(False, help="play at the capture clock")):
     """Stream a file as if it were a camera."""
     c = _cfg(config, None, media)
     c.observe.mode = "per_bracket"
-    probes = compile_all(description, RulesCompiler())
+    probes = compile_all(_descs(description, queries), RulesCompiler())
     r = _reasoner(c, media)
 
     def emit(e, verified):

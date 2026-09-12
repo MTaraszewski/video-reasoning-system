@@ -24,9 +24,11 @@ from eventfinder.models import EventsDocument  # noqa: E402
 from eventfinder.pipeline import plan, run  # noqa: E402
 from fake_vllm import serve  # noqa: E402
 
-CLIP = Path("data/eval/2018-03-07.16-50-01.16-55-01.admin.G326.r13.mp4")
+from conftest import find_clip  # noqa: E402
+
+CLIP = find_clip("2018-03-07.16-50-01.16-55-01.admin.G326.r13.mp4")
 DESCS = ["a person opens a building door", "the alarm sounds"]
-pytestmark = pytest.mark.skipif(not CLIP.exists(), reason="labelled clip not present")
+pytestmark = pytest.mark.skipif(CLIP is None, reason="labelled clip not present")
 
 
 @pytest.fixture(scope="module")

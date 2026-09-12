@@ -196,11 +196,17 @@ def test_llm_cessation_is_forced_to_falling():
 
 def test_every_labelled_description_is_handled_without_crashing():
     """Coverage figure over the real corpus, not a sample of it."""
+    import os
+    root = next((Path(r) for r in (os.getenv("EF_DATA_DIR", "/data"), "data")
+                 if Path(r).is_dir()), None)
+    if root is None:
+        pytest.skip("no data directory in this environment")
     descs = set()
-    for f in Path("data").rglob("labels*.json"):
+    for f in root.rglob("labels*.json"):
         for clip in json.loads(f.read_text()):
             for ev in clip["events"]:
                 descs.add(ev["description"])
+    assert descs, f"no labels found under {root}"
     probes = compile_all(sorted(descs), C)
     expressible = [x for x in probes if x.expressible]
     refused = [x for x in probes if not x.expressible]

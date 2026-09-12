@@ -148,3 +148,23 @@ def test_measured_bad_settings_warn_rather_than_fail():
     w = " ".join(c.warnings())
     c.check()  # still coherent
     assert "85%" in w and "quadratic" in w and "ranked nothing" in w
+
+
+# --- CLI description parsing ----------------------------------------------
+
+def test_queries_string_splits_on_semicolons_not_whitespace():
+    """Expanding a list into repeated `-d` options in make splits on whitespace,
+    so every multi-word description silently became several one-word ones --
+    and a one-word probe compiles to a refusal rather than an error."""
+    from eventfinder.cli import _descs
+    assert _descs([], "a vehicle door opens;a person gets out of a vehicle") == [
+        "a vehicle door opens", "a person gets out of a vehicle"]
+    assert _descs(["a person sits down"], None) == ["a person sits down"]
+    assert _descs(["x"], "y;;  ;z") == ["x", "y", "z"]
+
+
+def test_no_description_is_an_error_not_an_empty_run():
+    import typer
+    from eventfinder.cli import _descs
+    with pytest.raises(typer.BadParameter):
+        _descs([], None)

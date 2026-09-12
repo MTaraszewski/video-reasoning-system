@@ -30,14 +30,22 @@ ENV UV_COMPILE_BYTECODE=1 \
 # --extra data brings in supervision and huggingface-hub, needed by the dataset
 # fetch scripts. They live in an extra rather than the base deps because the
 # service itself never needs them — only the tooling that assembles the eval set.
+#
+# The dev group (pytest and two small pure-Python packages) IS installed, and
+# deliberately. The container is the supported way to run this — "nothing needs
+# to be installed on the host" is a promise the repo makes — so an image that
+# cannot run its own checks pushes the client back onto a host toolchain to
+# answer "does this work here". That is a few hundred kilobytes against the one
+# question a client asks first.
 COPY pyproject.toml uv.lock README.md ./
-RUN uv sync --frozen --no-install-project --no-dev --extra data
+RUN uv sync --frozen --no-install-project --extra data
 
 # Then the project itself.
 COPY src ./src
 COPY scripts ./scripts
-COPY config.yaml ./
-RUN uv sync --frozen --no-dev --extra data
+COPY config.yaml eventfinder.yaml ./
+COPY tests ./tests
+RUN uv sync --frozen --extra data
 
 # PYTHONPATH puts the mounted source ahead of the copy uv installed into .venv.
 # Without it the ./src bind mount is inert: the container keeps running whatever

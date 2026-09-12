@@ -15,6 +15,9 @@ services:
     environment:
       - MODEL=${MODEL:-nvidia/Cosmos3-Edge}
       - BASE_URL=${BASE_URL:-http://vllm:8000/v1}
+      # eventfinder reads its own variable. Same default: inside the compose
+      # network `vllm` resolves, so a container run needs no override at all.
+      - EF_BASE_URL=${BASE_URL:-http://vllm:8000/v1}
       - ALLOW_NO_GPU=${ALLOW_NO_GPU:-}
       - GPU_HOURLY=${GPU_HOURLY:-}
     volumes:
@@ -23,7 +26,11 @@ services:
       - ./src:/app/src
       - ./scripts:/app/scripts
       - ./eval:/app/eval
+      # Mounted so `make ef-smoke` runs the working tree's tests, not the copy
+      # baked at build time — the same reason ./src is mounted.
+      - ./tests:/app/tests
       - ./config.yaml:/app/config.yaml:ro
+      - ./eventfinder.yaml:/app/eventfinder.yaml:ro
       # Read-only: it is configuration, and a container should not rewrite the
       # mapping the results were produced under.
       - ./states.json:/app/states.json:ro

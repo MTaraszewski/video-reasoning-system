@@ -216,52 +216,63 @@ smoke:  ## [any] run every check that needs no GPU, and report which passed
 
 # --- eventfinder (new architecture, `real-time` branch) ----------------------
 #
-# Phases 0-3 of the rebuild need no GPU and no model, which is the point: the
-# stages that decide whether anything downstream CAN work are the cheap ones.
+# In the container, like every other target. The repo's promise is that nothing
+# needs to be installed on the host, and pointing these at a host venv broke it:
+# on a fresh box they failed with "No such file or directory: .venv/bin/python",
+# then with "uv not found".
+#
+# Paths are the container's: /data is the read-only data mount, /out is the
+# writable one. EF_BASE_URL comes from compose and resolves `vllm` on the
+# compose network, so a container run needs no endpoint override.
+#
+# Phases up to the pipeline need no GPU and no model at all, which is the point:
+# the stages that decide whether anything downstream CAN work are the cheap ones.
 
-# Runs on the host venv, not in the image: no GPU, no container, no model. If
-# .venv is missing, `make venv` builds it from the same uv.lock the image uses.
-EF_PY ?= .venv/bin/python
+EF_LABELS ?= /data/eval/labels.json
+EF_CLIPS  ?= /data/eval
+EF_OUT    ?= /out/ef
+EF_RUN     = $(COMPOSE) run --rm finder
 
-.PHONY: ef-test ef-brackets ef-sweep
-ef-test:  ## [any] eventfinder unit tests: contracts, compiler, signal
-	@$(EF_PY) -m pytest tests/eventfinder -q
+.PHONY: ef-smoke ef-brackets ef-sweep ef-plan ef-cost ef-eval ef-matrix ef-replay ef-live
+
+ef-smoke:  ## [any] every eventfinder check that needs no GPU: contracts, compiler, signal, pipeline, live path
+	$(EF_RUN) python -m pytest tests/eventfinder -q
 
 ef-brackets:  ## [any] do brackets contain the labelled events? no GPU
-	@$(EF_PY) scripts/score_brackets.py
+	$(EF_RUN) python scripts/score_brackets.py --labels $(EF_LABELS) --clips $(EF_CLIPS)
 
 ef-sweep:  ## [any] bracket recall vs coverage frontier, no GPU
-	@$(EF_PY) scripts/score_brackets.py --sweep
+	$(EF_RUN) python scripts/score_brackets.py --labels $(EF_LABELS) --clips $(EF_CLIPS) --sweep
 
-.PHONY: ef-smoke ef-plan ef-live
-# Everything that can run without a GPU. The fake endpoint checks the REQUEST
-# SHAPE, so a wrong content type or a missing structured_outputs fails here on
-# the laptop rather than quietly on the box.
-ef-smoke:  ## [any] contracts, compiler, signal, pipeline and live path, no GPU
-	@$(EF_PY) -m pytest tests/eventfinder -q
+ef-plan:  ## [any] what a run over YOUR video would cost (VIDEO=... QUERIES="a;b")
+	$(EF_RUN) python -m eventfinder.cli plan $(VIDEO_IN) --queries "$(QUERIES)" \
+	  $(if $(MODE),--mode $(MODE),)
 
-ef-plan:  ## [any] what a run would cost, before spending it (VIDEO=... QUERIES="a;b")
-	@$(EF_PY) -m eventfinder.cli plan $(VIDEO) \
-	  $(foreach q,$(subst ;, ,$(QUERIES)),-d "$(q)")
-
-.PHONY: ef-cost ef-eval ef-matrix ef-replay
 ef-cost:  ## [any] what the GPU session would cost, without starting one
-	@$(EF_PY) scripts/eval_events.py --dry-run --mode per_bracket
-	@$(EF_PY) scripts/eval_events.py --dry-run --mode per_step | tail -1
+	@$(EF_RUN) python scripts/eval_events.py --dry-run --mode per_bracket \
+	  --labels $(EF_LABELS) --clips $(EF_CLIPS) --out $(EF_OUT)
+	@$(EF_RUN) python scripts/eval_events.py --dry-run --mode per_step \
+	  --labels $(EF_LABELS) --clips $(EF_CLIPS) --out $(EF_OUT) | tail -1
 
-ef-eval:  ## [gpu] score the labelled set (MODE=per_bracket MEDIA=video)
-	@$(EF_PY) scripts/eval_events.py --mode $(or $(MODE),per_bracket) \
-	  --media $(or $(MEDIA),video) $(if $(VERIFY),--verify,)
+ef-eval:  ## [gpu] score the labelled set (MODE=per_bracket MEDIA=video VERIFY=1)
+	@mkdir -p $(OUT_DIR)/ef
+	$(EF_RUN) python scripts/eval_events.py \
+	  --mode $(or $(MODE),per_bracket) --media $(or $(MEDIA),video) \
+	  --labels $(EF_LABELS) --clips $(EF_CLIPS) --out $(EF_OUT) \
+	  $(if $(VERIFY),--verify,)
 
 ef-matrix:  ## [gpu] the whole first session: mode, media and verdict, all recorded
-	@$(EF_PY) scripts/eval_events.py --matrix
+	@mkdir -p $(OUT_DIR)/ef
+	$(EF_RUN) python scripts/eval_events.py --matrix \
+	  --labels $(EF_LABELS) --clips $(EF_CLIPS) --out $(EF_OUT)
 
-ef-replay:  ## [any] re-score a recorded session, no GPU (EXCHANGES=out/ef/exchanges-*.jsonl)
-	@$(EF_PY) scripts/eval_events.py --replay $(EXCHANGES)
+ef-replay:  ## [any] re-score a recorded session, no GPU (EXCHANGES=/out/ef/exchanges-....jsonl)
+	$(EF_RUN) python scripts/eval_events.py --replay $(EXCHANGES) \
+	  --labels $(EF_LABELS) --clips $(EF_CLIPS) --out $(EF_OUT)
 
-ef-live:  ## [gpu] stream a file as if it were a camera
-	@$(EF_PY) -m eventfinder.cli live $(VIDEO) \
-	  $(foreach q,$(subst ;, ,$(QUERIES)),-d "$(q)") $(if $(REALTIME),--realtime,)
+ef-live:  ## [gpu] stream a file as if it were a camera (VIDEO=... QUERIES="a;b" REALTIME=1)
+	$(EF_RUN) python -m eventfinder.cli live $(VIDEO_IN) --queries "$(QUERIES)" \
+	  $(if $(REALTIME),--realtime,)
 
 eval:  ## [gpu] run the labelled set, print the metric table
 	@mkdir -p $(OUT_DIR)
