@@ -33,17 +33,28 @@ class ConfigError(ValueError):
 class ModelConfig(BaseModel):
     # STRUCTURAL. Exact repo id; a single wrong character serves nothing.
     name: str = "nvidia/Cosmos3-Edge"
-    base_url: str = "http://vllm:8000/v1"
+    # `vllm` is the compose service name, which resolves inside the network.
+    # A run from the host venv against a locally served model needs
+    # EF_BASE_URL=http://localhost:8000/v1 -- and getting this wrong is a
+    # connection error at the first call, after the video has been decoded.
+    base_url: str = Field(default_factory=lambda: os.getenv(
+        "EF_BASE_URL", "http://vllm:8000/v1"))
     api_key: str = "EMPTY"
     # MEASURED. Five repeats at temperature 0 were bit-identical, so sampling is
     # not a source of run-to-run variance here. Restarting the server, or
     # changing the request history within one server session, does flip a
     # borderline poll -- batching and prefix-cache state, not the sampler.
     temperature: float = 0.0
-    # MEASURED. The observer emits one small JSON object. The previous engine
-    # left this at 4096 and paid 80 seconds for runaway generations that carried
-    # no extra information.
+    # The FLOOR for one reply, not the ceiling. The previous engine left this at
+    # 4096 and paid up to 80 seconds for runaway generations carrying no extra
+    # information -- but a flat cap is the opposite mistake in `per_bracket`
+    # mode, where one reply carries a record per stamp time. A 21-second bracket
+    # at step_s=1.0 is 22 records, roughly 374 tokens: capped at 192 the reply
+    # is truncated, silently repaired into partial observations, and the mode
+    # looks broken when it was starved. The budget is derived per call from the
+    # number of times asked about.
     max_tokens: int = 192
+    tokens_per_record: int = 48
     request_timeout_s: float = 120.0
     # STRUCTURAL. A run that never confirmed what it was talking to is not a
     # model result; RunInfo.model_verified records the answer.

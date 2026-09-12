@@ -244,6 +244,21 @@ ef-plan:  ## [any] what a run would cost, before spending it (VIDEO=... QUERIES=
 	@$(EF_PY) -m eventfinder.cli plan $(VIDEO) \
 	  $(foreach q,$(subst ;, ,$(QUERIES)),-d "$(q)")
 
+.PHONY: ef-cost ef-eval ef-matrix ef-replay
+ef-cost:  ## [any] what the GPU session would cost, without starting one
+	@$(EF_PY) scripts/eval_events.py --dry-run --mode per_bracket
+	@$(EF_PY) scripts/eval_events.py --dry-run --mode per_step | tail -1
+
+ef-eval:  ## [gpu] score the labelled set (MODE=per_bracket MEDIA=video)
+	@$(EF_PY) scripts/eval_events.py --mode $(or $(MODE),per_bracket) \
+	  --media $(or $(MEDIA),video) $(if $(VERIFY),--verify,)
+
+ef-matrix:  ## [gpu] the whole first session: mode, media and verdict, all recorded
+	@$(EF_PY) scripts/eval_events.py --matrix
+
+ef-replay:  ## [any] re-score a recorded session, no GPU (EXCHANGES=out/ef/exchanges-*.jsonl)
+	@$(EF_PY) scripts/eval_events.py --replay $(EXCHANGES)
+
 ef-live:  ## [gpu] stream a file as if it were a camera
 	@$(EF_PY) -m eventfinder.cli live $(VIDEO) \
 	  $(foreach q,$(subst ;, ,$(QUERIES)),-d "$(q)") $(if $(REALTIME),--realtime,)

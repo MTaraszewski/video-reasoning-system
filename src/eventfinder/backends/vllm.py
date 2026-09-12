@@ -57,13 +57,14 @@ class VLLMReasoner:
                  temperature: float = 0.0, max_tokens: int = 192,
                  media: str = "video", timeout_s: float = 120.0,
                  sample_fps: float = 4.0, record: bool = True,
-                 jpeg_quality: int = 85):
+                 jpeg_quality: int = 85, tokens_per_record: int = 48):
         if media not in ("video", "frames"):
             raise ValueError(f"media must be 'video' or 'frames', not {media!r}")
         self.client = OpenAI(base_url=base_url, api_key=api_key, timeout=timeout_s)
         self.model = model
         self.temperature = temperature
         self.max_tokens = max_tokens
+        self.tokens_per_record = tokens_per_record
         self.media = media
         self.sample_fps = sample_fps
         self.record = record
@@ -136,11 +137,12 @@ class VLLMReasoner:
         if self.media == "video":
             extra["media_io_kwargs"] = {"video": {"num_frames": len(frames)}}
 
+        budget = self._budget(len(stamp_times))
         t0 = time.perf_counter()
         try:
             r = self.client.chat.completions.create(
                 model=self.model, messages=messages, temperature=self.temperature,
-                max_tokens=self.max_tokens, extra_body=extra)
+                max_tokens=budget, extra_body=extra)
         except Exception as e:
             dt = time.perf_counter() - t0
             self.usage.failures += 1
@@ -160,6 +162,15 @@ class VLLMReasoner:
         if repaired:
             self.usage.repairs += 1
         return data, raw
+
+    def _budget(self, n_times: int) -> int:
+        """Enough room for one record per time asked about, and no more.
+
+        Truncation here is invisible: the repair path salvages what arrived, so
+        a starved call returns fewer observations rather than an error, and the
+        loss is indistinguishable from the model declining to answer.
+        """
+        return max(self.max_tokens, self.tokens_per_record * n_times + 64)
 
     def _media(self, frames: list[Frame]) -> list[dict]:
         """The switchable half of the CONFLICT above. Same frames either way."""
@@ -190,7 +201,7 @@ class VLLMReasoner:
             "bracket_id": bracket_id, "subject": subject, "times": times,
             "mode": mode, "description": description, "reply": reply, "error": error,
             "latency_s": round(dt, 3), "finish_reason": finish, "model": self.model,
-            "media": self.media, "max_tokens": self.max_tokens,
+            "media": self.media, "max_tokens": self._budget(len(times)),
             "prompt_version": PROMPT_VERSION,
         })
 

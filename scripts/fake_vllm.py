@@ -7,7 +7,9 @@ this catches are the ones that cost a GPU session to discover:
   * media sent as the wrong content type, or not at all
   * `structured_outputs` missing, so the server would fail open into free text
   * `enable_thinking` left on, multiplying output length
-  * `max_tokens` uncapped, which is how single generations reached 80 s
+  * `max_tokens` uncapped (how single generations reached 80 s), OR too small
+    for the number of times asked about -- which truncates silently, is repaired
+    into partial observations, and looks like the model failing
   * a `t` enum that does not match the times named in the prompt, which would
     let the model answer about moments it was never shown
 
@@ -24,7 +26,8 @@ import re
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-MAX_TOKENS_CAP = 1024
+TOKENS_PER_RECORD_CAP = 64
+ABSOLUTE_CAP = 4096
 STATE_FLIP = {"closed": "open", "open": "closed",
               "standing": "sitting", "sitting": "standing",
               "stationary": "moving", "moving": "stationary"}
@@ -56,12 +59,20 @@ class Checker:
         ctk = body.get("chat_template_kwargs") or {}
         if ctk.get("enable_thinking") is not False:
             return "chat_template_kwargs.enable_thinking must be explicitly false"
-        mt = body.get("max_tokens")
-        if not mt or mt > MAX_TOKENS_CAP:
-            return f"max_tokens={mt}; must be set and <= {MAX_TOKENS_CAP}"
-
         schema = so["json"]
         enum = _enum(schema)
+        n = max(1, len(enum))
+        mt = body.get("max_tokens")
+        if not mt or mt >= ABSOLUTE_CAP:
+            return f"max_tokens={mt}; must be set and below {ABSOLUTE_CAP}"
+        if mt < 24 * n:
+            return (f"max_tokens={mt} for {n} requested times leaves under 24 tokens per "
+                    "record; the reply would truncate and be repaired into partial "
+                    "observations, which is indistinguishable from the model declining")
+        if mt > TOKENS_PER_RECORD_CAP * n + 512:
+            return (f"max_tokens={mt} for {n} requested times is far more than one record "
+                    "each; budget it from the stamp count")
+
         text = next(c["text"] for c in content if c.get("type") == "text")
         named = [round(float(x), 3) for x in re.findall(r"\d+\.\d{3}", text)]
         if enum and named and set(named) - set(enum):

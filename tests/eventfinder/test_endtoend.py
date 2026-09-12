@@ -180,3 +180,36 @@ def test_a_stale_replay_corpus_is_refused(tmp_path):
     with pytest.raises(ValueError, match="prompt version"):
         ReplayReasoner(p)
     ReplayReasoner(p, strict_prompt=False)      # opt in, and own the caveat
+
+
+# --- the token budget -----------------------------------------------------
+
+def test_token_budget_scales_with_the_number_of_requested_times():
+    """A flat cap truncates a per_bracket reply. Truncation is invisible: the
+    repair path salvages what arrived, so a starved call returns fewer
+    observations rather than an error."""
+    from eventfinder.backends.vllm import VLLMReasoner
+    r = VLLMReasoner("http://unused/v1", "m", max_tokens=192, tokens_per_record=48)
+    assert r._budget(1) == 192                      # floor holds for one record
+    assert r._budget(22) >= 22 * 24                 # and 22 records get room
+    assert r._budget(22) > r._budget(4)
+
+
+def test_a_starved_budget_is_rejected_by_the_checker(server):
+    """The 21-second bracket in the labelled set is 22 stamp times; at a flat
+    192 the reply would not fit, and nothing downstream would say so."""
+    url, _ = server
+    r = VLLMReasoner(url, "nvidia/Cosmos3-Edge", media="video",
+                     max_tokens=192, tokens_per_record=1)
+    doc = run(str(CLIP), DESCS[:1], cfg_for("per_bracket"), r)
+    assert r.usage.failures > 0 and doc.events == []
+
+
+def test_the_real_budget_is_accepted(server):
+    url, checker = server
+    before = len(checker.problems)
+    r = VLLMReasoner(url, "nvidia/Cosmos3-Edge", media="video",
+                     max_tokens=192, tokens_per_record=48)
+    doc = run(str(CLIP), DESCS[:1], cfg_for("per_bracket"), r)
+    assert checker.problems[before:] == []
+    assert doc.run.calls > 0 and r.usage.failures == 0

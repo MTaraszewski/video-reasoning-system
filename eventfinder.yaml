@@ -1,0 +1,72 @@
+# eventfinder configuration.
+#
+# Every value here is also a code default in src/eventfinder/config.py, where
+# each one carries its provenance: MEASURED (established on real footage here,
+# with the run named), INHERITED (from the design note, never tested here), or
+# STRUCTURAL (forced by arithmetic or an API limit).
+#
+# This file exists so a run can be reproduced from a committed artefact rather
+# than from whatever the code happened to default to that week. It is shipped
+# holding the defaults, so an empty override changes nothing.
+
+model:
+  name: nvidia/Cosmos3-Edge
+  # Deliberately NOT set here. A value in this file beats the EF_BASE_URL
+  # environment variable, so setting it would silently break the host-venv
+  # workflow (EF_BASE_URL=http://localhost:8000/v1) with a connection error
+  # raised only after the video had been decoded.
+  # base_url: http://vllm:8000/v1
+  temperature: 0.0
+  # The observer emits one small JSON object. Uncapped, the previous engine
+  # paid up to 80 s for single generations carrying no extra information.
+  max_tokens: 192
+
+sampling:
+  fps: 4.0
+  frame_max_side: 640
+  # Seeking instead of walking from frame zero: measured 14.8x at t=118 and
+  # flat across the clip, identical frames out.
+  seek: true
+
+signal:
+  # Percentile gate, not robust z. On this footage the median change is exactly
+  # 0.0 on six of eight clips, so the MAD collapses and z stops being
+  # comparable between clips. Swept: 97/90 with a 45 s cadence, an 8 s glance
+  # and 4 s of padding gives 93% bracket recall at 41% coverage.
+  hi_pct: 97.0
+  lo_pct: 90.0
+  min_pixel_delta: 0.002
+  pad_s: 4.0
+  sentinel_every_s: 45.0
+  sentinel_width_s: 8.0
+
+observe:
+  # per_step is the path with evidence behind it. per_bracket is worth roughly
+  # 8x on calls (68 vs 8 on one labelled clip) IF the model can return a state
+  # per timestamp in one reply -- which is unmeasured, and is the first thing
+  # the GPU session settles.
+  mode: per_step
+  step_s: 1.0
+  span_s: 2.0
+  # Measured idle: vLLM reported one running request and 1.8% KV cache use
+  # throughout an 8,871 s evaluation.
+  concurrency: 3
+  # Measured failure, kept as a switch rather than deleted: door parse fell
+  # 85% -> 29% and `person` parsed 0 of 119 polls under the old prompt.
+  shared_caption: false
+
+derive:
+  min_run: 2
+  transition_hold_s: 1.0
+  # A transition bracketed wider than this is anchored to the evidence and
+  # marked partial rather than claimed as a long event. Interpolating across an
+  # 82 s gap once produced a 42 s span for a 3 s door opening at confidence 1.0.
+  max_interp_gap_s: 4.0
+  # Zero: whether a self-reported number carries information is a measurement,
+  # not an assumption. It is recorded in signals.mean_certainty either way.
+  certainty_weight: 0.0
+  min_confidence: 0.0
+
+limits:
+  max_model_calls: 1000
+  max_duration_s: 1800.0
