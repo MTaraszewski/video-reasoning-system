@@ -87,6 +87,8 @@ def build_cfg(a, mode: str) -> Config:
         c.observe.step_s = a.step_s
     if a.concurrency:
         c.observe.concurrency = a.concurrency
+    if a.crop:
+        c.sampling.crop_to_motion = True
     c.check()
     return c
 
@@ -105,14 +107,18 @@ def reasoner_for(cfg: Config, a, media: str):
 
 
 def one_run(labels, clips_dir: Path, cfg: Config, a, mode: str, media: str,
-            verify: bool, out_dir: Path, max_clips: int | None = None) -> dict:
-    tag = f"{mode}-{media}{'-verify' if verify else ''}"
-    # Always the FIRST n, never a sample: a comparison between variants is only
-    # meaningful if they saw the same footage.
+            verify: bool, out_dir: Path, max_clips: int | None = None,
+            descs: list[str] | None = None) -> dict:
+    tag = f"{mode}-{media}{'-verify' if verify else ''}{'-crop' if a.crop else ''}"
+    # The description set comes from the WHOLE labelled set and is passed in,
+    # never derived from the truncated one. Deriving it here meant --max-clips 1
+    # asked only that clip's own description: one subject, six calls, no false
+    # positives measurable, and nothing asked about the subject the change under
+    # test actually concerned.
     if max_clips:
         labels = labels[:max_clips]
         tag += f"-{len(labels)}clips"
-    descs = descriptions_of(labels)
+    descs = descs or descriptions_of(labels)
     # A dry run plans and costs the work without touching the endpoint, so it
     # must not need one -- that is the point of being able to check the shape of
     # a session before starting the box.
@@ -224,6 +230,8 @@ def main() -> int:
     ap.add_argument("--verify", action="store_true")
     ap.add_argument("--step-s", type=float, default=None)
     ap.add_argument("--concurrency", type=int, default=None)
+    ap.add_argument("--crop", action="store_true",
+                    help="crop each bracket to where the motion is")
     ap.add_argument("--matrix", action="store_true",
                     help="every question the first GPU session exists to answer")
     ap.add_argument("--replay", default=None, help="score a recorded session, no GPU")
@@ -245,6 +253,10 @@ def main() -> int:
         print(f"no labels at {labels_path}; build the evaluation set first.", file=sys.stderr)
         return 2
     labels = json.loads(labels_path.read_text())
+    # Every clip is asked every description in the set, whatever --max-clips
+    # says: asking a clip only about events it contains cannot measure a false
+    # positive, and a precision number computed that way is meaningless.
+    all_descs = descriptions_of(labels)
     out_dir = Path(a.out)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -297,7 +309,7 @@ def main() -> int:
               f"{f' / first {n_clips} clips' if n_clips else ''} ===")
         try:
             r = one_run(labels, Path(a.clips), cfg, a, mode, media, verify, out_dir,
-                        max_clips=n_clips)
+                        max_clips=n_clips, descs=all_descs)
         except Exception as e:
             print(f"  variant FAILED: {type(e).__name__}: {e}", file=sys.stderr)
             results.append({"variant": f"{mode}-{media}", "error": str(e)})

@@ -267,11 +267,12 @@ ef-cost:  ## [any] what the GPU session would cost, without starting one
 # runs are always comparable.
 MAX_CLIPS ?=
 
-ef-try:  ## [gpu] smallest useful run: 1 clip, per_bracket/video (~90s, ~$0.03)
+ef-try:  ## [gpu] smallest useful run: 1 clip, all descriptions (~$0.03; CROP=1)
 	@mkdir -p $(OUT_DIR)/ef
 	$(EF_RUN) python scripts/eval_events.py --max-clips 1 \
-	  --mode per_bracket --media video \
-	  --labels $(EF_LABELS) --clips $(EF_CLIPS) --out $(EF_OUT)
+	  --mode per_bracket --media $(or $(MEDIA),video) \
+	  --labels $(EF_LABELS) --clips $(EF_CLIPS) --out $(EF_OUT) \
+	  $(if $(CROP),--crop,)
 
 ef-probe:  ## [gpu] 1 clip, all four variants: which one is worth scaling? (~6min, ~$0.12)
 	@mkdir -p $(OUT_DIR)/ef
@@ -283,7 +284,8 @@ ef-eval:  ## [gpu] score the labelled set (MODE=per_bracket MEDIA=video VERIFY=1
 	$(EF_RUN) python scripts/eval_events.py \
 	  --mode $(or $(MODE),per_bracket) --media $(or $(MEDIA),video) \
 	  --labels $(EF_LABELS) --clips $(EF_CLIPS) --out $(EF_OUT) \
-	  $(if $(MAX_CLIPS),--max-clips $(MAX_CLIPS),) $(if $(VERIFY),--verify,)
+	  $(if $(MAX_CLIPS),--max-clips $(MAX_CLIPS),) $(if $(VERIFY),--verify,) \
+	  $(if $(CROP),--crop,)
 
 ef-matrix:  ## [gpu] the whole first session: mode, media and verdict, all recorded
 	@mkdir -p $(OUT_DIR)/ef
