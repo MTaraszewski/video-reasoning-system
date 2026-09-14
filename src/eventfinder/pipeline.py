@@ -34,7 +34,8 @@ from .models import (
     Rejection,
     RunInfo,
 )
-from .signal import brackets as make_brackets, coverage_of
+from .backends.base import PROMPT_VERSION
+from .signal import brackets as make_brackets, coverage_of, motion_box
 
 
 @dataclass
@@ -47,6 +48,7 @@ class _Task:
     stamp_times: list[float]
     probe_ids: list[str]
     state_vocab: list[str]
+    crop: tuple[float, float, float, float] | None
     start_s: float
     end_s: float
 
@@ -86,15 +88,16 @@ def _group(probes: list[Probe]) -> dict[tuple[str, tuple[str, ...]], list[Probe]
             for subj, attrs in merged.items()}
 
 
-def plan(video: str, descriptions: list[str], cfg: Config,
-         compiler=None) -> tuple[list[Probe], list[Bracket], list[_Task], VideoInfo]:
+def plan(video: str, descriptions: list[str], cfg: Config, compiler=None,
+         manual: dict | None = None
+         ) -> tuple[list[Probe], list[Bracket], list[_Task], VideoInfo]:
     """Everything the run will do, before a single model call is made.
 
     Exposed on its own so cost can be inspected -- and refused -- in advance
     rather than discovered in the bill.
     """
     info = probe_video(video)
-    probes = compile_all(descriptions, compiler or RulesCompiler())
+    probes = compile_all(descriptions, compiler or RulesCompiler(), manual)
     bs = make_brackets(video, info.duration_s, cfg.signal)
     groups = _group(probes)
 
@@ -103,6 +106,13 @@ def plan(video: str, descriptions: list[str], cfg: Config,
         times = _stamp_times(b, cfg)
         if not times:
             continue
+        # One box per bracket, shared by every subject in it: the motion IS the
+        # reason the bracket exists, so a per-subject box would be the same box
+        # computed several times.
+        crop = (motion_box(video, b.start_s, b.end_s, cfg.signal,
+                           pad=cfg.sampling.crop_pad,
+                           min_frac=cfg.sampling.crop_min_frac)
+                if cfg.sampling.crop_to_motion else None)
         for (subject, attrs), ps in groups.items():
             ids = [p.id for p in ps]
             # The union of what the group's probes may say, so one call serves
@@ -110,11 +120,11 @@ def plan(video: str, descriptions: list[str], cfg: Config,
             vocab = sorted({w for p in ps for w in p.state_vocab})
             if cfg.observe.mode == "per_bracket":
                 tasks.append(_Task(b, subject, list(attrs), times, ids, vocab,
-                                   b.start_s, b.end_s))
+                                   crop, b.start_s, b.end_s))
             else:
                 for t in times:
                     tasks.append(_Task(b, subject, list(attrs), [t], ids, vocab,
-                                       t, min(t + cfg.observe.span_s, b.end_s)))
+                                       crop, t, min(t + cfg.observe.span_s, b.end_s)))
     return probes, bs, tasks, info
 
 
@@ -169,12 +179,12 @@ def _frames_for(video: str, task: _Task, cfg: Config) -> list[Frame]:
         start_s=task.start_s, end_s=task.end_s, seek=s.seek,
         overlay=cfg.overlay.enabled, font_scale=cfg.overlay.font_scale,
         fmt=cfg.overlay.format, position=cfg.overlay.position,
-        max_frames=s.max_frames_per_call,
+        max_frames=s.max_frames_per_call, crop=task.crop,
     )
 
 
 def run(video: str, descriptions: list[str], cfg: Config, reasoner,
-        *, compiler=None, verify: bool = False,
+        *, compiler=None, manual: dict | None = None, verify: bool = False,
         on_progress=None) -> EventsDocument:
     """Find the described events. Returns the document, whatever went wrong.
 
@@ -183,7 +193,7 @@ def run(video: str, descriptions: list[str], cfg: Config, reasoner,
     lose the nine.
     """
     t0 = time.perf_counter()
-    probes, bs, tasks, info = plan(video, descriptions, cfg, compiler)
+    probes, bs, tasks, info = plan(video, descriptions, cfg, compiler, manual)
     expressible = [p for p in probes if p.expressible]
 
     if len(tasks) > cfg.limits.max_model_calls:
@@ -270,6 +280,10 @@ def run(video: str, descriptions: list[str], cfg: Config, reasoner,
             sample_fps=cfg.sampling.fps, observe_step_s=cfg.observe.step_s,
             observe_span_s=cfg.observe.span_s,
             signal=cfg.signal.model_dump(), derive=cfg.derive.model_dump(),
+            # Enough to reproduce derivation exactly from the exchange log:
+            # this block plus exchanges.jsonl is the whole input to a replay.
+            sampling=cfg.sampling.model_dump(), observe=cfg.observe.model_dump(),
+            media=getattr(reasoner, "media", ""), prompt_version=PROMPT_VERSION,
             calls=u.calls - _calls0, tokens_in=u.tokens_in - _in0,
             tokens_out=u.tokens_out - _out0,
             wall_time_s=round(time.perf_counter() - t0, 3),

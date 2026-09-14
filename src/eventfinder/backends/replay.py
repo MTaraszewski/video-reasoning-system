@@ -33,7 +33,7 @@ class ReplayReasoner:
         self.by_key: dict[tuple[str, str, str, str], list[dict]] = {}
         self.no_video = 0
         self.versions: set[str] = set()
-        self.media: set[str] = set()
+        self.media_kinds: set[str] = set()
         n = 0
         with open(exchanges_path) as f:
             for line in f:
@@ -48,7 +48,7 @@ class ReplayReasoner:
                 self.by_key.setdefault(key, []).append(e)
                 self.model = e.get("model", self.model)
                 self.versions.add(e.get("prompt_version", "?"))
-                self.media.add(e.get("media", "?"))
+                self.media_kinds.add(e.get("media", "?"))
                 n += 1
         self.n_records = n
         if self.no_video:
@@ -73,7 +73,7 @@ class ReplayReasoner:
                 "again with a GPU run.")
 
     def verify_model(self) -> tuple[bool, str]:
-        return True, f"replay of {self.model} ({self.n_records} exchanges, media={sorted(self.media)})"
+        return True, f"replay of {self.model} ({self.n_records} exchanges, media={sorted(self.media_kinds)})"
 
     def complete_json(self, system: str, user: str, schema: dict) -> dict:
         raise RuntimeError("replay has no text model; use the rules compiler")

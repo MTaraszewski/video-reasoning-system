@@ -139,9 +139,13 @@ def brackets(video: str, duration_s: float, cfg: SignalConfig) -> list[Bracket]:
         n = max(1, int(np.ceil((e - s) / cfg.max_bracket_s)))
         w = (e - s) / n
         for i in range(n):
+            # `falling` marks the piece that contains the end of the motion,
+            # which is where a cessation becomes observable: "stopped" is only
+            # knowable once the stopping has happened and been padded past.
+            origin = "falling" if i == n - 1 else "rising"
             out.append(Bracket(id="", start_s=round(s + i * w, 3),
                                end_s=round(s + (i + 1) * w, 3),
-                               origin="rising", peak_score=round(z, 3)))
+                               origin=origin, peak_score=round(z, 3)))
 
     out.extend(_sentinels(out, duration_s, cfg))
     out.sort(key=lambda b: b.start_s)
@@ -183,6 +187,58 @@ def _sentinels(covered: list[Bracket], duration_s: float, cfg: SignalConfig) -> 
                 out.append(Bracket(id="", start_s=round(s, 3), end_s=round(e, 3),
                                    origin="sentinel"))
     return out
+
+
+def motion_box(video: str, start_s: float, end_s: float, cfg: SignalConfig, *,
+               pad: float = 0.35, min_frac: float = 0.25
+               ) -> tuple[float, float, float, float] | None:
+    """Where the motion is, over a bracket, as a normalised (x0, y0, x1, y1).
+
+    Computed from the same cheap per-pixel difference the bracketing uses, so
+    it costs one extra decode of a 128px thumbnail and no model call at all.
+
+    Bounds come from the 2nd and 98th percentiles of the changed pixels rather
+    than their min and max: a handful of stray pixels from compression noise on
+    the far side of the frame would otherwise widen the box to the whole image,
+    which is the same as not cropping while looking like it worked.
+
+    Returns None when nothing moved enough to localise -- the caller must then
+    send the uncropped frame rather than guess a region.
+    """
+    frames = sample_frames(video, fps=cfg.fps, max_side=cfg.thumb_px, overlay=False,
+                           start_s=start_s, end_s=end_s, seek=True)
+    if len(frames) < 2:
+        return None
+    arrs = [np.asarray(f.image.convert("L"), dtype=np.int16) for f in frames]
+    # Union of change across the bracket: the subject moves through it, and a
+    # box around only one instant would clip the rest of its path.
+    mask = np.zeros(arrs[0].shape, dtype=bool)
+    for a, b in zip(arrs, arrs[1:]):
+        mask |= np.abs(b - a) > NOISE
+    ys, xs = np.nonzero(mask)
+    if xs.size < 8:
+        return None
+
+    h, w = mask.shape
+    x0, x1 = np.percentile(xs, [2, 98]) / w
+    y0, y1 = np.percentile(ys, [2, 98]) / h
+    px, py = (x1 - x0) * pad, (y1 - y0) * pad
+    x0, x1 = x0 - px, x1 + px
+    y0, y1 = y0 - py, y1 + py
+
+    # Grow about the centre until the floor is met, then clamp into frame.
+    for lo, hi, i in ((x0, x1, 0), (y0, y1, 1)):
+        if hi - lo < min_frac:
+            c, half = (lo + hi) / 2, min_frac / 2
+            if i == 0:
+                x0, x1 = c - half, c + half
+            else:
+                y0, y1 = c - half, c + half
+    x0, y0 = max(0.0, x0), max(0.0, y0)
+    x1, y1 = min(1.0, x1), min(1.0, y1)
+    if x1 - x0 < 0.05 or y1 - y0 < 0.05:
+        return None
+    return (round(x0, 4), round(y0, 4), round(x1, 4), round(y1, 4))
 
 
 def coverage_of(bs: list[Bracket], duration_s: float) -> float:

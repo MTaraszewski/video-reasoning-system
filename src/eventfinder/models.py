@@ -184,6 +184,9 @@ class RunInfo(BaseModel):
     observe_span_s: float
     signal: dict = Field(default_factory=dict)
     derive: dict = Field(default_factory=dict)
+    sampling: dict = Field(default_factory=dict)
+    observe: dict = Field(default_factory=dict)
+    media: str = ""
     prompt_version: str = ""
     calls: int = 0
     tokens_in: int = 0

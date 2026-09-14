@@ -95,6 +95,9 @@ services:
     volumes:
       - weights:/weights
       - ${DATA_DIR:-./data}:/data:ro
+      # Read-only, and only so the server can open the bracket clips the finder
+      # writes when model.media=path. It must never be able to modify output.
+      - ${OUT_DIR:-./out}:/out:ro
     # MODEL and VLLM_ARGS are supplied by make/serve.mk.
     command: >
       --model ${MODEL:-nvidia/Cosmos3-Edge}

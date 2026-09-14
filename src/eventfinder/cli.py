@@ -17,7 +17,7 @@ import typer
 
 from .backends.replay import ReplayReasoner, summarise, write_exchanges
 from .backends.vllm import VLLMReasoner
-from .compile import RulesCompiler, compile_all
+from .compile import RulesCompiler, compile_all, load_manual_probes
 from .config import Config, load
 from .pipeline import plan as plan_run, run as batch_run
 from .stream import LiveFinder, frames_from_file
@@ -39,6 +39,17 @@ def _descs(description: list[str], queries: str | None) -> list[str]:
     if not out:
         raise typer.BadParameter("give at least one description, via -d or --queries")
     return out
+
+
+def _manual(path: str | None) -> dict | None:
+    """Description -> probe spec, overriding the rules.
+
+    The documented escape hatch for anything the compiler gets wrong, and the
+    only sanctioned way to express a proxy for something it refuses (a purchase
+    as an object changing hands, say). Echoed in the output document with
+    compiler="manual", so a wrong result stays traceable to the override.
+    """
+    return load_manual_probes(path) if path else None
 
 
 def _cfg(config: str | None, mode: str | None, media: str | None) -> Config:
@@ -63,12 +74,15 @@ def _reasoner(c: Config, media: str):
 @app.command()
 def plan(video: str, description: list[str] = typer.Option([], "-d", "--description"),
          queries: str = typer.Option(None, "--queries", help='semicolon-separated: "a;b"'),
+         probes: str = typer.Option(None, "--probes", help="manual probe overrides, JSON"),
          config: str = typer.Option(None), mode: str = typer.Option(None)):
     """What the run would do, before a single model call."""
     c = _cfg(config, mode, None)
-    probes, brackets, tasks, info = plan_run(video, _descs(description, queries), c)
+    compiler = RulesCompiler()
+    probes_, brackets, tasks, info = plan_run(video, _descs(description, queries), c,
+                                              compiler, _manual(probes))
     typer.echo(f"video       {Path(video).name}  {info.duration_s:.1f}s  {info.width}x{info.height}")
-    for p in probes:
+    for p in probes_:
         if p.expressible:
             typer.echo(f"  probe     {p.id} {p.subject:13s} {p.kind:9s} {p.states or p.direction or ''}")
         else:
@@ -85,6 +99,7 @@ def plan(video: str, description: list[str] = typer.Option([], "-d", "--descript
 @app.command()
 def run(video: str, description: list[str] = typer.Option([], "-d", "--description"),
          queries: str = typer.Option(None, "--queries", help='semicolon-separated: "a;b"'),
+         probes: str = typer.Option(None, "--probes", help="manual probe overrides, JSON"),
         out: str = typer.Option("out/events.json"), config: str = typer.Option(None),
         mode: str = typer.Option(None), media: str = typer.Option("video"),
         verify: bool = typer.Option(False, help="also ask the model for its own verdict"),
@@ -104,7 +119,7 @@ def run(video: str, description: list[str] = typer.Option([], "-d", "--descripti
             state["n"] = want
 
         doc = batch_run(video, _descs(description, queries), c, r, verify=verify,
-                        on_progress=prog)
+                        manual=_manual(probes), on_progress=prog)
     Path(out).parent.mkdir(parents=True, exist_ok=True)
     Path(out).write_text(doc.model_dump_json(indent=2))
     if record:
@@ -120,19 +135,20 @@ def run(video: str, description: list[str] = typer.Option([], "-d", "--descripti
 @app.command()
 def live(video: str, description: list[str] = typer.Option([], "-d", "--description"),
          queries: str = typer.Option(None, "--queries", help='semicolon-separated: "a;b"'),
+         probes: str = typer.Option(None, "--probes", help="manual probe overrides, JSON"),
          config: str = typer.Option(None), media: str = typer.Option("video"),
          realtime: bool = typer.Option(False, help="play at the capture clock")):
     """Stream a file as if it were a camera."""
     c = _cfg(config, None, media)
     c.observe.mode = "per_bracket"
-    probes = compile_all(_descs(description, queries), RulesCompiler())
+    probes_ = compile_all(_descs(description, queries), RulesCompiler(), _manual(probes))
     r = _reasoner(c, media)
 
     def emit(e, verified):
         typer.echo(f"  {'VERIFIED' if verified else 'candidate'}  "
                    f"{e.start_s:7.2f}-{e.end_s:<7.2f} conf {e.confidence:.2f}  {e.description}")
 
-    f = LiveFinder(probes, c, r, emit)
+    f = LiveFinder(probes_, c, r, emit)
     last = 0.0
     for fr in frames_from_file(video, c, realtime=realtime):
         f.feed(fr)

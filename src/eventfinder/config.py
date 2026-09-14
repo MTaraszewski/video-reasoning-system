@@ -60,6 +60,20 @@ class ModelConfig(BaseModel):
     # model result; RunInfo.model_verified records the answer.
     verify_identity: bool = True
 
+    # How the clip reaches the server.
+    #   video   one mp4 as a base64 data URL. Works anywhere, needs no shared
+    #           disk, and costs ~120 KB on the wire per call.
+    #   path    the same mp4 written to `media_dir` and passed as a file:// URL.
+    #           Needs the server to mount that directory and to be started with
+    #           --allowed-local-media-path covering it; saves the base64 round
+    #           trip and the ~33% encoding overhead.
+    #   frames  a list of JPEG data URLs, one per stamp time. ~478 KB per call
+    #           and measured WORSE on the labelled set (tIoU 0.020 vs 0.070),
+    #           kept because that comparison is one run on 15 truths.
+    media: str = Field("video", pattern="^(video|path|frames)$")
+    # Container path, visible to BOTH the finder and the model server.
+    media_dir: str = "/out/clips"
+
 
 class SamplingConfig(BaseModel):
     # MEASURED. 4 fps on 2-second spans is 8 frames per call, which the model
@@ -75,6 +89,26 @@ class SamplingConfig(BaseModel):
     # total. Seeking to the span keeps it flat. Off only as an escape hatch for
     # containers whose demuxer mis-seeks.
     seek: bool = True
+
+    # Crop each bracket to where the motion is, before resizing.
+    #
+    # MEASURED as the dominant failure. Of 1,311 state observations in the first
+    # GPU session, 39% were usable; 24% were timestamps the model silently
+    # skipped and 20% were "subject absent" -- and neither was truncation (only
+    # 18 of 322 calls hit the token cap) nor bracket length (return rate was
+    # 66-91% at every size, with no trend). The model does not answer about
+    # what it cannot see, and a person in a 1920x1072 MEVA frame downscaled to
+    # 640px is a few dozen pixels.
+    #
+    # The change signal already knows where the motion is. Cropping to it
+    # spends the same 640px on the subject instead of on the car park.
+    crop_to_motion: bool = False
+    # Fraction of the box's size added on each side, so the subject is not
+    # jammed against the edge and its surroundings stay legible.
+    crop_pad: float = 0.35
+    # Floor on the crop's size as a fraction of the frame. A tight crop around
+    # one moving hand is a picture of a hand, not of a person opening a door.
+    crop_min_frac: float = 0.25
 
 
 class OverlayConfig(BaseModel):

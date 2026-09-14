@@ -29,6 +29,7 @@ Request-shape choices, and their evidence status:
 from __future__ import annotations
 
 import base64
+import hashlib
 import io
 import json
 import tempfile
@@ -57,15 +58,17 @@ class VLLMReasoner:
                  temperature: float = 0.0, max_tokens: int = 192,
                  media: str = "video", timeout_s: float = 120.0,
                  sample_fps: float = 4.0, record: bool = True,
-                 jpeg_quality: int = 85, tokens_per_record: int = 48):
-        if media not in ("video", "frames"):
-            raise ValueError(f"media must be 'video' or 'frames', not {media!r}")
+                 jpeg_quality: int = 85, tokens_per_record: int = 48,
+                 media_dir: str = "/out/clips"):
+        if media not in ("video", "path", "frames"):
+            raise ValueError(f"media must be 'video', 'path' or 'frames', not {media!r}")
         self.client = OpenAI(base_url=base_url, api_key=api_key, timeout=timeout_s)
         self.model = model
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.tokens_per_record = tokens_per_record
         self.media = media
+        self.media_dir = media_dir
         self.sample_fps = sample_fps
         self.record = record
         self.jpeg_quality = jpeg_quality
@@ -146,7 +149,7 @@ class VLLMReasoner:
                     {"role": "user", "content": content}]
         extra = {"chat_template_kwargs": {"enable_thinking": False},
                  "structured_outputs": {"json": schema}}
-        if self.media == "video":
+        if self.media in ("video", "path"):
             extra["media_io_kwargs"] = {"video": {"num_frames": len(frames)}}
 
         budget = self._budget(len(stamp_times))
@@ -189,6 +192,19 @@ class VLLMReasoner:
         if self.media == "frames":
             return [{"type": "image_url",
                      "image_url": {"url": _jpeg_url(f, self.jpeg_quality)}} for f in frames]
+        if self.media == "path":
+            # Written where both containers can see it, and handed over as a
+            # path rather than 120 KB of base64. Named by content so concurrent
+            # calls cannot collide and a repeat is free.
+            d = Path(self.media_dir)
+            d.mkdir(parents=True, exist_ok=True)
+            tag = hashlib.sha1(
+                f"{self.context}|{frames[0].t}|{frames[-1].t}|{len(frames)}".encode()
+            ).hexdigest()[:16]
+            p = d / f"{tag}.mp4"
+            if not p.exists():
+                write_clip(frames, p, fps=self.sample_fps)
+            return [{"type": "video_url", "video_url": {"url": f"file://{p}"}}]
         with tempfile.TemporaryDirectory() as d:
             p = write_clip(frames, Path(d) / "clip.mp4", fps=self.sample_fps)
             url = "data:video/mp4;base64," + base64.b64encode(p.read_bytes()).decode()

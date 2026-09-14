@@ -21,7 +21,21 @@
 # decodes a VIDEO FILE it is given. We never use that path — frames are decoded
 # here, timestamped, and sent as images — so the flag configures a code path this
 # system does not exercise.
-VLLM_ARGS ?= --max-model-len 32768 --allowed-local-media-path /data
+# --enable-prefix-caching: the system prompt and field list are identical across
+#   calls. Already effective (the first session logged an 82% prefix cache hit
+#   rate), set explicitly so it cannot silently change with a vLLM default.
+# --allowed-local-media-path: /data for source clips, /out for the bracket clips
+#   the finder writes -- both are mounted on the vllm service, /out read-only.
+#   This is what media=path needs; without it vLLM refuses a file:// URL.
+#
+# Deliberately NOT copied from the reference design: `--max-num-seqs 4`. It
+# assumes a small concurrency budget, and we measured the opposite -- GPU KV
+# cache sat at 2.6-5.3% with 3 running requests through the whole first
+# session, so the server was never the limit. Capping it at 4 would fix in
+# place the headroom we want to use.
+VLLM_ARGS ?= --max-model-len 32768 \
+             --enable-prefix-caching \
+             --allowed-local-media-path /data,/out
 VLLM_EXTRA ?=
 
 serve: preflight-gpu  ## [gpu] start the model server on the local GPU (foreground)

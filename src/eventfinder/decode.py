@@ -146,6 +146,7 @@ def sample_frames(
     position: str = "bottom-left",
     seek: bool = True,
     max_frames: int | None = None,
+    crop: tuple[float, float, float, float] | None = None,
 ) -> list[Frame]:
     """Sample at ~`fps` over [start_s, end_s], resized, timestamped.
 
@@ -185,7 +186,19 @@ def sample_frames(
             if t + 1e-6 < next_t:
                 continue
 
-            img = _resize(frame.to_image(), max_side)
+            img = frame.to_image()
+            if crop:
+                # Crop BEFORE resizing, so the subject gets the pixels that
+                # would otherwise go to the rest of the scene -- and before the
+                # overlay, which is then stamped onto the crop and stays
+                # readable. Stamping first and cropping after would cut the
+                # timestamp off and leave the frame no longer self-describing.
+                w0, h0 = img.size
+                x0, y0, x1, y1 = crop
+                img = img.crop((int(x0 * w0), int(y0 * h0),
+                                max(int(x1 * w0), int(x0 * w0) + 1),
+                                max(int(y1 * h0), int(y0 * h0) + 1)))
+            img = _resize(img, max_side)
             if overlay:
                 img = overlay_timestamp(img, t, font_scale=font_scale, fmt=fmt,
                                         position=position)

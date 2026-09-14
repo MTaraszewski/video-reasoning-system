@@ -17,6 +17,7 @@ from eventfinder.signal import (
     _sentinels,
     brackets,
     coverage_of,
+    motion_box,
 )
 from eventfinder.models import Bracket
 
@@ -160,3 +161,69 @@ def test_defaults_are_the_swept_operating_point():
     s = SignalConfig()
     assert (s.hi_pct, s.lo_pct) == (97.0, 90.0)
     assert (s.sentinel_every_s, s.sentinel_width_s, s.pad_s) == (45.0, 8.0, 4.0)
+
+
+# --- cropping to the motion -----------------------------------------------
+
+def test_motion_box_finds_a_moving_object():
+    """The dominant failure in the first GPU session: 44% of state observations
+    were lost because the model would not answer about a subject it could not
+    see, and a person in a 1920x1072 frame at 640px is a few dozen pixels."""
+    import numpy as np
+    from PIL import Image
+    from eventfinder.decode import write_clip
+    from eventfinder.decode import Frame as F
+    import tempfile
+    from pathlib import Path as P
+
+    frames = []
+    for i in range(12):
+        a = np.zeros((240, 320, 3), dtype=np.uint8)
+        x = 200 + i * 4                      # a small bright block, right of centre
+        a[150:180, x:x + 24] = 255
+        frames.append(F(t=i * 0.5, image=Image.fromarray(a)))
+    with tempfile.TemporaryDirectory() as d:
+        p = write_clip(frames, P(d) / "m.mp4", fps=2.0)
+        box = motion_box(str(p), 0.0, 5.5, cfg(fps=2.0, thumb_px=128))
+    assert box is not None
+    x0, y0, x1, y1 = box
+    assert 0.0 <= x0 < x1 <= 1.0 and 0.0 <= y0 < y1 <= 1.0
+    assert x0 > 0.3, "the box should sit on the right half, where the block is"
+    assert (x1 - x0) < 0.9, "a box covering the frame is the same as no crop"
+
+
+def test_motion_box_returns_none_on_a_still_clip():
+    """Nothing moved, so there is nowhere to point. The caller must send the
+    whole frame rather than crop to a guess."""
+    import numpy as np
+    from PIL import Image
+    from eventfinder.decode import Frame as F, write_clip
+    import tempfile
+    from pathlib import Path as P
+
+    frames = [F(t=i * 0.5, image=Image.fromarray(np.full((240, 320, 3), 40, np.uint8)))
+              for i in range(8)]
+    with tempfile.TemporaryDirectory() as d:
+        p = write_clip(frames, P(d) / "s.mp4", fps=2.0)
+        assert motion_box(str(p), 0.0, 3.5, cfg(fps=2.0, thumb_px=128)) is None
+
+
+def test_the_box_respects_its_minimum_size():
+    """A tight crop around one moving hand is a picture of a hand, not of a
+    person opening a door."""
+    import numpy as np
+    from PIL import Image
+    from eventfinder.decode import Frame as F, write_clip
+    import tempfile
+    from pathlib import Path as P
+
+    frames = []
+    for i in range(10):
+        a = np.zeros((240, 320, 3), dtype=np.uint8)
+        a[120:126, 160 + (i % 2) * 3:166 + (i % 2) * 3] = 255   # a tiny flicker
+        frames.append(F(t=i * 0.5, image=Image.fromarray(a)))
+    with tempfile.TemporaryDirectory() as d:
+        p = write_clip(frames, P(d) / "t.mp4", fps=2.0)
+        box = motion_box(str(p), 0.0, 4.5, cfg(fps=2.0, thumb_px=128), min_frac=0.4)
+    assert box is not None
+    assert (box[2] - box[0]) >= 0.39 and (box[3] - box[1]) >= 0.39
