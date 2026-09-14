@@ -305,6 +305,22 @@ EXCHANGES_IN = $(patsubst ./out/%,/out/%,$(patsubst out/%,/out/%,$(EXCHANGES)))
 # STALE=1 accepts a corpus recorded under an older prompt. Legitimate for
 # measuring a change to DERIVATION, which does not depend on the prompt; not
 # legitimate for a claim about the model, which does.
+# Named experiments from eval/experiments.yaml, run one at a time because there
+# is one GPU: two at once would contend for the same server and neither run's
+# latency figures would describe either. Each records its own corpus, so a
+# session that dies keeps what it paid for, and one already recorded is skipped.
+ef-experiments-cost:  ## [any] price the experiment set without running it
+	$(EF_RUN) python scripts/run_experiments.py \
+	  --labels $(EF_LABELS) --clips $(EF_CLIPS) --out $(EF_OUT) \
+	  $(if $(ONLY),--only $(ONLY),) $(if $(MAX_CLIPS),--max-clips $(MAX_CLIPS),)
+
+ef-experiments:  ## [gpu] run them (ONLY=a,b  MAX_CLIPS=4  FORCE=1)
+	@mkdir -p $(OUT_DIR)/ef
+	$(EF_RUN) python scripts/run_experiments.py --go \
+	  --labels $(EF_LABELS) --clips $(EF_CLIPS) --out $(EF_OUT) \
+	  $(if $(ONLY),--only $(ONLY),) $(if $(MAX_CLIPS),--max-clips $(MAX_CLIPS),) \
+	  $(if $(FORCE),--force,)
+
 ef-replay:  ## [any] re-score a recorded session, no GPU (EXCHANGES=out/ef/... STALE=1)
 	$(EF_RUN) python scripts/eval_events.py --replay $(EXCHANGES_IN) \
 	  --labels $(EF_LABELS) --clips $(EF_CLIPS) --out $(EF_OUT) \

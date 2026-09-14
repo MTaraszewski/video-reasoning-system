@@ -1,0 +1,43 @@
+# Named experiments, run in order by scripts/run_experiments.py.
+#
+# Each entry is a set of dotted overrides onto eventfinder.yaml. Everything not
+# named is inherited, so two experiments differ only by what is written here --
+# which is what makes the comparison between them mean anything.
+#
+# `why` is not decoration. An experiment without a stated question is how a GPU
+# session turns into a pile of numbers nobody can act on.
+
+- name: a-full-coverage
+  why: >
+    Does recall improve when we stop skipping 59% of the clip? In per_bracket
+    mode cost scales with brackets, not with time, and the change signal
+    produces MORE brackets (5.8) than uniform chunking does (4.0) because it
+    pads and splits. So full coverage is both cheaper and 2.4x the coverage.
+    main polls uniformly and scores 0.292; we poll 41% and score 0.000 on the
+    same four clips.
+  set:
+    signal.enabled: false
+    signal.max_bracket_s: 30.0
+    observe.step_s: 1.0
+
+- name: b-fine-resolution
+  why: >
+    Does boundary resolution matter, or is the failure upstream of it? Stamps
+    per call are free until the 48-frame cap, so 0.5s resolution costs the same
+    as 1.0s did with the signal on. Never tested below 1.0s.
+  set:
+    signal.enabled: false
+    signal.max_bracket_s: 20.0
+    observe.step_s: 0.5
+
+- name: c-high-resolution
+  why: >
+    Does the model simply need more pixels? The measured failure is perception:
+    of 1,311 state observations, 24% were timestamps silently skipped and 20%
+    said the subject was absent, and a person in a 1920x1072 frame at 640px is
+    a few dozen pixels. Never tested above 640.
+  set:
+    signal.enabled: false
+    signal.max_bracket_s: 30.0
+    observe.step_s: 1.0
+    sampling.frame_max_side: 1280

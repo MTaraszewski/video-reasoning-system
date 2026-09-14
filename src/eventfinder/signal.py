@@ -121,7 +121,15 @@ def brackets(video: str, duration_s: float, cfg: SignalConfig) -> list[Bracket]:
     linear in clip length, and the baseline every saving is measured against.
     """
     if not cfg.enabled:
-        return [Bracket(id="b1", start_s=0.0, end_s=duration_s, origin="manual")]
+        # Split at max_bracket_s exactly as a detected bracket is. Returning one
+        # bracket spanning the clip would be capped by max_frames_per_call at
+        # observation time, so most of the clip would go unobserved while
+        # coverage reported 100%.
+        n = max(1, int(np.ceil(duration_s / cfg.max_bracket_s)))
+        w = duration_s / n
+        return [Bracket(id=f"b{i+1}", start_s=round(i * w, 3),
+                        end_s=round((i + 1) * w, 3), origin="manual")
+                for i in range(n)]
 
     pts = change_score(video, fps=cfg.fps, thumb_px=cfg.thumb_px)
     spans = _merge(_hysteresis(pts, cfg), cfg.merge_gap_s) if pts else []

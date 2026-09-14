@@ -221,7 +221,10 @@ def show(r: dict) -> None:
               "(recorded, not acted on)")
 
 
-def main() -> int:
+def build_parser() -> argparse.ArgumentParser:
+    """Built here rather than inline in main() so other callers can get the
+    full set of defaults from one place. run_experiments.py used to hand-roll
+    a stand-in object, which silently lost every flag added afterwards."""
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--labels", default="data/eval/labels.json")
@@ -252,7 +255,11 @@ def main() -> int:
                          "comparison, not a new question, and costs ~9.5x per clip")
     ap.add_argument("--dry-run", action="store_true", help="plan only, no calls")
     ap.add_argument("--allow-unverified", action="store_true")
-    a = ap.parse_args()
+    return ap
+
+
+def main() -> int:
+    a = build_parser().parse_args()
 
     labels_path = Path(a.labels)
     if not labels_path.exists():

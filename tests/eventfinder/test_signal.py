@@ -129,11 +129,29 @@ def test_sentinel_width_is_a_glance_not_a_span():
 
 # --- whole-clip behaviour -------------------------------------------------
 
-def test_disabled_signal_is_the_whole_clip():
-    """The linear-cost baseline every saving is measured against."""
-    bs = brackets("unused.mp4", 120.0, cfg(enabled=False))
-    assert len(bs) == 1 and bs[0].origin == "manual"
+def test_disabled_signal_covers_the_whole_clip_in_chunks():
+    """Full coverage, chunked at max_bracket_s.
+
+    Returning ONE bracket spanning the clip looks right and is not: the
+    observer caps a call at max_frames_per_call, so a 120 s bracket would be
+    observed for its first 48 frames and coverage would still report 100%.
+
+    This is also the cheaper configuration in per_bracket mode, which was the
+    surprise: cost scales with brackets, and the change signal produces MORE of
+    them (5.8 per clip, padded and split) than uniform chunking does (4.0) --
+    so 41% coverage was costing more than 100%."""
+    c = cfg(enabled=False, max_bracket_s=30.0)
+    bs = brackets("unused.mp4", 120.0, c)
+    assert len(bs) == 4
+    assert all(b.origin == "manual" for b in bs)
+    assert all(b.duration_s <= c.max_bracket_s + 1e-6 for b in bs)
     assert coverage_of(bs, 120.0) == 1.0
+    assert [b.id for b in bs] == ["b1", "b2", "b3", "b4"]
+
+
+def test_a_short_clip_disabled_is_a_single_bracket():
+    bs = brackets("unused.mp4", 10.0, cfg(enabled=False, max_bracket_s=30.0))
+    assert len(bs) == 1 and coverage_of(bs, 10.0) == 1.0
 
 
 def test_coverage_ignores_overlap():
