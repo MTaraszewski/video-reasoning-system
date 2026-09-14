@@ -55,8 +55,22 @@ observe:
   # 85% -> 29% and `person` parsed 0 of 119 polls under the old prompt.
   shared_caption: false
 
+  # How the state vocabulary is put to the model. At matched 100% coverage:
+  # examples -> tIoU 0.000 with change registered in 3 of 13 events, all of them
+  # presence; comparative -> 0.086 with change in 5 of 13, including the FIRST
+  # non-presence transition the project has produced ("a vehicle door opens"
+  # read closed -> open). Across 3 prompt styles, 2 resolutions, 2 coverages,
+  # crop on and off and 24 derivation settings, no state, cessation, direction
+  # or relation event had ever shown a change before this.
+  state_prompt: comparative
+
 derive:
-  min_run: 2
+  # Swept on the labelled set against the comparative-prompt corpus, once there
+  # were transitions to tune against: min_run 1 -> 0.117, 2 -> 0.086, 3 -> 0.000.
+  # Requiring two agreeing observations each side was discarding real
+  # transitions. An earlier sweep found this knob irrelevant because the corpus
+  # it ran against had almost none.
+  min_run: 1
   transition_hold_s: 1.0
   # A transition bracketed wider than this is anchored to the evidence and
   # marked partial rather than claimed as a long event. Interpolating across an

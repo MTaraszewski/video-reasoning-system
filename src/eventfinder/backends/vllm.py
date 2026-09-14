@@ -79,6 +79,13 @@ class VLLMReasoner:
         # clip replays another clip's replies -- silently, as a flood of
         # unparseable times. The pipeline sets it per run.
         self.context = ""
+        # The plan-relevant config, stamped onto every exchange. A replay
+        # re-plans the run to know which bracket a record belongs to, so it must
+        # re-plan with the SAME settings: brackets computed under a different
+        # signal config have different ids and every lookup silently misses.
+        # This has now cost three separate debugging rounds, each looking like
+        # "the model returned nothing".
+        self.plan_config: dict = {}
         self.usage = Usage()
 
     # --- identity ---------------------------------------------------------
@@ -238,6 +245,7 @@ class VLLMReasoner:
             "attributes": getattr(self, "_attrs", []),
             "state_vocab": getattr(self, "_vocab", []),
             "state_prompt": self.state_prompt,
+            "plan_config": self.plan_config,
             "mode": mode, "description": description, "reply": reply, "error": error,
             "latency_s": round(dt, 3), "finish_reason": finish, "model": self.model,
             "media": self.media, "max_tokens": self._budget(len(times)),

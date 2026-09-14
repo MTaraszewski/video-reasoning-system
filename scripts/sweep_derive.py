@@ -83,6 +83,12 @@ def main() -> int:
     ap.add_argument("--labels", default="data/eval/labels.json")
     ap.add_argument("--clips", default="data/eval")
     ap.add_argument("--config", default="eventfinder.yaml")
+    ap.add_argument("--set", action="append", default=[], metavar="KEY=VALUE",
+                    help="dotted config override, e.g. --set signal.enabled=false. "
+                         "Needed for a corpus recorded before exchanges carried their "
+                         "plan_config: a replay re-plans to find bracket ids, and "
+                         "re-planning under a different signal config makes every "
+                         "lookup miss silently.")
     ap.add_argument("--stale-ok", action="store_true",
                     help="accept a corpus recorded under an older prompt; the "
                          "numbers then describe that prompt, not this one")
@@ -90,6 +96,22 @@ def main() -> int:
 
     cfg = load(a.config) if Path(a.config).exists() else Config()
     cfg.observe.mode = "per_bracket"
+    for item in a.set:
+        key, _, raw = item.partition("=")
+        val = {"true": True, "false": False}.get(raw.lower(), raw)
+        if isinstance(val, str):
+            try:
+                val = float(val) if "." in val else int(val)
+            except ValueError:
+                pass
+        node = cfg
+        *parents, leaf = key.split(".")
+        for k in parents:
+            node = getattr(node, k)
+        setattr(node, leaf, val)
+    cfg.check()
+    print(f"  plan: signal.enabled={cfg.signal.enabled} "
+          f"max_bracket_s={cfg.signal.max_bracket_s} step_s={cfg.observe.step_s}")
     labels = json.loads(Path(a.labels).read_text())
     print(f"  replaying {Path(a.corpus).name} once ...")
     collected, probes, _ = collect(a.corpus, labels, cfg, Path(a.clips),

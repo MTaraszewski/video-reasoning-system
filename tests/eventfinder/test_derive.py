@@ -347,10 +347,10 @@ def test_the_span_covers_the_act_not_only_its_onset():
     """Measured on the first GPU session: the onset window was right and the
     span abutted the truth instead of overlapping it -- pred 2.00-3.00 against
     a truth of 3.00-5.27, intersection exactly zero, tIoU 0.000."""
-    obs = [door(t, "closed") for t in (1, 2)] + [door(t, "open") for t in (3, 4, 5, 6, 7)]
+    obs = [door(t, "closed") for t in (1, 2)] + [door(float(t), "open") for t in range(3, 20)]
     e, = derive(obs, DOOR, CFG, STEP)
     assert e.start_s == 2.0
-    assert e.end_s == 2.0 + 1.0 + CFG.extend_by_motion_s   # onset + the act
+    assert e.end_s == 3.0 + CFG.extend_by_motion_s        # onset + the act
     assert e.end_s - e.start_s > STEP
 
 

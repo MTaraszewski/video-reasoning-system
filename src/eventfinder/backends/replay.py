@@ -51,6 +51,9 @@ class ReplayReasoner:
                 self.media_kinds.add(e.get("media", "?"))
                 n += 1
         self.n_records = n
+        # The config the recording was planned under, if it carried one.
+        self.plan_config = next((json.loads(l).get("plan_config")
+                                 for l in open(exchanges_path) if l.strip()), None) or {}
         if self.no_video:
             raise ValueError(
                 f"{self.no_video} of {n} records in {exchanges_path} carry no `video` "

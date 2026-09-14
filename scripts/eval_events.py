@@ -41,6 +41,51 @@ from eventfinder.pipeline import plan, run  # noqa: E402
 from video_reasoning.metrics import CONTROL_AXES, aggregate, by_axis  # noqa: E402
 
 
+def apply_set(cfg, items) -> None:
+    """Dotted config overrides, e.g. signal.enabled=false."""
+    for item in items or []:
+        key, _, raw = item.partition("=")
+        val = {"true": True, "false": False}.get(raw.lower(), raw)
+        if isinstance(val, str):
+            try:
+                val = float(val) if "." in val else int(val)
+            except ValueError:
+                pass
+        node = cfg
+        *parents, leaf = key.split(".")
+        for k in parents:
+            node = getattr(node, k)
+        setattr(node, leaf, val)
+
+
+def apply_plan_config(cfg, path: str) -> bool:
+    """Re-plan a replay under the settings the recording was planned with.
+
+    A replay re-plans the run to know which bracket each record belongs to.
+    Re-planning under different signal settings produces different bracket ids,
+    every lookup misses, and it surfaces as a flood of failures and repairs that
+    look exactly like a model returning nothing. Corpora recorded from now on
+    carry their plan_config; older ones need --set.
+    """
+    with open(path) as f:
+        for line in f:
+            if line.strip():
+                pc = json.loads(line).get("plan_config") or {}
+                break
+        else:
+            return False
+    if not pc:
+        return False
+    for section, vals in pc.items():
+        node = getattr(cfg, section, None)
+        if node is None:
+            continue
+        for k, v in vals.items():
+            if hasattr(node, k):
+                setattr(node, k, v)
+    return True
+
+
 def infer_from_corpus(path: str) -> tuple[str, str]:
     """Read the mode and media path back out of a recorded session.
 
@@ -91,6 +136,13 @@ def build_cfg(a, mode: str) -> Config:
         c.sampling.crop_to_motion = True
     if a.state_prompt:
         c.observe.state_prompt = a.state_prompt
+    if getattr(a, "replay", None):
+        used = apply_plan_config(c, a.replay)
+        if not used and not a.set:
+            print("  note: this corpus carries no plan_config. If it was recorded with "
+                  "different signal settings, pass --set signal.enabled=false (etc) or "
+                  "every lookup will miss.", file=sys.stderr)
+    apply_set(c, a.set)
     c.check()
     return c
 
@@ -244,6 +296,10 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--matrix", action="store_true",
                     help="every question the first GPU session exists to answer")
     ap.add_argument("--replay", default=None, help="score a recorded session, no GPU")
+    ap.add_argument("--set", action="append", default=[], metavar="KEY=VALUE",
+                    help="dotted config override, e.g. --set signal.enabled=false. "
+                         "Needed to replay a corpus recorded before exchanges carried "
+                         "their plan_config.")
     ap.add_argument("--stale-ok", action="store_true",
                     help="accept a replay corpus recorded under another prompt")
     ap.add_argument("--hourly", default="1.22249",

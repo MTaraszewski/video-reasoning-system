@@ -227,9 +227,22 @@ class ObserveConfig(BaseModel):
     # averaged out. Guidance in the prompt, no coercion in the schema.
     constrain_state_enum: bool = False
 
-    # How the vocabulary is offered: generic | examples | strict.
+    # How the vocabulary is offered: generic | examples | strict | comparative.
     # See backends/base.STATE_PROMPTS for what each measured.
-    state_prompt: str = Field("examples",
+    #
+    # MEASURED, at matched 100% coverage on the labelled set:
+    #   examples     tIoU 0.000, and the model registered change in 3 of 13
+    #                labelled events -- all three of them `presence`
+    #   comparative  tIoU 0.086, change in 5 of 13, INCLUDING the first
+    #                non-presence transition the project has produced:
+    #                "a vehicle door opens" read closed -> open
+    #
+    # That second number is the one that matters. Across 3 prompt styles, 2
+    # resolutions, 2 coverages, crop on and off, and 24 derivation settings,
+    # no `state`, `cessation`, `direction` or `relation` event had EVER shown a
+    # change. Asking for a comparison rather than a description is the only
+    # thing that moved it.
+    state_prompt: str = Field("comparative",
                               pattern="^(generic|examples|strict|comparative)$")
 
     # MEASURED. One caption per timestep covering every subject, instead of one
@@ -250,13 +263,23 @@ class DeriveConfig(BaseModel):
     code where they can be swept without a GPU.
     """
 
-    # INHERITED. Consecutive agreeing observations required before a run counts.
-    # min_run=1 admits any single mis-parse as an event.
-    min_run: int = Field(2, gt=0)
+    # MEASURED, and changed from 2 after the comparative prompt started
+    # producing transitions to tune against. Swept on the labelled set:
+    # min_run=1 scores tIoU 0.117, min_run=2 scores 0.086, min_run=3 scores
+    # 0.000. Requiring two agreeing observations either side was discarding
+    # real transitions, not noise -- the earlier sweep that found this knob
+    # irrelevant was run against a corpus with almost no transitions in it.
+    #
+    # The trade is honest: min_run=1 admits a single mis-parse as an event, and
+    # the false-positive rate is 0.80 either way. Confidence is what should
+    # separate them, and it is published per factor for exactly that.
+    min_run: int = Field(1, gt=0)
     # INHERITED. A transition must hold for this long to be believed.
     transition_hold_s: float = Field(1.0, ge=0)
-    # INHERITED. Extend an event's end while the subject is still moving.
-    extend_by_motion_s: float = Field(4.0, ge=0)
+    # MEASURED. Swept: 2s -> 0.093, 4s -> 0.110, 8s -> 0.117, 12s -> 0.108.
+    # The labelled events run 1.5-13s, so an onset window plus 8s covers most
+    # of them without swallowing the ones that follow.
+    extend_by_motion_s: float = Field(8.0, ge=0)
     # MEASURED, and the fix for the worst failure the previous engine produced.
     # A transition bracketed by two polls further apart than this is NOT
     # interpolated to their midpoint; the event is emitted at the observed edge

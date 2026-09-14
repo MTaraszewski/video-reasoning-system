@@ -58,3 +58,17 @@
     signal.max_bracket_s: 30.0
     observe.step_s: 1.0
     observe.state_prompt: comparative
+
+- name: e-signal-plus-pixels
+  why: >
+    The only two levers that moved anything, combined for the first time. At
+    matched 100% coverage, 1280px took tIoU from 0.000 to 0.030 and recovered
+    an R@1 hit that 640px lost - resolution is the one axis with a directional
+    result. Separately, the change signal at 41% coverage scored 0.041, better
+    than any full-coverage run at 640px. Both have only ever been tested
+    against a config holding the other at its worse setting. Cheaper than c
+    because 41% coverage is ~44% of the frames.
+  set:
+    signal.enabled: true
+    observe.step_s: 1.0
+    sampling.frame_max_side: 1280

@@ -212,6 +212,14 @@ def run(video: str, descriptions: list[str], cfg: Config, reasoner,
     # Namespaces this run's exchange records. See VLLMReasoner.context.
     if hasattr(reasoner, "context"):
         reasoner.context = Path(video).name
+    if hasattr(reasoner, "plan_config"):
+        # Everything a replay needs to reproduce this run's bracket ids.
+        reasoner.plan_config = {
+            "signal": cfg.signal.model_dump(),
+            "observe": {k: getattr(cfg.observe, k) for k in ("mode", "step_s", "span_s")},
+            "sampling": {k: getattr(cfg.sampling, k)
+                         for k in ("fps", "frame_max_side", "max_frames_per_call")},
+        }
 
     ok, verified_id = reasoner.verify_model()
     # Snapshot: one reasoner serves many clips in an evaluation, so its counters
