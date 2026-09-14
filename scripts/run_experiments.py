@@ -41,7 +41,22 @@ from eventfinder.config import Config, load                  # noqa: E402
 from eventfinder.pipeline import plan                        # noqa: E402
 
 GPU_HOURLY = 1.22249     # g6.2xlarge, verified
-SEC_PER_CALL = 5.0       # measured: 4.68-5.45s across every run so far
+
+# Latency tracks FRAMES SHOWN, not calls. Fitted over 1,364 recorded calls
+# spanning 2 to 22 frames each: 0.55 s per frame with a negligible intercept,
+# and the per-frame ratio holds at 0.46-0.63 across every bucket.
+#
+# Pricing by call instead under-reported a full-coverage run by 4x, because the
+# same 160 calls carried 31 frames each rather than 9.5 -- and the --max-cost
+# guard was built on that number, so it would not have stopped anything.
+#
+# It also corrects what per_bracket actually buys: in that mode frames equal
+# stamps, while per_step shows span_s x fps frames per stamp. The saving is
+# showing ONE frame per observed second instead of eight, not batching calls.
+SEC_PER_FRAME = 0.55
+# Bigger frames cost more per frame; 640px is where SEC_PER_FRAME was fitted.
+# Area-proportional is a guess, flagged as such: experiment c measures it.
+BASE_MAX_SIDE = 640
 
 
 def apply(cfg: Config, overrides: dict) -> Config:
@@ -72,16 +87,26 @@ def eval_args(**kw):
     return a
 
 
-def cost_of(exp: dict, labels, clips: Path, base: Config, descs) -> tuple[int, float]:
+def cost_of(exp: dict, labels, clips: Path, base: Config, descs):
+    """(calls, frames, seconds, dollars). Frames are what it is priced on."""
     cfg = apply(load_base(base), exp["set"])
     cfg.observe.mode = "per_bracket"
-    calls = 0
+    calls = frames = 0
     for clip in labels:
         v = clips / clip["video"]
-        if v.exists():
-            _, _, tasks, _ = plan(str(v), descs, cfg)
-            calls += len(tasks)
-    return calls, calls * SEC_PER_CALL / cfg.observe.concurrency / 3600 * GPU_HOURLY
+        if not v.exists():
+            continue
+        _, _, tasks, _ = plan(str(v), descs, cfg)
+        calls += len(tasks)
+        for t in tasks:
+            # per_bracket shows one frame per stamp; per_step shows a span of
+            # them at the sampling rate.
+            per = (1 if cfg.observe.mode == "per_bracket"
+                   else max(1, round(cfg.observe.span_s * cfg.sampling.fps)))
+            frames += min(len(t.stamp_times) * per, cfg.sampling.max_frames_per_call)
+    scale = (cfg.sampling.frame_max_side / BASE_MAX_SIDE) ** 2
+    secs = frames * SEC_PER_FRAME * scale / cfg.observe.concurrency
+    return calls, frames, secs, secs / 3600 * GPU_HOURLY
 
 
 def load_base(path) -> Config:
@@ -123,22 +148,21 @@ def main() -> int:
     clips = Path(a.clips)
 
     # --- cost the set before spending any of it --------------------------
-    print(f"{'experiment':22s} {'calls':>7} {'est $':>7} {'est min':>8}  status")
-    total_calls = total_cost = 0.0
+    print(f"{'experiment':22s} {'calls':>7} {'frames':>8} {'est $':>7} {'est min':>8}  status")
+    total_calls = total_frames = total_cost = total_secs = 0.0
     plans = []
     for e in exps:
-        calls, cost = cost_of(e, labels, clips, a.config, all_descs)
+        calls, frames, secs, cost = cost_of(e, labels, clips, a.config, all_descs)
         corpus = out_dir / f"exchanges-{e['name']}.jsonl"
         done = corpus.exists() and not a.force
         if not done:
-            total_calls += calls
-            total_cost += cost
+            total_calls += calls; total_frames += frames
+            total_cost += cost; total_secs += secs
         plans.append((e, calls, cost, corpus, done))
-        print(f"{e['name']:22s} {calls:>7} {cost:>7.2f} "
-              f"{calls * SEC_PER_CALL / 3 / 60:>7.0f}m  "
+        print(f"{e['name']:22s} {calls:>7} {frames:>8} {cost:>7.2f} {secs / 60:>7.0f}m  "
               f"{'recorded, will skip' if done else ('replay' if a.replay else 'to run')}")
-    print(f"{'TOTAL (new work)':22s} {int(total_calls):>7} {total_cost:>7.2f} "
-          f"{total_calls * SEC_PER_CALL / 3 / 60:>7.0f}m")
+    print(f"{'TOTAL (new work)':22s} {int(total_calls):>7} {int(total_frames):>8} "
+          f"{total_cost:>7.2f} {total_secs / 60:>7.0f}m")
 
     if not a.go:
         print("\n  costing only. Add --go to run, or --replay --go to re-score recorded ones.")

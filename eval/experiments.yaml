@@ -41,3 +41,20 @@
     signal.max_bracket_s: 30.0
     observe.step_s: 1.0
     sampling.frame_max_side: 1280
+
+- name: d-comparative
+  why: >
+    The measured failure is neither vocabulary nor placement: in 9 of 13
+    labelled events the model reported the SAME state at every timestamp across
+    a window where the event demonstrably happens. A door that opens was called
+    "closed" at all nine polls; a vehicle that stops was "moving" throughout; a
+    person who stands up was "standing" throughout. It describes each frame
+    independently and never registers change. Derivation needs a transition, so
+    no downstream setting can recover this - which is why prompt wording,
+    coverage, resolution, crop and 24 threshold combinations all failed.
+    This asks for the same output as a comparison rather than a description.
+  set:
+    signal.enabled: false
+    signal.max_bracket_s: 30.0
+    observe.step_s: 1.0
+    observe.state_prompt: comparative

@@ -237,7 +237,7 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--step-s", type=float, default=None)
     ap.add_argument("--concurrency", type=int, default=None)
     ap.add_argument("--state-prompt", default=None,
-                    choices=["generic", "examples", "strict"],
+                    choices=["generic", "examples", "strict", "comparative"],
                     help="how the state vocabulary is offered to the model")
     ap.add_argument("--crop", action="store_true",
                     help="crop each bracket to where the motion is")

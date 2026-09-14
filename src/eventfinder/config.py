@@ -229,7 +229,8 @@ class ObserveConfig(BaseModel):
 
     # How the vocabulary is offered: generic | examples | strict.
     # See backends/base.STATE_PROMPTS for what each measured.
-    state_prompt: str = Field("examples", pattern="^(generic|examples|strict)$")
+    state_prompt: str = Field("examples",
+                              pattern="^(generic|examples|strict|comparative)$")
 
     # MEASURED. One caption per timestep covering every subject, instead of one
     # sweep per subject. Tried and it FAILED: door parse rate fell 85% -> 29%,

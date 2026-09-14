@@ -183,6 +183,18 @@ STATE_PROMPTS = {
                "(open, closed, standing, sitting, moving, stationary, ...)",
     "examples": "state: one short word for the subject's condition at that moment, "
                 "for example {words}",
+    # Aimed at the measured failure, which is not vocabulary and not placement:
+    # in 9 of 13 labelled events the model reported the SAME state at every
+    # timestamp across a window where the event demonstrably happens. A door
+    # that opens was called "closed" at all nine polls. It describes each frame
+    # independently and never registers that anything changed.
+    #
+    # This asks for the same output but frames it as a comparison, which is a
+    # discrimination task rather than a description task.
+    "comparative": "state: one short word for the subject's condition, for example "
+                   "{words}. Compare each time with the one before it: if the subject "
+                   "has changed, the word MUST change too; if it looks the same, repeat "
+                   "the same word",
     "strict": "state: exactly one of {words} -- use no other word",
 }
 
