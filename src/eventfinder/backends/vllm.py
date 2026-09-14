@@ -110,11 +110,13 @@ class VLLMReasoner:
 
     def observe(self, frames: list[Frame], stamp_times: list[float], subject: str,
                 attributes: list[str], bracket_id: str,
-                state_vocab: list[str] | None = None) -> list[Observation]:
+                state_vocab: list[str] | None = None,
+                constrain_state: bool = False) -> list[Observation]:
         self._attrs = list(attributes)
         self._vocab = list(state_vocab or [])
         system, user = observer_prompt(subject, attributes, stamp_times, state_vocab)
-        schema = observation_schema(stamp_times, attributes, state_vocab)
+        schema = observation_schema(stamp_times, attributes,
+                                    state_vocab if constrain_state else None)
         data, raw = self._call(frames, system, user, schema, stamp_times,
                                bracket_id, subject, "observe")
         if data is None:
@@ -125,11 +127,13 @@ class VLLMReasoner:
 
     def verify(self, frames: list[Frame], stamp_times: list[float], subject: str,
                attributes: list[str], bracket_id: str, description: str,
-               state_vocab: list[str] | None = None) -> Verdict:
+               state_vocab: list[str] | None = None,
+               constrain_state: bool = False) -> Verdict:
         self._attrs = list(attributes)
         self._vocab = list(state_vocab or [])
         system, user = verify_prompt(subject, attributes, stamp_times, description, state_vocab)
-        schema = verify_schema(stamp_times, attributes, state_vocab)
+        schema = verify_schema(stamp_times, attributes,
+                               state_vocab if constrain_state else None)
         data, raw = self._call(frames, system, user, schema, stamp_times,
                                bracket_id, subject, "verify", description)
         if data is None:

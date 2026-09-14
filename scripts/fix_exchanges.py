@@ -51,6 +51,13 @@ def main() -> int:
     ap.add_argument("--clips", default="data/eval")
     ap.add_argument("--config", default="eventfinder.yaml")
     ap.add_argument("--out", default=None, help="default: rewrite in place")
+    ap.add_argument("--blocks", default=None,
+                    help="comma-separated records per clip, e.g. 42,42,28,28,49,42,28,63. "
+                         "Use when the code's grouping has changed since the corpus was "
+                         "recorded, so re-planning no longer reproduces its task list. "
+                         "Each block is then checked for internal consistency instead: "
+                         "every bracket id in it must appear the same number of times, "
+                         "once per subject group.")
     a = ap.parse_args()
 
     rows = [json.loads(l) for l in open(a.exchanges) if l.strip()]
@@ -78,6 +85,52 @@ def main() -> int:
                                 for t in tasks]
 
     from collections import Counter
+
+    if a.blocks:
+        sizes = [int(x) for x in a.blocks.split(",")]
+        if len(sizes) != len(labels):
+            print(f"  --blocks has {len(sizes)} entries for {len(labels)} clips",
+                  file=sys.stderr)
+            return 2
+        if sum(sizes) != len(rows):
+            print(f"  --blocks sums to {sum(sizes)}, corpus has {len(rows)} records",
+                  file=sys.stderr)
+            return 2
+        i, report = 0, []
+        for clip, n in zip(labels, sizes):
+            block = rows[i:i + n]
+            per_bracket = Counter(r["bracket_id"] for r in block)
+            groups = set(per_bracket.values())
+            if len(groups) != 1:
+                print(f"  block for {clip['video']} is not internally consistent: "
+                      f"bracket ids appear {sorted(groups)} times, expected one value "
+                      "(one call per subject group per bracket)", file=sys.stderr)
+                return 2
+            # A bracket id must always carry the same requested times inside a clip.
+            times_of = {}
+            for r in block:
+                key = r["bracket_id"]
+                t = tuple(round(float(x), 3) for x in (r.get("times") or []))
+                if times_of.setdefault(key, t) != t:
+                    print(f"  block for {clip['video']}: bracket {key} has two different "
+                          "time lists; the block boundary is wrong", file=sys.stderr)
+                    return 2
+            for r in block:
+                r["video"] = clip["video"]
+            report.append((clip["video"], n))
+            i += n
+        out = Path(a.out or a.exchanges)
+        with open(out, "w") as f:
+            for r in rows:
+                f.write(json.dumps(r) + "\n")
+        print(f"  attributed {len(rows)} records from the supplied block sizes; every "
+              "block was internally consistent (one call per subject group per bracket, "
+              "one time list per bracket)")
+        for v, n in report:
+            print(f"    {n:>4} {v}")
+        print(f"  -> {out}")
+        return 0
+
     i, stamped, report = 0, 0, []
     for clip in labels:
         want = plans[clip["video"]]

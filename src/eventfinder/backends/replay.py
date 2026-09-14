@@ -116,7 +116,8 @@ class ReplayReasoner:
 
     def observe(self, frames, stamp_times: list[float], subject: str,
                 attributes: list[str], bracket_id: str,
-                state_vocab: list[str] | None = None) -> list[Observation]:
+                state_vocab: list[str] | None = None,
+                constrain_state: bool = False) -> list[Observation]:
         data = self._get(bracket_id, subject, "observe", attributes)
         if data is None:
             return []
@@ -128,7 +129,8 @@ class ReplayReasoner:
 
     def verify(self, frames, stamp_times: list[float], subject: str,
                attributes: list[str], bracket_id: str, description: str,
-               state_vocab: list[str] | None = None) -> Verdict:
+               state_vocab: list[str] | None = None,
+               constrain_state: bool = False) -> Verdict:
         data = self._get(bracket_id, subject, "verify", attributes)
         if data is None:
             return Verdict(observations=[])

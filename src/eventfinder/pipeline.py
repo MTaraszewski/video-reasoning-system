@@ -48,6 +48,7 @@ class _Task:
     stamp_times: list[float]
     probe_ids: list[str]
     state_vocab: list[str]
+    constrain_state: bool
     crop: tuple[float, float, float, float] | None
     start_s: float
     end_s: float
@@ -118,13 +119,17 @@ def plan(video: str, descriptions: list[str], cfg: Config, compiler=None,
             # The union of what the group's probes may say, so one call serves
             # all of them without offering a word none of them can match.
             vocab = sorted({w for p in ps for w in p.state_vocab})
+            # The prompt always names the vocabulary; the schema only enforces
+            # it when explicitly asked to. See ObserveConfig.constrain_state_enum.
+            enforce = cfg.observe.constrain_state_enum
             if cfg.observe.mode == "per_bracket":
                 tasks.append(_Task(b, subject, list(attrs), times, ids, vocab,
-                                   crop, b.start_s, b.end_s))
+                                   enforce, crop, b.start_s, b.end_s))
             else:
                 for t in times:
                     tasks.append(_Task(b, subject, list(attrs), [t], ids, vocab,
-                                       crop, t, min(t + cfg.observe.span_s, b.end_s)))
+                                       enforce, crop, t,
+                                       min(t + cfg.observe.span_s, b.end_s)))
     return probes, bs, tasks, info
 
 
@@ -227,11 +232,11 @@ def run(video: str, descriptions: list[str], cfg: Config, reasoner,
             desc = next((p.description for p in expressible if p.id == task.probe_ids[0]), "")
             v = reasoner.verify(frames, task.stamp_times, task.subject,
                                 task.attributes, task.bracket.id, desc,
-                                task.state_vocab)
+                                task.state_vocab, task.constrain_state)
             return task, v.observations, v
         return task, reasoner.observe(frames, task.stamp_times, task.subject,
                                       task.attributes, task.bracket.id,
-                                      task.state_vocab), None
+                                      task.state_vocab, task.constrain_state), None
 
     with ThreadPoolExecutor(max_workers=cfg.observe.concurrency) as pool:
         for i, (task, obs, v) in enumerate(pool.map(do, tasks), 1):

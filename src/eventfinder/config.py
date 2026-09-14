@@ -211,6 +211,22 @@ class ObserveConfig(BaseModel):
     # behind it; `per_bracket` is the experiment that decides the unit economics.
     mode: str = Field("per_step", pattern="^(per_step|per_bracket)$")
 
+    # Enforce the probe's state vocabulary in the RESPONSE SCHEMA, not merely in
+    # the prompt.
+    #
+    # MEASURED, and off because of it. Naming the vocabulary in the prompt is a
+    # clear win: state words carried rose 216 -> 253, omissions fell 149 -> 58,
+    # and the share matching the vocabulary went 75% -> 100%. But adding the
+    # schema enum on top collapses the answer onto one option -- closed:open
+    # went from 86:64 under free text to 191:30 under the enum. No alternation
+    # means no transition, which means no event: 3 predictions became 0 on the
+    # same four clips.
+    #
+    # This is the same failure the previous engine measured when it asked this
+    # model to pick from a supplied list: it scored 0.00 once option order was
+    # averaged out. Guidance in the prompt, no coercion in the schema.
+    constrain_state_enum: bool = False
+
     # MEASURED. One caption per timestep covering every subject, instead of one
     # sweep per subject. Tried and it FAILED: door parse rate fell 85% -> 29%,
     # `person` parsed 0 of 119 polls, per-call latency rose to 10.2 s, and the

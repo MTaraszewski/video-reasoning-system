@@ -168,3 +168,38 @@ def test_no_description_is_an_error_not_an_empty_run():
     from eventfinder.cli import _descs
     with pytest.raises(typer.BadParameter):
         _descs([], None)
+
+
+# --- the state vocabulary: guidance, not coercion -------------------------
+
+def test_the_prompt_always_names_the_vocabulary():
+    """Measured win: naming it raised state words carried 216 -> 253, cut
+    omissions 149 -> 58, and took the share matching the vocabulary to 100%."""
+    from eventfinder.backends.base import observer_prompt
+    _, user = observer_prompt("door", ["present", "state"], [4.0],
+                              ["closed", "open", "partially open"])
+    assert "exactly one of closed, open, partially open" in user
+
+
+def test_the_schema_does_not_enforce_it_by_default():
+    """Measured loss: the enum collapses the answer onto one option --
+    closed:open went 86:64 under free text to 191:30 under the enum, and 3
+    predictions became 0. Same failure the previous engine measured when this
+    model was asked to pick from a supplied list: 0.00 once order was averaged
+    out."""
+    from eventfinder.backends.base import observation_schema
+    free = observation_schema([4.0], ["present", "state"], None)
+    forced = observation_schema([4.0], ["present", "state"], ["closed", "open"])
+    prop = lambda s: s["properties"]["observations"]["items"]["properties"]["state"]
+    assert "enum" not in prop(free) and prop(free)["type"] == "string"
+    assert prop(forced)["enum"] == ["closed", "open"]
+    assert cfg_mod.ObserveConfig().constrain_state_enum is False
+
+
+def test_times_stay_enum_constrained_regardless():
+    """Constraining WHAT the model may say is a measured mistake; constraining
+    WHICH MOMENTS it may name is not -- that is what keeps localisation out of
+    its job."""
+    from eventfinder.backends.base import observation_schema
+    s = observation_schema([4.0, 5.0], ["present"], None)
+    assert s["properties"]["observations"]["items"]["properties"]["t"]["enum"] == [4.0, 5.0]

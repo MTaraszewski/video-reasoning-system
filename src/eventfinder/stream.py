@@ -284,7 +284,8 @@ class LiveFinder:
         times = [f.t for f in frames][: self.cfg.sampling.max_frames_per_call]
         for (subject, attrs), ps in self._groups.items():
             vocab = sorted({w for p in ps for w in p.state_vocab})
-            obs = self.reasoner.observe(frames, times, subject, list(attrs), b.id, vocab)
+            obs = self.reasoner.observe(frames, times, subject, list(attrs), b.id, vocab,
+                                        self.cfg.observe.constrain_state_enum)
             self.stats.calls += 1
             for p in ps:
                 self.deriver.add(p.id, obs)
