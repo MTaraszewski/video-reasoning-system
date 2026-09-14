@@ -172,13 +172,29 @@ def test_no_description_is_an_error_not_an_empty_run():
 
 # --- the state vocabulary: guidance, not coercion -------------------------
 
-def test_the_prompt_always_names_the_vocabulary():
-    """Measured win: naming it raised state words carried 216 -> 253, cut
-    omissions 149 -> 58, and took the share matching the vocabulary to 100%."""
+def test_the_prompt_names_the_vocabulary_without_commanding_it():
+    """Naming the words is a measured win: state words carried 216 -> 253,
+    omissions 149 -> 58, vocabulary match 75% -> 100%. Commanding them is a
+    measured loss: closed:open went 86:64 to 191:30, no alternation, no
+    transitions, 3 predictions to 0. The default offers, it does not command."""
     from eventfinder.backends.base import observer_prompt
     _, user = observer_prompt("door", ["present", "state"], [4.0],
                               ["closed", "open", "partially open"])
-    assert "exactly one of closed, open, partially open" in user
+    assert "for example closed, open, partially open" in user
+    assert "use no other word" not in user
+
+
+@pytest.mark.parametrize("style,fragment", [
+    ("generic", "moving, stationary"),
+    ("examples", "for example closed, open"),
+    ("strict", "use no other word"),
+])
+def test_every_prompt_style_is_reachable(style, fragment):
+    """All three stay runnable so the comparison is one flag apart."""
+    from eventfinder.backends.base import observer_prompt
+    _, user = observer_prompt("door", ["present", "state"], [4.0],
+                              ["closed", "open", "partially open"], style)
+    assert fragment in user
 
 
 def test_the_schema_does_not_enforce_it_by_default():

@@ -66,6 +66,7 @@ def _reasoner(c: Config, media: str):
     return VLLMReasoner(c.model.base_url, c.model.name, api_key=c.model.api_key,
                         temperature=c.model.temperature, max_tokens=c.model.max_tokens,
                         tokens_per_record=c.model.tokens_per_record,
+                        state_prompt=c.observe.state_prompt,
                         media=media, timeout_s=c.model.request_timeout_s,
                         sample_fps=1.0 / c.observe.step_s if c.observe.mode == "per_bracket"
                         else c.sampling.fps)

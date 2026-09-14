@@ -285,7 +285,7 @@ ef-eval:  ## [gpu] score the labelled set (MODE=per_bracket MEDIA=video VERIFY=1
 	  --mode $(or $(MODE),per_bracket) --media $(or $(MEDIA),video) \
 	  --labels $(EF_LABELS) --clips $(EF_CLIPS) --out $(EF_OUT) \
 	  $(if $(MAX_CLIPS),--max-clips $(MAX_CLIPS),) $(if $(VERIFY),--verify,) \
-	  $(if $(CROP),--crop,)
+	  $(if $(CROP),--crop,) $(if $(PROMPT),--state-prompt $(PROMPT),)
 
 ef-matrix:  ## [gpu] the whole first session: mode, media and verdict, all recorded
 	@mkdir -p $(OUT_DIR)/ef

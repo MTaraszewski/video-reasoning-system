@@ -21,7 +21,7 @@ from typing import Protocol
 
 from ..models import Observation
 
-PROMPT_VERSION = "obs-v2"
+PROMPT_VERSION = "obs-v3"
 
 # Must match OverlayConfig.format. The prompt tells the model what the burned-in
 # stamp looks like; a mismatch here means it is told to read something that is
@@ -160,12 +160,42 @@ _SYSTEM = (
 )
 
 
+# How the state vocabulary is put to the model. MEASURED: this is the variable,
+# not the schema.
+#
+#   generic    what obs-v1 did: a fixed example list, motion words included, the
+#              same for every probe. Produced closed:open at 86:64 -- usable
+#              alternation -- but only 75% of answers matched any vocabulary and
+#              149 were omitted entirely.
+#   strict     "exactly one of X, Y, Z -- use no other word". Took vocabulary
+#              compliance to 100% and omissions to 58, and collapsed the answer
+#              onto one option: 191:30, no alternation, no transitions, 3
+#              predictions became 0.
+#   examples   the probe's own words offered as examples rather than a closed
+#              list. The untested middle: domain-relevant guidance without the
+#              imperative that appears to cause the collapse.
+#
+# The schema enum is a separate switch and was measured to be a NO-OP: it only
+# binds answers that `canonical_state` was discarding anyway, so removing it
+# changed nothing across all 8 clips.
+STATE_PROMPTS = {
+    "generic": "state: one short word for the subject's condition at that moment "
+               "(open, closed, standing, sitting, moving, stationary, ...)",
+    "examples": "state: one short word for the subject's condition at that moment, "
+                "for example {words}",
+    "strict": "state: exactly one of {words} -- use no other word",
+}
+
+
 def observer_prompt(subject: str, attributes: list[str], stamp_times: list[float],
-                    state_vocab: list[str] | None = None) -> tuple[str, str]:
+                    state_vocab: list[str] | None = None,
+                    style: str = "examples") -> tuple[str, str]:
     help_ = dict(_FIELD_HELP)
-    if state_vocab:
-        help_["state"] = ("state: exactly one of " + ", ".join(state_vocab)
-                          + " -- use no other word")
+    tmpl = STATE_PROMPTS.get(style, STATE_PROMPTS["examples"])
+    if state_vocab and "{words}" in tmpl:
+        help_["state"] = tmpl.format(words=", ".join(state_vocab))
+    elif not state_vocab or style == "generic":
+        help_["state"] = STATE_PROMPTS["generic"]
     fields = [help_[a] for a in attributes if a in help_]
     times = ", ".join(f"{t:.3f}" for t in stamp_times)
     user = (f"Subject: {subject}\n"
@@ -176,14 +206,15 @@ def observer_prompt(subject: str, attributes: list[str], stamp_times: list[float
 
 
 def verify_prompt(subject: str, attributes: list[str], stamp_times: list[float],
-                  description: str, state_vocab: list[str] | None = None) -> tuple[str, str]:
+                  description: str, state_vocab: list[str] | None = None,
+                  style: str = "examples") -> tuple[str, str]:
     """The observation task, plus the model's own verdict.
 
     The verdict is asked for after the per-time observations, and the schema
     requires both. Whether it beats deriving from the states is the thing being
     measured; nothing downstream acts on it until that measurement exists.
     """
-    system, user = observer_prompt(subject, attributes, stamp_times, state_vocab)
+    system, user = observer_prompt(subject, attributes, stamp_times, state_vocab, style)
     system = system.replace(
         "Reply with JSON only.",
         "Then say whether this clip actually shows the event you are given. Answer false if "

@@ -227,6 +227,10 @@ class ObserveConfig(BaseModel):
     # averaged out. Guidance in the prompt, no coercion in the schema.
     constrain_state_enum: bool = False
 
+    # How the vocabulary is offered: generic | examples | strict.
+    # See backends/base.STATE_PROMPTS for what each measured.
+    state_prompt: str = Field("examples", pattern="^(generic|examples|strict)$")
+
     # MEASURED. One caption per timestep covering every subject, instead of one
     # sweep per subject. Tried and it FAILED: door parse rate fell 85% -> 29%,
     # `person` parsed 0 of 119 polls, per-call latency rose to 10.2 s, and the

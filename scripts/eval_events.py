@@ -89,6 +89,8 @@ def build_cfg(a, mode: str) -> Config:
         c.observe.concurrency = a.concurrency
     if a.crop:
         c.sampling.crop_to_motion = True
+    if a.state_prompt:
+        c.observe.state_prompt = a.state_prompt
     c.check()
     return c
 
@@ -100,6 +102,7 @@ def reasoner_for(cfg: Config, a, media: str):
         cfg.model.base_url, cfg.model.name, api_key=cfg.model.api_key,
         temperature=cfg.model.temperature, max_tokens=cfg.model.max_tokens,
         tokens_per_record=cfg.model.tokens_per_record,
+        state_prompt=cfg.observe.state_prompt,
         media=media, timeout_s=cfg.model.request_timeout_s,
         sample_fps=(1.0 / cfg.observe.step_s if cfg.observe.mode == "per_bracket"
                     else cfg.sampling.fps),
@@ -109,7 +112,7 @@ def reasoner_for(cfg: Config, a, media: str):
 def one_run(labels, clips_dir: Path, cfg: Config, a, mode: str, media: str,
             verify: bool, out_dir: Path, max_clips: int | None = None,
             descs: list[str] | None = None) -> dict:
-    tag = f"{mode}-{media}{'-verify' if verify else ''}{'-crop' if a.crop else ''}"
+    tag = f"{mode}-{media}{'-verify' if verify else ''}{'-crop' if a.crop else ''}{'-' + a.state_prompt if a.state_prompt else ''}"
     # The description set comes from the WHOLE labelled set and is passed in,
     # never derived from the truncated one. Deriving it here meant --max-clips 1
     # asked only that clip's own description: one subject, six calls, no false
@@ -230,6 +233,9 @@ def main() -> int:
     ap.add_argument("--verify", action="store_true")
     ap.add_argument("--step-s", type=float, default=None)
     ap.add_argument("--concurrency", type=int, default=None)
+    ap.add_argument("--state-prompt", default=None,
+                    choices=["generic", "examples", "strict"],
+                    help="how the state vocabulary is offered to the model")
     ap.add_argument("--crop", action="store_true",
                     help="crop each bracket to where the motion is")
     ap.add_argument("--matrix", action="store_true",

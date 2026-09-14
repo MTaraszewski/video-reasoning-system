@@ -59,7 +59,7 @@ class VLLMReasoner:
                  media: str = "video", timeout_s: float = 120.0,
                  sample_fps: float = 4.0, record: bool = True,
                  jpeg_quality: int = 85, tokens_per_record: int = 48,
-                 media_dir: str = "/out/clips"):
+                 media_dir: str = "/out/clips", state_prompt: str = "examples"):
         if media not in ("video", "path", "frames"):
             raise ValueError(f"media must be 'video', 'path' or 'frames', not {media!r}")
         self.client = OpenAI(base_url=base_url, api_key=api_key, timeout=timeout_s)
@@ -69,6 +69,7 @@ class VLLMReasoner:
         self.tokens_per_record = tokens_per_record
         self.media = media
         self.media_dir = media_dir
+        self.state_prompt = state_prompt
         self.sample_fps = sample_fps
         self.record = record
         self.jpeg_quality = jpeg_quality
@@ -114,7 +115,8 @@ class VLLMReasoner:
                 constrain_state: bool = False) -> list[Observation]:
         self._attrs = list(attributes)
         self._vocab = list(state_vocab or [])
-        system, user = observer_prompt(subject, attributes, stamp_times, state_vocab)
+        system, user = observer_prompt(subject, attributes, stamp_times, state_vocab,
+                                       self.state_prompt)
         schema = observation_schema(stamp_times, attributes,
                                     state_vocab if constrain_state else None)
         data, raw = self._call(frames, system, user, schema, stamp_times,
@@ -131,7 +133,8 @@ class VLLMReasoner:
                constrain_state: bool = False) -> Verdict:
         self._attrs = list(attributes)
         self._vocab = list(state_vocab or [])
-        system, user = verify_prompt(subject, attributes, stamp_times, description, state_vocab)
+        system, user = verify_prompt(subject, attributes, stamp_times, description,
+                                     state_vocab, self.state_prompt)
         schema = verify_schema(stamp_times, attributes,
                                state_vocab if constrain_state else None)
         data, raw = self._call(frames, system, user, schema, stamp_times,
@@ -234,6 +237,7 @@ class VLLMReasoner:
             "bracket_id": bracket_id, "subject": subject, "times": times,
             "attributes": getattr(self, "_attrs", []),
             "state_vocab": getattr(self, "_vocab", []),
+            "state_prompt": self.state_prompt,
             "mode": mode, "description": description, "reply": reply, "error": error,
             "latency_s": round(dt, 3), "finish_reason": finish, "model": self.model,
             "media": self.media, "max_tokens": self._budget(len(times)),
