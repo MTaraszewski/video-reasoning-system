@@ -69,6 +69,12 @@ class VLLMReasoner:
         self.sample_fps = sample_fps
         self.record = record
         self.jpeg_quality = jpeg_quality
+        # Which video the current calls belong to. Bracket ids are per-clip
+        # (b1, b2, ...) and an exchange log spans a whole evaluation, so
+        # without this every clip's b1 collides in the replay index and each
+        # clip replays another clip's replies -- silently, as a flood of
+        # unparseable times. The pipeline sets it per run.
+        self.context = ""
         self.usage = Usage()
 
     # --- identity ---------------------------------------------------------
@@ -100,9 +106,12 @@ class VLLMReasoner:
     # --- observation ------------------------------------------------------
 
     def observe(self, frames: list[Frame], stamp_times: list[float], subject: str,
-                attributes: list[str], bracket_id: str) -> list[Observation]:
-        system, user = observer_prompt(subject, attributes, stamp_times)
-        schema = observation_schema(stamp_times, attributes)
+                attributes: list[str], bracket_id: str,
+                state_vocab: list[str] | None = None) -> list[Observation]:
+        self._attrs = list(attributes)
+        self._vocab = list(state_vocab or [])
+        system, user = observer_prompt(subject, attributes, stamp_times, state_vocab)
+        schema = observation_schema(stamp_times, attributes, state_vocab)
         data, raw = self._call(frames, system, user, schema, stamp_times,
                                bracket_id, subject, "observe")
         if data is None:
@@ -112,9 +121,12 @@ class VLLMReasoner:
         return obs
 
     def verify(self, frames: list[Frame], stamp_times: list[float], subject: str,
-               attributes: list[str], bracket_id: str, description: str) -> Verdict:
-        system, user = verify_prompt(subject, attributes, stamp_times, description)
-        schema = verify_schema(stamp_times, attributes)
+               attributes: list[str], bracket_id: str, description: str,
+               state_vocab: list[str] | None = None) -> Verdict:
+        self._attrs = list(attributes)
+        self._vocab = list(state_vocab or [])
+        system, user = verify_prompt(subject, attributes, stamp_times, description, state_vocab)
+        schema = verify_schema(stamp_times, attributes, state_vocab)
         data, raw = self._call(frames, system, user, schema, stamp_times,
                                bracket_id, subject, "verify", description)
         if data is None:
@@ -198,7 +210,10 @@ class VLLMReasoner:
         if not self.record:
             return
         self.usage.exchanges.append({
+            "video": self.context,
             "bracket_id": bracket_id, "subject": subject, "times": times,
+            "attributes": getattr(self, "_attrs", []),
+            "state_vocab": getattr(self, "_vocab", []),
             "mode": mode, "description": description, "reply": reply, "error": error,
             "latency_s": round(dt, 3), "finish_reason": finish, "model": self.model,
             "media": self.media, "max_tokens": self._budget(len(times)),

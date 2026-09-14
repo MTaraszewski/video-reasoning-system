@@ -23,6 +23,15 @@ high agreement and low coverage is a sampling problem; the same score with full
 coverage and low agreement is a perception problem, and they call for different
 fixes.
 
+**Observations are never compared across unobserved time.** The pipeline looks
+only inside brackets, so a probe's observations arrive as islands with gaps
+between them. Comparing the last state of one island with the first state of the
+next reads the *gap* as a transition -- and the event then lands at a bracket
+edge, which is an artifact of where we chose to look rather than anything in the
+video. Measured: it put all 25 predictions on a labelled run at bracket
+boundaries for a mean tIoU of exactly 0.000. Observations are split into
+contiguous segments first, and a transition is only ever claimed within one.
+
 **Incremental by construction.** `Deriver.step(now)` yields events that have
 just become witnessed -- a transition is believed once an observation after it
 exists. The same code path serves a batch run and a live stream; there is no
@@ -180,6 +189,28 @@ def _mean_certainty(obs: list[Observation]) -> float:
 
 # --- the derivation ---------------------------------------------------------
 
+def _segments(obs: list[Observation], max_gap_s: float) -> list[list[Observation]]:
+    """Split at any gap longer than `max_gap_s` of unobserved time.
+
+    Within a bracket consecutive observations are one step apart, including the
+    ok=False placeholders for times the model did not answer -- those record
+    that we LOOKED and got nothing, which is different from not looking. So the
+    only gaps this finds are the ones between brackets, which is exactly what
+    must not be bridged.
+    """
+    if not obs:
+        return []
+    out, cur = [], [obs[0]]
+    for prev, o in zip(obs, obs[1:]):
+        if o.t - prev.t > max_gap_s + 1e-6:
+            out.append(cur)
+            cur = [o]
+        else:
+            cur.append(o)
+    out.append(cur)
+    return out
+
+
 @dataclass
 class _Run:
     token: str
@@ -227,10 +258,24 @@ def derive(obs: list[Observation], probe: Probe, cfg: DeriveConfig,
         return []
     now = obs[-1].t if now is None else now
     if probe.kind == "direction":
-        return _derive_direction(obs, probe, cfg, step_s, now)
+        out: list[Event] = []
+        for seg in _segments(obs, cfg.max_interp_gap_s):
+            out.extend(_derive_direction(seg, probe, cfg, step_s, now))
+        return out
 
-    runs = _runs(obs, probe)
     pair = _transition_pair(probe)
+    events: list[Event] = []
+
+    # One segment at a time. The gap between brackets is not a transition.
+    for seg in _segments(obs, cfg.max_interp_gap_s):
+        events.extend(_derive_segment(seg, probe, cfg, step_s, now, pair))
+
+    return [e for e in events if e.confidence >= cfg.min_confidence]
+
+
+def _derive_segment(obs: list[Observation], probe: Probe, cfg: DeriveConfig,
+                    step_s: float, now: float, pair) -> list[Event]:
+    runs = _runs(obs, probe)
     events: list[Event] = []
 
     for a, b in zip(runs, runs[1:]):
@@ -251,7 +296,21 @@ def derive(obs: list[Observation], probe: Probe, cfg: DeriveConfig,
 
         gap = b.first - a.last
         partial = "none"
+        # The transition is bracketed by [last old state, first new state], which
+        # at step_s=1.0 is a one-second onset window. The labels mark the
+        # DURATION of the act -- 1.5 to 13 s on the labelled set -- so an onset
+        # window scores tIoU 0.000 even when the onset is exactly right: the
+        # prediction abuts the truth instead of overlapping it. Measured, from
+        # the first GPU session's replay: pred 2.00-3.00 against a truth of
+        # 3.00-5.27, intersection exactly zero.
+        #
+        # So the span runs from the bracketed onset through as much of the new
+        # state as it is willing to claim: the act continues while the state
+        # holds, capped by `extend_by_motion_s` so a subject that simply stays
+        # present for a minute does not become a minute-long event.
         start, end = a.last, b.first
+        if cfg.extend_by_motion_s > 0:
+            end = min(b.last, b.first + cfg.extend_by_motion_s)
         if gap > cfg.max_interp_gap_s:
             # Too wide to claim the event filled it. Anchor to the evidence and
             # say the start is unknown rather than inventing a duration.
@@ -269,7 +328,7 @@ def derive(obs: list[Observation], probe: Probe, cfg: DeriveConfig,
         )
         events.append(_event(probe, start, end, partial, sig, window, cfg))
 
-    return [e for e in events if e.confidence >= cfg.min_confidence]
+    return events
 
 
 def _derive_direction(obs: list[Observation], probe: Probe, cfg: DeriveConfig,

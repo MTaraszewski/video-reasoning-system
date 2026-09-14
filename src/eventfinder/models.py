@@ -54,6 +54,13 @@ class Probe(BaseModel):
     relation_key: Optional[str] = None
     relation_value: Optional[str] = None
     direction: Optional[Literal["backward", "forward"]] = None
+    # The words the observer may use for `state`, offered in the prompt and
+    # enforced by the response schema. Without it the prompt showed every probe
+    # the same generic example list -- which included motion words -- and the
+    # model duly answered "stationary" where the probe needed "closed"/"open".
+    # `canonical_state` then matched nothing, no run formed, and no event was
+    # derived. Measured on 4 of the 5 state/cessation truths in the first run.
+    state_vocab: list[str] = Field(default_factory=list)
     # Which observation fields this probe actually reads. The observer asks for
     # these and no more: every extra field is decode tokens spent per call, and
     # the previous engine's 80-second calls were runaway generation.

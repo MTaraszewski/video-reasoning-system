@@ -21,7 +21,7 @@ from typing import Protocol
 
 from ..models import Observation
 
-PROMPT_VERSION = "obs-v1"
+PROMPT_VERSION = "obs-v2"
 
 # Must match OverlayConfig.format. The prompt tells the model what the burned-in
 # stamp looks like; a mismatch here means it is told to read something that is
@@ -65,16 +65,19 @@ class Reasoner(Protocol):
 
     def verify_model(self) -> tuple[bool, str]: ...
 
-    def observe(self, clip_path: str, stamp_times: list[float], subject: str,
-                attributes: list[str], bracket_id: str) -> list[Observation]: ...
+    def observe(self, frames, stamp_times: list[float], subject: str,
+                attributes: list[str], bracket_id: str,
+                state_vocab: list[str] | None = None) -> list[Observation]: ...
 
-    def verify(self, clip_path: str, stamp_times: list[float], subject: str,
-               attributes: list[str], bracket_id: str, description: str) -> Verdict: ...
+    def verify(self, frames, stamp_times: list[float], subject: str,
+               attributes: list[str], bracket_id: str, description: str,
+               state_vocab: list[str] | None = None) -> Verdict: ...
 
 
 # --- schemas ---------------------------------------------------------------
 
-def _record_props(attributes: list[str], stamp_times: list[float]) -> dict:
+def _record_props(attributes: list[str], stamp_times: list[float],
+                  state_vocab: list[str] | None = None) -> dict:
     props: dict = {
         # An enum, not a number. The model cannot name a time it was not shown,
         # which takes localisation out of its job by construction rather than by
@@ -84,10 +87,12 @@ def _record_props(attributes: list[str], stamp_times: list[float]) -> dict:
         "certainty": {"type": "number", "minimum": 0, "maximum": 1},
     }
     if "state" in attributes:
-        # Free text, matched in code. Offering a closed list to pick from is a
-        # different task from describing, and which one it does better is
-        # measured per probe rather than assumed.
-        props["state"] = {"type": "string", "maxLength": 40}
+        # Constrained to the probe's own vocabulary when there is one, so the
+        # word the model returns is a word `canonical_state` can match. Left as
+        # free text otherwise: an unconstrained answer that parses to nothing is
+        # still better than a forced choice between words that do not apply.
+        props["state"] = ({"type": "string", "enum": list(state_vocab)}
+                          if state_vocab else {"type": "string", "maxLength": 40})
     if "position" in attributes:
         props["position"] = {"type": "array", "minItems": 2, "maxItems": 2,
                              "items": {"type": "number", "minimum": 0, "maximum": 1}}
@@ -101,14 +106,15 @@ def _record_props(attributes: list[str], stamp_times: list[float]) -> dict:
     return props
 
 
-def observation_schema(stamp_times: list[float], attributes: list[str]) -> dict:
+def observation_schema(stamp_times: list[float], attributes: list[str],
+                       state_vocab: list[str] | None = None) -> dict:
     return {
         "type": "object",
         "properties": {
             "observations": {
                 "type": "array", "minItems": 1, "maxItems": len(stamp_times),
                 "items": {"type": "object",
-                          "properties": _record_props(attributes, stamp_times),
+                          "properties": _record_props(attributes, stamp_times, state_vocab),
                           "required": ["t", "present", "certainty"],
                           "additionalProperties": False},
             }
@@ -118,8 +124,9 @@ def observation_schema(stamp_times: list[float], attributes: list[str]) -> dict:
     }
 
 
-def verify_schema(stamp_times: list[float], attributes: list[str]) -> dict:
-    s = observation_schema(stamp_times, attributes)
+def verify_schema(stamp_times: list[float], attributes: list[str],
+                  state_vocab: list[str] | None = None) -> dict:
+    s = observation_schema(stamp_times, attributes, state_vocab)
     s["properties"]["matches"] = {"type": "boolean"}
     s["properties"]["says"] = {"type": "string", "maxLength": 120}
     s["properties"]["confidence"] = {"type": "number", "minimum": 0, "maximum": 1}
@@ -130,8 +137,11 @@ def verify_schema(stamp_times: list[float], attributes: list[str]) -> dict:
 # --- prompts ---------------------------------------------------------------
 
 _FIELD_HELP = {
-    "state": "state: one short word for the subject's condition at that moment "
-             "(open, closed, standing, sitting, moving, stationary, ...)",
+    # Replaced per call by the probe's own vocabulary when it has one. The
+    # generic list below is the fallback, and it is what caused the model to
+    # answer "stationary" for a door: motion words were among the examples
+    # shown to every probe.
+    "state": "state: one short word for the subject's condition at that moment",
     "position": "position: [x, y] of the subject's centre as fractions of the frame, "
                 "x to the right, y down",
     "facing": "facing: which way the subject's front points -- left, right, toward, away, unknown",
@@ -150,9 +160,13 @@ _SYSTEM = (
 )
 
 
-def observer_prompt(subject: str, attributes: list[str],
-                    stamp_times: list[float]) -> tuple[str, str]:
-    fields = [_FIELD_HELP[a] for a in attributes if a in _FIELD_HELP]
+def observer_prompt(subject: str, attributes: list[str], stamp_times: list[float],
+                    state_vocab: list[str] | None = None) -> tuple[str, str]:
+    help_ = dict(_FIELD_HELP)
+    if state_vocab:
+        help_["state"] = ("state: exactly one of " + ", ".join(state_vocab)
+                          + " -- use no other word")
+    fields = [help_[a] for a in attributes if a in help_]
     times = ", ".join(f"{t:.3f}" for t in stamp_times)
     user = (f"Subject: {subject}\n"
             f"Report at exactly these times, as printed on the frames: {times}\n"
@@ -162,14 +176,14 @@ def observer_prompt(subject: str, attributes: list[str],
 
 
 def verify_prompt(subject: str, attributes: list[str], stamp_times: list[float],
-                  description: str) -> tuple[str, str]:
+                  description: str, state_vocab: list[str] | None = None) -> tuple[str, str]:
     """The observation task, plus the model's own verdict.
 
     The verdict is asked for after the per-time observations, and the schema
     requires both. Whether it beats deriving from the states is the thing being
     measured; nothing downstream acts on it until that measurement exists.
     """
-    system, user = observer_prompt(subject, attributes, stamp_times)
+    system, user = observer_prompt(subject, attributes, stamp_times, state_vocab)
     system = system.replace(
         "Reply with JSON only.",
         "Then say whether this clip actually shows the event you are given. Answer false if "

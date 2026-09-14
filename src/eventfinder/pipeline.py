@@ -46,23 +46,44 @@ class _Task:
     attributes: list[str]
     stamp_times: list[float]
     probe_ids: list[str]
+    state_vocab: list[str]
     start_s: float
     end_s: float
 
 
-def _group(probes: list[Probe]) -> dict[tuple[str, tuple[str, ...]], list[Probe]]:
-    """Probes that ask the same thing of the same subject share a call.
+# The order attributes are described to the model, so a union is deterministic
+# and two runs cannot differ by dict ordering.
+_ATTR_ORDER = ["present", "state", "position", "facing", "motion", "relations"]
 
-    On the labelled set nine descriptions reduce to a handful of subjects, and
-    the frames are identical whichever probe is asking -- paying twice for the
-    same perception is pure waste. Grouping is by (subject, attributes) rather
-    than by subject alone so a probe never receives a field it did not ask for.
+
+def _group(probes: list[Probe]) -> dict[tuple[str, tuple[str, ...]], list[Probe]]:
+    """One call per subject per bracket, asking for the union of what its
+    probes need.
+
+    The frames are identical whichever probe is asking, so paying twice for the
+    same perception is waste: on the labelled set thirteen descriptions reduce
+    to five calls.
+
+    Grouping by (subject, attributes) instead -- which is what this did first --
+    splits a subject across calls whenever two probes want different fields.
+    `person` was asked twice per bracket, once for presence and once for
+    presence-plus-state, and `vehicle` likewise. That is 7 calls per bracket
+    rather than 5, and it made a recorded exchange ambiguous: two records
+    sharing (video, bracket, subject) with nothing to tell them apart.
+
+    It costs the probes that wanted less a few extra decode tokens. In every
+    case on the labelled set the smaller attribute set is a strict subset of
+    the larger, so nothing is lost and nothing is guessed.
     """
-    out: dict[tuple[str, tuple[str, ...]], list[Probe]] = {}
+    merged: dict[str, set[str]] = {}
+    members: dict[str, list[Probe]] = {}
     for p in probes:
-        if p.expressible:
-            out.setdefault((p.subject, tuple(p.attributes)), []).append(p)
-    return out
+        if not p.expressible:
+            continue
+        merged.setdefault(p.subject, set()).update(p.attributes)
+        members.setdefault(p.subject, []).append(p)
+    return {(subj, tuple(a for a in _ATTR_ORDER if a in attrs)): members[subj]
+            for subj, attrs in merged.items()}
 
 
 def plan(video: str, descriptions: list[str], cfg: Config,
@@ -84,11 +105,15 @@ def plan(video: str, descriptions: list[str], cfg: Config,
             continue
         for (subject, attrs), ps in groups.items():
             ids = [p.id for p in ps]
+            # The union of what the group's probes may say, so one call serves
+            # all of them without offering a word none of them can match.
+            vocab = sorted({w for p in ps for w in p.state_vocab})
             if cfg.observe.mode == "per_bracket":
-                tasks.append(_Task(b, subject, list(attrs), times, ids, b.start_s, b.end_s))
+                tasks.append(_Task(b, subject, list(attrs), times, ids, vocab,
+                                   b.start_s, b.end_s))
             else:
                 for t in times:
-                    tasks.append(_Task(b, subject, list(attrs), [t], ids,
+                    tasks.append(_Task(b, subject, list(attrs), [t], ids, vocab,
                                        t, min(t + cfg.observe.span_s, b.end_s)))
     return probes, bs, tasks, info
 
@@ -169,7 +194,16 @@ def run(video: str, descriptions: list[str], cfg: Config, reasoner,
             f"({'already set' if cfg.observe.mode == 'per_bracket' else 'currently per_step'})."
         )
 
+    # Namespaces this run's exchange records. See VLLMReasoner.context.
+    if hasattr(reasoner, "context"):
+        reasoner.context = Path(video).name
+
     ok, verified_id = reasoner.verify_model()
+    # Snapshot: one reasoner serves many clips in an evaluation, so its counters
+    # are cumulative. Reporting them raw made clip 2 of 8 look like it had spent
+    # 84 calls when it spent 42, which is the wrong number to be reading while
+    # deciding whether to stop a run.
+    _calls0, _in0, _out0 = reasoner.usage.calls, reasoner.usage.tokens_in, reasoner.usage.tokens_out
     by_probe: dict[str, list[Observation]] = {p.id: [] for p in expressible}
     verdicts: list[dict] = []
 
@@ -182,10 +216,12 @@ def run(video: str, descriptions: list[str], cfg: Config, reasoner,
             # a grouped call cannot carry a shared verdict.
             desc = next((p.description for p in expressible if p.id == task.probe_ids[0]), "")
             v = reasoner.verify(frames, task.stamp_times, task.subject,
-                                task.attributes, task.bracket.id, desc)
+                                task.attributes, task.bracket.id, desc,
+                                task.state_vocab)
             return task, v.observations, v
         return task, reasoner.observe(frames, task.stamp_times, task.subject,
-                                      task.attributes, task.bracket.id), None
+                                      task.attributes, task.bracket.id,
+                                      task.state_vocab), None
 
     with ThreadPoolExecutor(max_workers=cfg.observe.concurrency) as pool:
         for i, (task, obs, v) in enumerate(pool.map(do, tasks), 1):
@@ -234,7 +270,8 @@ def run(video: str, descriptions: list[str], cfg: Config, reasoner,
             sample_fps=cfg.sampling.fps, observe_step_s=cfg.observe.step_s,
             observe_span_s=cfg.observe.span_s,
             signal=cfg.signal.model_dump(), derive=cfg.derive.model_dump(),
-            calls=u.calls, tokens_in=u.tokens_in, tokens_out=u.tokens_out,
+            calls=u.calls - _calls0, tokens_in=u.tokens_in - _in0,
+            tokens_out=u.tokens_out - _out0,
             wall_time_s=round(time.perf_counter() - t0, 3),
             model_verified=bool(ok),
             result_class="replay" if reasoner.name == "replay" else "model",

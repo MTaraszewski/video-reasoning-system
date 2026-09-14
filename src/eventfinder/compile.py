@@ -162,13 +162,30 @@ _ATTRS = {
     "cessation": ["present", "motion"],
 }
 
-# The vocabulary the observer is offered per kind, so that what the model is
-# asked to say and what code matches cannot drift apart.
+# The vocabulary the observer is offered per subject, so that what the model is
+# asked to say and what `canonical_state` matches cannot drift apart.
 STATE_VOCAB = {
     "door":         ["open", "closed", "partially open"],
     "vehicle door": ["open", "closed", "partially open"],
     "person":       ["standing", "sitting", "walking", "crouching", "lying"],
+    "vehicle":      ["moving", "stationary"],
+    "machine":      ["moving", "stationary"],
 }
+
+
+def state_vocab_for(subject: str, states: tuple[str, str] | None) -> list[str]:
+    """The words this probe's observer may use.
+
+    Sorted, and deliberately NOT in the probe's own (before, after) order. The
+    previous engine measured that asking this model to pick from a supplied list
+    scored 0.00 once option order was averaged out -- it followed the order, not
+    the video. Leaving the probe's order in place would put the expected
+    "before" state first in every prompt, which is the worst possible bias:
+    it would confirm whatever the probe already assumed.
+    """
+    words = set(STATE_VOCAB.get(subject, []))
+    words.update(states or ())
+    return sorted(words)
 
 
 class RulesCompiler:
@@ -186,6 +203,7 @@ class RulesCompiler:
                 subject = spec.pop("subject", None) or self._subject(desc, kind)
                 return Probe(id=pid, description=desc, expressible=True,
                              subject=subject, attributes=_ATTRS[kind],
+                             state_vocab=state_vocab_for(subject, spec.get("states")),
                              compiler=self.name, **spec)
         return Probe(id=pid, description=desc, expressible=False, compiler=self.name,
                      reason="no rule matched; add a rule, supply a manual probe, "
@@ -279,7 +297,8 @@ class LLMCompiler:
                 subject=(raw.get("subject") or "").lower(), kind=kind, states=states,
                 relation_key=raw.get("relation_key"), relation_value=raw.get("relation_value"),
                 direction=raw.get("direction"), gate=raw.get("gate", "rising"),
-                attributes=_ATTRS[kind], reason=raw.get("reason", ""), compiler=self.name,
+                attributes=_ATTRS[kind], state_vocab=state_vocab_for(raw["subject"].lower(), states),
+                reason=raw.get("reason", ""), compiler=self.name,
             )
         except Exception as e:
             p = self.fallback.compile(pid, desc)
@@ -305,7 +324,9 @@ def compile_all(descs: list[str], compiler, manual: dict[str, dict] | None = Non
             spec = dict(manual[d])
             kind = spec.get("kind")
             out.append(Probe(id=pid, description=d, expressible=True,
-                             attributes=_ATTRS.get(kind, []), compiler="manual", **spec))
+                             attributes=_ATTRS.get(kind, []), compiler="manual",
+                             state_vocab=state_vocab_for(spec.get("subject", ""),
+                                                         spec.get("states")), **spec))
         else:
             out.append(compiler.compile(pid, d))
     return out

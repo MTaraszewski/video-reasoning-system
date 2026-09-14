@@ -62,24 +62,30 @@ def test_substrings_do_not_match():
 
 # --- span selection ---------------------------------------------------------
 
-def test_span_runs_from_last_old_state_to_first_new_state():
-    """Not the midpoint. The bracket the evidence supports, and nothing wider."""
+def test_span_starts_at_the_bracketed_onset():
+    """Not the midpoint. The onset is bracketed by [last old, first new] -- the
+    window the evidence actually supports -- and the span then runs through the
+    new state for as long as it holds, capped by extend_by_motion_s."""
     obs = [door(1, "closed"), door(2, "closed"), door(3, "closed"),
            door(4, "open"), door(5, "open"), door(6, "open")]
     e, = derive(obs, DOOR, CFG, STEP)
-    assert (e.start_s, e.end_s) == (3.0, 4.0)
+    assert (e.start_s, e.end_s) == (3.0, 6.0)
     assert e.partial == "none"
 
 
 def test_a_wide_bracket_is_not_claimed_as_a_long_event():
-    """Interpolating across an 82-second gap produced a 42-second span for a
-    3-second door opening, at confidence 1.0. This is that bug's regression."""
-    obs = [door(1, "closed"), door(2, "closed"), door(84, "open"), door(85, "open")]
+    """We looked across the whole stretch and the replies in between were
+    unusable, so the transition is bracketed but not located. Interpolating to
+    the midpoint instead once produced a 42-second span for a 3-second door
+    opening, at confidence 1.0."""
+    obs = ([door(1, "closed"), door(2, "closed")] +
+           [ob(t, ok=False, note="no state parsed") for t in (3, 4, 5, 6)] +
+           [door(7, "open"), door(8, "open")])
     e, = derive(obs, DOOR, CFG, STEP)
     assert e.partial == "start_unknown"
     assert e.end_s - e.start_s <= CFG.max_interp_gap_s
-    assert e.end_s == 84.0
-    assert e.signals.sharpness < 0.02      # and the score says why
+    assert e.end_s == 7.0
+    assert e.signals.sharpness < 0.25      # and the score says why
 
 
 def test_sharpness_falls_as_the_bracket_widens():
@@ -111,7 +117,7 @@ def test_failed_observations_do_not_split_a_run():
            ob(3, ok=False, note="no JSON"),
            door(4, "open"), door(5, "open")]
     e, = derive(obs, DOOR, CFG, STEP)
-    assert (e.start_s, e.end_s) == (2.0, 4.0)
+    assert (e.start_s, e.end_s) == (2.0, 5.0)
 
 
 def test_the_reverse_transition_is_not_the_event():
@@ -133,14 +139,14 @@ def test_presence_entering_is_a_disappearance():
     obs = [ob(t, "person", present=True) for t in (1, 2)] + \
           [ob(t, "person", present=False) for t in (3, 4)]
     e, = derive(obs, ENTER, CFG, STEP)
-    assert (e.start_s, e.end_s) == (2.0, 3.0)
+    assert (e.start_s, e.end_s) == (2.0, 4.0)
 
 
 def test_cessation_reads_motion_not_state():
     obs = [ob(t, "vehicle", present=True, motion="moving") for t in (1, 2)] + \
           [ob(t, "vehicle", present=True, motion="stationary") for t in (3, 4)]
     e, = derive(obs, STOP, CFG, STEP)
-    assert (e.start_s, e.end_s) == (2.0, 3.0)
+    assert (e.start_s, e.end_s) == (2.0, 4.0)
 
 
 def test_unknown_motion_is_not_stationary():
@@ -153,7 +159,7 @@ def test_relation_change_of_holder():
     obs = [ob(t, "object", present=True, relations={"held_by": "person a"}) for t in (1, 2)] + \
           [ob(t, "object", present=True, relations={"held_by": "person b"}) for t in (3, 4)]
     e, = derive(obs, HANDOVER, CFG, STEP)
-    assert (e.start_s, e.end_s) == (2.0, 3.0)
+    assert (e.start_s, e.end_s) == (2.0, 4.0)
 
 
 def test_relation_unchanged_is_not_a_handover():
@@ -233,7 +239,12 @@ def test_certainty_weight_makes_it_an_experiment():
 
 
 def test_min_confidence_filters():
-    obs = [door(1, "closed"), door(2, "closed"), door(40, "open"), door(41, "open")]
+    """The threshold that would have removed every bogus prediction from the
+    first GPU run: all 25 scored exactly 0.00, and `min_confidence: 0.0` let
+    them through anyway."""
+    obs = ([door(1, "closed"), door(2, "closed")] +
+           [ob(t, ok=False) for t in (3, 4, 5, 6)] +
+           [door(7, "open"), door(8, "open")])
     assert derive(obs, DOOR, DeriveConfig(min_confidence=0.5), STEP) == []
     assert derive(obs, DOOR, DeriveConfig(min_confidence=0.0), STEP) != []
 
@@ -243,8 +254,9 @@ def test_min_confidence_filters():
 def test_rank_orders_by_confidence_and_assigns_ids():
     a = derive([door(t, "closed") for t in (1, 2, 3)] + [door(t, "open") for t in (4, 5, 6)],
                DOOR, CFG, STEP)[0]
-    b = derive([door(1, "closed"), door(2, "closed"), door(9, "open"), door(10, "open")],
-               DOOR, CFG, STEP)[0]
+    b = derive([door(1, "closed"), door(2, "closed")] +
+               [ob(t, ok=False) for t in (3, 4, 5, 6)] +
+               [door(7, "open"), door(8, "open")], DOOR, CFG, STEP)[0]
     out = rank([b, a])
     assert out[0] is a and out[0].rank == 1 and out[0].id == "e1"
 
@@ -280,3 +292,83 @@ def test_deriver_ignores_inexpressible_probes():
     refused = C.compile("p9", "the alarm sounds")
     d = Deriver([refused], CFG, STEP)
     assert d.probes == [] and d.step(now=1.0) == []
+
+
+# --- the gap between brackets is not a transition -------------------------
+
+def test_a_gap_between_brackets_is_never_a_transition():
+    """Measured failure: pooling observations across brackets read the
+    unobserved gap as a state change, and every event landed one step before a
+    bracket's start. All 25 predictions on a labelled run sat at bracket
+    boundaries, for a mean tIoU of exactly 0.000."""
+    obs = ([door(t, "closed") for t in (3.0, 4.0)] +        # bracket one
+           [door(t, "open") for t in (33.5, 34.5)])          # bracket two, 29s later
+    assert derive(obs, DOOR, CFG, STEP) == []
+
+
+def test_a_transition_inside_one_bracket_still_fires():
+    """The fix must not silence real events: the same two states, observed
+    contiguously, are a transition."""
+    obs = [door(t, "closed") for t in (3.0, 4.0)] + [door(t, "open") for t in (5.0, 6.0)]
+    e, = derive(obs, DOOR, CFG, STEP)
+    assert (e.start_s, e.end_s) == (4.0, 6.0) and e.partial == "none"
+
+
+def test_each_segment_is_derived_on_its_own():
+    """Two brackets, each containing a complete transition, give two events --
+    not one bridged across the gap."""
+    obs = ([door(t, "closed") for t in (1.0, 2.0)] + [door(t, "open") for t in (3.0, 4.0)] +
+           [door(t, "closed") for t in (50.0, 51.0)] + [door(t, "open") for t in (52.0, 53.0)])
+    got = derive(obs, DOOR, CFG, STEP)
+    assert [(e.start_s, e.end_s) for e in got] == [(2.0, 4.0), (51.0, 53.0)]
+
+
+def test_unanswered_times_do_not_split_a_segment():
+    """An ok=False record means we LOOKED and got nothing, which is different
+    from not looking; it must not fragment a bracket into two segments."""
+    obs = [door(1.0, "closed"), door(2.0, "closed"),
+           ob(3.0, ok=False), ob(4.0, ok=False),
+           door(5.0, "open"), door(6.0, "open")]
+    e, = derive(obs, DOOR, CFG, STEP)
+    assert (e.start_s, e.end_s) == (2.0, 6.0)
+
+
+def test_direction_is_segmented_too():
+    run_a = _moving([1, 2, 3], [0.8, 0.7, 0.6])
+    run_b = _moving([60, 61, 62], [0.8, 0.7, 0.6])
+    got = derive(run_a + run_b, REVERSE, CFG, STEP)
+    assert len(got) == 2
+    assert all(e.end_s - e.start_s < 5 for e in got)
+
+
+# --- span duration --------------------------------------------------------
+
+def test_the_span_covers_the_act_not_only_its_onset():
+    """Measured on the first GPU session: the onset window was right and the
+    span abutted the truth instead of overlapping it -- pred 2.00-3.00 against
+    a truth of 3.00-5.27, intersection exactly zero, tIoU 0.000."""
+    obs = [door(t, "closed") for t in (1, 2)] + [door(t, "open") for t in (3, 4, 5, 6, 7)]
+    e, = derive(obs, DOOR, CFG, STEP)
+    assert e.start_s == 2.0
+    assert e.end_s == 2.0 + 1.0 + CFG.extend_by_motion_s   # onset + the act
+    assert e.end_s - e.start_s > STEP
+
+
+def test_the_extension_stops_when_the_state_stops_holding():
+    """A subject that stays present for a minute must not become a
+    minute-long event, and one observed only briefly must not be stretched."""
+    obs = [door(t, "closed") for t in (1, 2)] + [door(t, "open") for t in (3, 4)]
+    e, = derive(obs, DOOR, CFG, STEP)
+    assert e.end_s == 4.0                                   # the run ends there
+
+
+def test_extension_is_bounded_by_the_cap():
+    obs = [door(t, "closed") for t in (1, 2)] + [door(float(t), "open") for t in range(3, 60)]
+    e, = derive(obs, DOOR, DeriveConfig(extend_by_motion_s=4.0), STEP)
+    assert e.end_s == 7.0
+
+
+def test_extension_can_be_switched_off():
+    obs = [door(t, "closed") for t in (1, 2)] + [door(t, "open") for t in (3, 4, 5, 6, 7)]
+    e, = derive(obs, DOOR, DeriveConfig(extend_by_motion_s=0.0), STEP)
+    assert (e.start_s, e.end_s) == (2.0, 3.0)

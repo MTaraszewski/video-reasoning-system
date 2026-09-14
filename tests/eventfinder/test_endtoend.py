@@ -177,8 +177,9 @@ def test_a_session_records_a_replay_corpus(server, tmp_path):
 def test_a_stale_replay_corpus_is_refused(tmp_path):
     """A corpus recorded under a different prompt answers a different question."""
     p = tmp_path / "old.jsonl"
-    p.write_text(json.dumps({"bracket_id": "b1", "subject": "door", "times": [1.0],
-                             "mode": "observe", "reply": "{}", "prompt_version": "obs-v0"}) + "\n")
+    p.write_text(json.dumps({"video": "clip.mp4", "bracket_id": "b1", "subject": "door",
+                             "times": [1.0], "mode": "observe", "reply": "{}",
+                             "prompt_version": "obs-v0"}) + "\n")
     with pytest.raises(ValueError, match="prompt version"):
         ReplayReasoner(p)
     ReplayReasoner(p, strict_prompt=False)      # opt in, and own the caveat
@@ -215,3 +216,41 @@ def test_the_real_budget_is_accepted(server):
     doc = run(str(CLIP), DESCS[:1], cfg_for("per_bracket"), r)
     assert checker.problems[before:] == []
     assert doc.run.calls > 0 and r.usage.failures == 0
+
+
+def test_exchanges_can_be_flushed_before_a_run_completes(server, tmp_path):
+    """A run you are meant to be able to stop must not discard what it has
+    already bought. Interrupting the first GPU session lost a clip's worth of
+    paid-for replies because the log was written only at the end."""
+    from eventfinder.backends.replay import write_exchanges
+    url, _ = server
+    r = reasoner_for(url, "video")
+    run(str(CLIP), DESCS[:1], cfg_for("per_bracket"), r)
+    p = write_exchanges(tmp_path / "partial.jsonl", r.usage)
+    n_first = sum(1 for _ in open(p))
+    assert n_first == r.usage.calls
+    run(str(CLIP), DESCS[:1], cfg_for("per_bracket"), r)     # a second "clip"
+    write_exchanges(p, r.usage)
+    assert sum(1 for _ in open(p)) > n_first                  # rewritten, cumulative
+
+
+def test_replay_mode_is_read_from_the_corpus_not_the_flag(server, tmp_path):
+    """Replaying a per_bracket corpus in per_step mode asks for tasks that were
+    never recorded, so every lookup misses -- silently, looking exactly like a
+    model that answered nothing."""
+    import sys as _sys
+    from pathlib import Path as _Path
+    _sys.path.insert(0, str(_Path(__file__).resolve().parents[2] / "scripts"))
+    from eval_events import infer_from_corpus
+    from eventfinder.backends.replay import write_exchanges
+
+    url, _ = server
+    r = reasoner_for(url, "frames")
+    run(str(CLIP), DESCS[:1], cfg_for("per_bracket"), r)
+    p = write_exchanges(tmp_path / "e.jsonl", r.usage)
+    assert infer_from_corpus(str(p)) == ("per_bracket", "frames")
+
+    r2 = reasoner_for(url, "video")
+    run(str(CLIP), DESCS[:1], cfg_for("per_step"), r2)
+    p2 = write_exchanges(tmp_path / "e2.jsonl", r2.usage)
+    assert infer_from_corpus(str(p2)) == ("per_step", "video")

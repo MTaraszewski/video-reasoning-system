@@ -283,7 +283,8 @@ class LiveFinder:
             return []
         times = [f.t for f in frames][: self.cfg.sampling.max_frames_per_call]
         for (subject, attrs), ps in self._groups.items():
-            obs = self.reasoner.observe(frames, times, subject, list(attrs), b.id)
+            vocab = sorted({w for p in ps for w in p.state_vocab})
+            obs = self.reasoner.observe(frames, times, subject, list(attrs), b.id, vocab)
             self.stats.calls += 1
             for p in ps:
                 self.deriver.add(p.id, obs)
@@ -294,11 +295,9 @@ class LiveFinder:
         return self.tick(now)
 
 
-def _group(probes: list[Probe]) -> dict[tuple[str, tuple[str, ...]], list[Probe]]:
-    out: dict[tuple[str, tuple[str, ...]], list[Probe]] = {}
-    for p in probes:
-        out.setdefault((p.subject, tuple(p.attributes)), []).append(p)
-    return out
+# The batch path's grouping, reused rather than reimplemented: a streamed run
+# and a batch run over the same footage must issue the same calls.
+from .pipeline import _group  # noqa: E402
 
 
 # --- running a file as if it were a camera ---------------------------------

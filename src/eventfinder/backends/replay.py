@@ -29,7 +29,9 @@ class ReplayReasoner:
     def __init__(self, exchanges_path: str | Path, *, strict_prompt: bool = True):
         self.model = "replay"
         self.usage = Usage()
-        self.by_key: dict[tuple[str, str, str], dict] = {}
+        self.context = ""
+        self.by_key: dict[tuple[str, str, str, str], list[dict]] = {}
+        self.no_video = 0
         self.versions: set[str] = set()
         self.media: set[str] = set()
         n = 0
@@ -39,20 +41,36 @@ class ReplayReasoner:
                 if not line:
                     continue
                 e = json.loads(line)
-                self.by_key[(e["bracket_id"], e["subject"], e.get("mode", "observe"))] = e
+                vid = e.get("video", "")
+                if not vid:
+                    self.no_video += 1
+                key = (vid, e["bracket_id"], e["subject"], e.get("mode", "observe"))
+                self.by_key.setdefault(key, []).append(e)
                 self.model = e.get("model", self.model)
                 self.versions.add(e.get("prompt_version", "?"))
                 self.media.add(e.get("media", "?"))
                 n += 1
         self.n_records = n
+        if self.no_video:
+            raise ValueError(
+                f"{self.no_video} of {n} records in {exchanges_path} carry no `video` "
+                "field. Bracket ids are per-clip (b1, b2, ...), so without it every "
+                "clip's b1 collides and each clip silently replays another clip's "
+                "replies. Run scripts/fix_exchanges.py to recover the corpus.")
         # A corpus recorded under a different prompt answers a different
         # question. Failing loudly beats silently scoring stale replies.
         if strict_prompt and self.versions - {PROMPT_VERSION}:
             raise ValueError(
-                f"replay corpus was recorded under prompt version(s) "
-                f"{sorted(self.versions)} but this code is {PROMPT_VERSION!r}. "
-                "Re-record, or pass strict_prompt=False and treat the numbers as "
-                "describing the old prompt.")
+                f"this corpus was recorded under prompt version(s) "
+                f"{sorted(self.versions)}; the code is now {PROMPT_VERSION!r}. "
+                "Its replies answer the OLD prompt, so scoring them as if they "
+                "answered the new one would misattribute the difference.\n"
+                "  To measure a change to DERIVATION (prompt-independent), it is "
+                "fine to re-score them:\n"
+                "      make ef-replay EXCHANGES=... STALE=1\n"
+                "      python scripts/eval_events.py --replay ... --stale-ok\n"
+                "  To make a claim about the MODEL under the new prompt, record "
+                "again with a GPU run.")
 
     def verify_model(self) -> tuple[bool, str]:
         return True, f"replay of {self.model} ({self.n_records} exchanges, media={sorted(self.media)})"
@@ -60,9 +78,11 @@ class ReplayReasoner:
     def complete_json(self, system: str, user: str, schema: dict) -> dict:
         raise RuntimeError("replay has no text model; use the rules compiler")
 
-    def _get(self, bracket_id: str, subject: str, mode: str):
+    def _get(self, bracket_id: str, subject: str, mode: str,
+             attributes: list[str] | None = None):
         self.usage.calls += 1
-        e = self.by_key.get((bracket_id, subject, mode))
+        e = self._pick(self.by_key.get((self.context, bracket_id, subject, mode)) or [],
+                       attributes or [])
         if e is None:
             self.usage.failures += 1
             return None
@@ -76,9 +96,28 @@ class ReplayReasoner:
             self.usage.failures += 1
         return data
 
+    @staticmethod
+    def _pick(cands: list[dict], attributes: list[str]) -> dict | None:
+        """Choose among records sharing one key.
+
+        A corpus recorded before calls were grouped by subject holds several
+        records per (video, bracket, subject) -- one per attribute set. The
+        wanted one is whichever was asked for the most fields, since the
+        smaller sets are subsets of it and its reply therefore contains
+        everything the others would have returned. Nothing is inferred: a
+        corpus that records `attributes` is matched exactly.
+        """
+        if not cands:
+            return None
+        exact = [c for c in cands if c.get("attributes") == list(attributes)]
+        if exact:
+            return exact[0]
+        return max(cands, key=lambda c: len(c.get("attributes") or []) or _fields(c))
+
     def observe(self, frames, stamp_times: list[float], subject: str,
-                attributes: list[str], bracket_id: str) -> list[Observation]:
-        data = self._get(bracket_id, subject, "observe")
+                attributes: list[str], bracket_id: str,
+                state_vocab: list[str] | None = None) -> list[Observation]:
+        data = self._get(bracket_id, subject, "observe", attributes)
         if data is None:
             return []
         obs, rep = _parse(data, stamp_times, subject, bracket_id, "")
@@ -88,8 +127,9 @@ class ReplayReasoner:
         return obs
 
     def verify(self, frames, stamp_times: list[float], subject: str,
-               attributes: list[str], bracket_id: str, description: str) -> Verdict:
-        data = self._get(bracket_id, subject, "verify")
+               attributes: list[str], bracket_id: str, description: str,
+               state_vocab: list[str] | None = None) -> Verdict:
+        data = self._get(bracket_id, subject, "verify", attributes)
         if data is None:
             return Verdict(observations=[])
         obs, rep = _parse(data, stamp_times, subject, bracket_id, "")
@@ -99,6 +139,16 @@ class ReplayReasoner:
         return Verdict(observations=obs, matches=data.get("matches"),
                        says=str(data.get("says", ""))[:200],
                        confidence=data.get("confidence"))
+
+
+def _fields(e: dict) -> int:
+    """How many distinct observation fields a recorded reply carries -- the
+    stand-in for `attributes` on a corpus that predates it."""
+    try:
+        d = json.loads(e.get("reply") or "{}")
+        return max((len(o) for o in d.get("observations", [])), default=0)
+    except Exception:
+        return 0
 
 
 def write_exchanges(path: str | Path, usage: Usage) -> Path:

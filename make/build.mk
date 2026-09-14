@@ -254,21 +254,59 @@ ef-cost:  ## [any] what the GPU session would cost, without starting one
 	@$(EF_RUN) python scripts/eval_events.py --dry-run --mode per_step \
 	  --labels $(EF_LABELS) --clips $(EF_CLIPS) --out $(EF_OUT) | tail -1
 
-ef-eval:  ## [gpu] score the labelled set (MODE=per_bracket MEDIA=video VERIFY=1)
+# Start small, verify, then scale. Each rung answers a question and costs
+# roughly what the rung below it did, times three. Measured rate on an L4:
+# ~42 calls per clip in ~80 s, so one clip is about 90 seconds and 3 cents.
+#
+#   ef-try      1 clip,  1 variant   does per_bracket work at all?
+#   ef-probe    1 clip,  4 variants  which variant is worth scaling?
+#   ef-eval     N clips, 1 variant   the number, on the winner
+#   ef-matrix   N clips, 4 variants  the full table
+#
+# MAX_CLIPS caps every rung. Clips are taken in order, never sampled, so two
+# runs are always comparable.
+MAX_CLIPS ?=
+
+ef-try:  ## [gpu] smallest useful run: 1 clip, per_bracket/video (~90s, ~$0.03)
+	@mkdir -p $(OUT_DIR)/ef
+	$(EF_RUN) python scripts/eval_events.py --max-clips 1 \
+	  --mode per_bracket --media video \
+	  --labels $(EF_LABELS) --clips $(EF_CLIPS) --out $(EF_OUT)
+
+ef-probe:  ## [gpu] 1 clip, all four variants: which one is worth scaling? (~6min, ~$0.12)
+	@mkdir -p $(OUT_DIR)/ef
+	$(EF_RUN) python scripts/eval_events.py --matrix --max-clips 1 --baseline-clips 1 \
+	  --labels $(EF_LABELS) --clips $(EF_CLIPS) --out $(EF_OUT)
+
+ef-eval:  ## [gpu] score the labelled set (MODE=per_bracket MEDIA=video VERIFY=1 MAX_CLIPS=3)
 	@mkdir -p $(OUT_DIR)/ef
 	$(EF_RUN) python scripts/eval_events.py \
 	  --mode $(or $(MODE),per_bracket) --media $(or $(MEDIA),video) \
 	  --labels $(EF_LABELS) --clips $(EF_CLIPS) --out $(EF_OUT) \
-	  $(if $(VERIFY),--verify,)
+	  $(if $(MAX_CLIPS),--max-clips $(MAX_CLIPS),) $(if $(VERIFY),--verify,)
 
 ef-matrix:  ## [gpu] the whole first session: mode, media and verdict, all recorded
 	@mkdir -p $(OUT_DIR)/ef
 	$(EF_RUN) python scripts/eval_events.py --matrix \
-	  --labels $(EF_LABELS) --clips $(EF_CLIPS) --out $(EF_OUT)
+	  --labels $(EF_LABELS) --clips $(EF_CLIPS) --out $(EF_OUT) \
+	  $(if $(MAX_CLIPS),--max-clips $(MAX_CLIPS),)
 
-ef-replay:  ## [any] re-score a recorded session, no GPU (EXCHANGES=/out/ef/exchanges-....jsonl)
-	$(EF_RUN) python scripts/eval_events.py --replay $(EXCHANGES) \
-	  --labels $(EF_LABELS) --clips $(EF_CLIPS) --out $(EF_OUT)
+# Mode and media are read back out of the corpus, so a replay cannot be scored
+# under a plan it was not recorded under.
+#
+# The path is rewritten the same way VIDEO is: ./out is mounted at /out inside
+# the container, and tab-completing `out/ef/...` on the host is the obvious
+# thing to type. Left alone it produced a bare FileNotFoundError traceback for
+# a file that plainly exists.
+EXCHANGES_IN = $(patsubst ./out/%,/out/%,$(patsubst out/%,/out/%,$(EXCHANGES)))
+
+# STALE=1 accepts a corpus recorded under an older prompt. Legitimate for
+# measuring a change to DERIVATION, which does not depend on the prompt; not
+# legitimate for a claim about the model, which does.
+ef-replay:  ## [any] re-score a recorded session, no GPU (EXCHANGES=out/ef/... STALE=1)
+	$(EF_RUN) python scripts/eval_events.py --replay $(EXCHANGES_IN) \
+	  --labels $(EF_LABELS) --clips $(EF_CLIPS) --out $(EF_OUT) \
+	  $(if $(STALE),--stale-ok,)
 
 ef-live:  ## [gpu] stream a file as if it were a camera (VIDEO=... QUERIES="a;b" REALTIME=1)
 	$(EF_RUN) python -m eventfinder.cli live $(VIDEO_IN) --queries "$(QUERIES)" \

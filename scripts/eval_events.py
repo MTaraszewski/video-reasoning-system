@@ -41,6 +41,30 @@ from eventfinder.pipeline import plan, run  # noqa: E402
 from video_reasoning.metrics import CONTROL_AXES, aggregate, by_axis  # noqa: E402
 
 
+def infer_from_corpus(path: str) -> tuple[str, str]:
+    """Read the mode and media path back out of a recorded session.
+
+    A replay MUST re-plan the run exactly as it was recorded: the observation
+    lookup is keyed on (bracket_id, subject, mode), so replaying a per_bracket
+    corpus in per_step mode asks for tasks that were never recorded and every
+    lookup misses. That is silent -- it looks like a model that answered
+    nothing -- so the mode is taken from the corpus and the flag is not
+    trusted.
+
+    `times` is the discriminator: one stamp per call is per_step, several is
+    per_bracket.
+    """
+    import json as _json
+    with open(path) as f:
+        for line in f:
+            if not line.strip():
+                continue
+            e = _json.loads(line)
+            mode = "per_bracket" if len(e.get("times") or []) > 1 else "per_step"
+            return mode, e.get("media", "video")
+    raise ValueError(f"{path} holds no exchanges")
+
+
 def descriptions_of(labels: list[dict]) -> list[str]:
     seen: list[str] = []
     for clip in labels:
@@ -81,8 +105,13 @@ def reasoner_for(cfg: Config, a, media: str):
 
 
 def one_run(labels, clips_dir: Path, cfg: Config, a, mode: str, media: str,
-            verify: bool, out_dir: Path) -> dict:
+            verify: bool, out_dir: Path, max_clips: int | None = None) -> dict:
     tag = f"{mode}-{media}{'-verify' if verify else ''}"
+    # Always the FIRST n, never a sample: a comparison between variants is only
+    # meaningful if they saw the same footage.
+    if max_clips:
+        labels = labels[:max_clips]
+        tag += f"-{len(labels)}clips"
     descs = descriptions_of(labels)
     # A dry run plans and costs the work without touching the endpoint, so it
     # must not need one -- that is the point of being able to check the shape of
@@ -96,6 +125,11 @@ def one_run(labels, clips_dir: Path, cfg: Config, a, mode: str, media: str,
                              "pass --allow-unverified to override")
 
     preds, docs, t0 = [], [], time.perf_counter()
+    # Flushed after EVERY clip, not at the end of the variant. A run you are
+    # meant to be able to stop must not throw away what it has already paid
+    # for: interrupting the first session lost a clip's worth of replies that
+    # had already been bought and could not be re-derived without the GPU.
+    ex_path = out_dir / f"exchanges-{tag}.jsonl"
     for clip in labels:
         video = clips_dir / clip["video"]
         if not video.exists():
@@ -113,8 +147,17 @@ def one_run(labels, clips_dir: Path, cfg: Config, a, mode: str, media: str,
             preds.append({"video": clip["video"], "description": e.description,
                           "start_s": e.start_s, "end_s": e.end_s,
                           "confidence": e.confidence, "partial": e.partial})
+        if not a.replay:
+            write_exchanges(ex_path, reasoner.usage)
+        # A replay runs on whatever machine you are sitting at, with no GPU and
+        # no endpoint, so the hourly rate does not apply to it. Printing one
+        # anyway is how a free re-score ends up quoted as having cost money.
+        if a.replay:
+            note = "  no GPU"
+        else:
+            note = f"  ${(time.perf_counter() - t0) / 3600 * float(a.hourly):.2f} so far"
         print(f"  {clip['video'][:40]:40s} {len(doc.events):>3} events  "
-              f"{doc.run.calls:>4} calls  {doc.run.wall_time_s:>6.0f}s")
+              f"{doc.run.calls:>4} calls  {doc.run.wall_time_s:>6.0f}s{note}")
 
     wall = time.perf_counter() - t0
     if a.dry_run:
@@ -140,10 +183,9 @@ def one_run(labels, clips_dir: Path, cfg: Config, a, mode: str, media: str,
         "by_axis": by_axis(scored_preds, scored, axes),
     }
     if not a.replay:
-        path = out_dir / f"exchanges-{tag}.jsonl"
-        write_exchanges(path, u)
-        result["exchanges"] = str(path)
-        result["latency_breakdown"] = summarise(path)
+        write_exchanges(ex_path, u)
+        result["exchanges"] = str(ex_path)
+        result["latency_breakdown"] = summarise(ex_path)
     # The model's own verdict, counted but never acted on: this is the number
     # that decides whether `matches` should ever gate an emission.
     verdicts = [v for d in docs for v in d.get("coverage", {}).get("verdicts", [])]
@@ -187,6 +229,13 @@ def main() -> int:
     ap.add_argument("--replay", default=None, help="score a recorded session, no GPU")
     ap.add_argument("--stale-ok", action="store_true",
                     help="accept a replay corpus recorded under another prompt")
+    ap.add_argument("--hourly", default="1.22249",
+                    help="GPU $/hour, for the running cost line")
+    ap.add_argument("--max-clips", type=int, default=None,
+                    help="score only the first N clips (paired across variants)")
+    ap.add_argument("--baseline-clips", type=int, default=3,
+                    help="clips for the per_step baseline inside --matrix; it is a "
+                         "comparison, not a new question, and costs ~9.5x per clip")
     ap.add_argument("--dry-run", action="store_true", help="plan only, no calls")
     ap.add_argument("--allow-unverified", action="store_true")
     a = ap.parse_args()
@@ -199,20 +248,56 @@ def main() -> int:
     out_dir = Path(a.out)
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    if a.replay:
+        corpus = Path(a.replay)
+        if not corpus.exists():
+            print(f"no corpus at {corpus}.", file=sys.stderr)
+            here = Path(a.out)
+            found = sorted(here.glob("exchanges-*.jsonl")) if here.is_dir() else []
+            if found:
+                print("  recorded sessions available here:", file=sys.stderr)
+                for f in found:
+                    print(f"    {f}", file=sys.stderr)
+            else:
+                print(f"  nothing under {here} either. Record one with a GPU run, "
+                      "or copy one across.", file=sys.stderr)
+            if not str(corpus).startswith("/"):
+                print("  note: paths are resolved inside the container, where the "
+                      "host's ./out is mounted at /out.", file=sys.stderr)
+            return 2
+        mode, media = infer_from_corpus(a.replay)
+        if a.stale_ok:
+            print("  --stale-ok: this corpus was recorded under an older prompt. The "
+                  "numbers describe THAT prompt, and are evidence about derivation "
+                  "only.", file=sys.stderr)
+        if (a.mode, a.media) not in (("per_step", "video"), (mode, media)):
+            print(f"  note: --mode/--media ignored for a replay; the corpus was "
+                  f"recorded as {mode}/{media}", file=sys.stderr)
+        a.mode, a.media, a.matrix = mode, media, False
+        print(f"  replaying {Path(a.replay).name}: {mode} / {media}")
+
     # The matrix is ordered cheapest-first so a session that runs out of time
     # still answers the question that matters most.
     if a.matrix:
-        variants = [("per_bracket", "video", False), ("per_bracket", "frames", False),
-                    ("per_step", "video", False), ("per_bracket", "video", True)]
+        # (mode, media, verify, clips). per_step costs ~9.5x per clip and is the
+        # baseline the new mode is compared against, not a question of its own,
+        # so it runs on a subset -- paired, so the comparison still holds.
+        variants = [("per_bracket", "video", False, a.max_clips),
+                    ("per_bracket", "frames", False, a.max_clips),
+                    ("per_bracket", "video", True, a.max_clips),
+                    ("per_step", "video", False,
+                     min(a.baseline_clips, a.max_clips or a.baseline_clips))]
     else:
-        variants = [(a.mode, a.media, a.verify)]
+        variants = [(a.mode, a.media, a.verify, a.max_clips)]
 
     results = []
-    for mode, media, verify in variants:
+    for mode, media, verify, n_clips in variants:
         cfg = build_cfg(a, mode)
-        print(f"\n=== {mode} / {media}{' / verify' if verify else ''} ===")
+        print(f"\n=== {mode} / {media}{' / verify' if verify else ''}"
+              f"{f' / first {n_clips} clips' if n_clips else ''} ===")
         try:
-            r = one_run(labels, Path(a.clips), cfg, a, mode, media, verify, out_dir)
+            r = one_run(labels, Path(a.clips), cfg, a, mode, media, verify, out_dir,
+                        max_clips=n_clips)
         except Exception as e:
             print(f"  variant FAILED: {type(e).__name__}: {e}", file=sys.stderr)
             results.append({"variant": f"{mode}-{media}", "error": str(e)})
